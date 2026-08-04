@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Deliberately NOT sandboxed (plan 06 §"非目标": sandbox forbids proc_listpids
+	     and the App Support socket/bridge layout; App Store is a permanent non-goal).
+	     Hardened Runtime is enabled via the build setting ENABLE_HARDENED_RUNTIME
+	     in project.yml, not via an entitlement key. No extra entitlements needed. -->
+</dict>
+</plist>

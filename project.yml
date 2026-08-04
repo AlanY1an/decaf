@@ -1,0 +1,60 @@
+# XcodeGen manifest — the single source of truth for the Xcode project
+# (plan 06 §3). Caffeinate.xcodeproj is generated (Scripts/bootstrap.sh) and
+# gitignored. Bundle ID is the frozen-later placeholder dev.caffeinate.app.
+name: Caffeinate
+options:
+  bundleIdPrefix: dev.caffeinate
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  CaffeinateCore:
+    path: Core
+  # Sparkle: { url: https://github.com/sparkle-project/Sparkle, from: 2.6.0 }  # V1.x
+targets:
+  Caffeinate:
+    type: application
+    platform: macOS
+    sources:
+      - App
+    dependencies:
+      - package: CaffeinateCore
+        product: CaffeinateCore
+      - package: CaffeinateCore
+        product: AgentDetection
+      - package: CaffeinateCore
+        product: CaffeinateComposition
+      - package: CaffeinateCore
+        product: HookWire
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.caffeinate.app
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: App/Caffeinate.entitlements
+        MARKETING_VERSION: 0.1.0      # version single source of truth; release.sh reads this
+        CURRENT_PROJECT_VERSION: 1
+        SWIFT_VERSION: "5.0"
+    info:
+      # XcodeGen generates App/Info.plist from these properties on every
+      # `xcodegen generate` — edit here, not the plist.
+      path: App/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleDisplayName: Caffeinate
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.utilities
+        NSHumanReadableCopyright: "© Caffeinate contributors. MIT License."
+    postBuildScripts:                  # caff-bridge is a Core package executable product;
+      - name: Embed caff-bridge        # build and embed it into Contents/Helpers (plan 06 §3)
+        basedOnDependencyAnalysis: false  # must run every build to keep the embedded bridge fresh
+        script: |
+          set -euo pipefail
+          swift build -c release --package-path "$SRCROOT/Core" --product caff-bridge
+          HELPERS_DIR="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
+          mkdir -p "$HELPERS_DIR"
+          cp "$SRCROOT/Core/.build/release/caff-bridge" "$HELPERS_DIR/"
+          if [ "${CODE_SIGNING_ALLOWED:-YES}" = "YES" ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
+            codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
+              "$HELPERS_DIR/caff-bridge"
+          fi

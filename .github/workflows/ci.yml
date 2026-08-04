@@ -1,0 +1,25 @@
+# CI — build + test only, never signing (plan 06 §5).
+# Note: plan 06 §5 specifies a second app-build job (xcodegen + xcodebuild) and a
+# pinned Xcode version; that lands with the dedicated CI step (06-4). This skeleton
+# keeps the fast core loop green from day one.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  core:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache SPM build
+        uses: actions/cache@v4
+        with:
+          path: Core/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('Core/Package.swift') }}
+      - name: Build
+        run: swift build --package-path Core
+      - name: Test
+        run: swift test --package-path Core

@@ -1,0 +1,7 @@
+# generated
+Caffeinate.xcodeproj/
+.build/
+.DS_Store
+build/
+*.dmg
+DerivedData/

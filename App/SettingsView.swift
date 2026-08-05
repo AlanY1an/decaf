@@ -1,26 +1,47 @@
-// SettingsView — the three MVP settings tabs (plan 04 §5), presented the way
-// macOS presents settings: a preferences TabView whose pages are grouped Forms.
+// SettingsView — the three MVP settings tabs (plan 04 §5).
 //
-// Structure notes (the control set is unchanged; all of the work is hierarchy):
-// - Every page is a `Form` with `.formStyle(.grouped)`. That is the macOS 13+
-//   idiom behind the System Settings look: sections become inset rounded cards,
-//   labels sit in the leading column, controls hug the trailing edge, and the
-//   form supplies its own insets. The old code omitted it and then hand-padded
-//   the window, which is exactly why it read as a bare dialog.
-// - Explanatory copy belongs in `Section` footers, not loose `Text` captions
-//   under controls, and only where the control is not self-evident. Read-only
-//   status uses `LabeledContent`. No `.help` tooltips: a labeled row in a
-//   grouped form that already carries a footer has nothing left to whisper.
-// - Destructive actions live alone in the last section, behind the confirmation
-//   their trailing ellipsis already promises.
+// Design stance: ONE HERO, EVERYTHING ELSE QUIET.
 //
-// General:  launch at login (SMAppService, read directly — not a stored pref),
-//           default manual duration, "until" time.
-// Agents:   Claude Code probe status + install/uninstall/repair (consent sheet
-//           driven by plan 03 plannedChanges data), release grace period,
-//           remove all integrations.
-// Safety:   low-battery pause threshold (hysteresis explained in the footer),
-//           fixed always-on protections.
+// A settings window earns its design not by decorating every row but by knowing
+// which single element matters. Here that element is the Claude Code
+// integration: it is the product's whole reason to exist, and in the previous
+// pass it was styled exactly like "Release grace period". So it gets the
+// treatment System Settings gives a service or an account — a tinted rounded
+// square as a visual anchor, the name at heading size, one plain-language line
+// of live status, one button — and everything else is deliberately flattened so
+// it recedes.
+//
+// Four consequences worth naming:
+//
+// 1. The saturated icon square is the only solid block of color in the whole
+//    window, and it only goes solid when hooks are working. That is the reward
+//    for the healthy state: previously "everything is perfect" looked like grey
+//    text. Every other state uses the same hue at low opacity — quiet, not
+//    broken — because zero-configuration file-activity detection is a supported
+//    product state (plan 04 §6), not a fault. Only `needsRepair` earns orange.
+//
+// 2. The old badge ("Hooks not installed") and the old "Detection mode" row
+//    stated one fact twice, in two rows of equal weight. They collapse into the
+//    hero's single status line, which is what that fact actually is: one
+//    sentence about what Caffeinate is currently able to see. The Safety
+//    footer had the same bug ("Always-On Protections" over "These three can't
+//    be turned off") and gets the same edit.
+//
+// 3. Section headers drop to a quiet secondary label so that type, not color,
+//    carries the hierarchy: page subject (17pt semibold) > hero name (15pt
+//    semibold) > row labels (13pt) > headers and footers (11–13pt secondary).
+//    A header that only repeats the single row beneath it is scaffolding, not
+//    hierarchy, so those are gone entirely.
+//
+// 4. Identity is one line of type, not a graphic. General opens by naming the
+//    app and its version on one baseline, which deliberately rhymes with
+//    "Claude Code 1.0.44" on the Agents page. No plate, no glyph, no tagline —
+//    a settings window is not a product page.
+//
+// General:  the wordmark, launch at login (SMAppService, read directly — not a
+//           stored pref), default manual duration, "until" time.
+// Agents:   the hero, release grace period, remove all integrations.
+// Safety:   low-battery pause threshold, fixed always-on protections.
 //
 // Every change applies immediately (no Apply button, plan 04 step 6).
 
@@ -38,10 +59,15 @@ struct SettingsView: View {
     /// the same neighborhood.
     private static let windowWidth: CGFloat = 620
     /// Fixed, not a floor: grouped forms scroll internally, so a stable window
-    /// beats one that jumps every time you switch tabs. Measured against the
-    /// tallest state any page can reach (Agents showing "needs repair" plus an
-    /// error row), with slack left over.
-    private static let windowHeight: CGFloat = 470
+    /// beats one that jumps every time you switch tabs. Measured — not guessed —
+    /// by rendering all six states unconstrained and scanning for the last inked
+    /// row in each. They land between 305pt (General) and 377pt, and the tallest
+    /// is Safety, not the Agents error state everyone assumes: 400 clears it
+    /// with a normal bottom margin and room for a footer that wraps one line
+    /// further in another locale. The previous 470 was measured against a
+    /// copy-heavier layout and then padded, which is how General ended up with
+    /// roughly 350pt of nothing in it.
+    private static let windowHeight: CGFloat = 400
 
     var body: some View {
         TabView(selection: $tabRouter.selectedTab) {
@@ -82,9 +108,12 @@ struct GeneralSettingsTab: View {
                     SettingsIssueRow(message: launchAtLoginError)
                 }
             } header: {
-                Text("Startup")
+                // The app signs its own window once, in type. No header reading
+                // "Startup" above it: a label over a single toggle whose own
+                // label already says "Launch at login" is scaffolding.
+                Wordmark()
             } footer: {
-                Text("Caffeinate waits in the menu bar with no Dock icon of its own.")
+                SectionFooter("Caffeinate lives in the menu bar and keeps no Dock icon of its own.")
             }
 
             Section {
@@ -106,9 +135,9 @@ struct GeneralSettingsTab: View {
                     displayedComponents: .hourAndMinute
                 )
             } header: {
-                Text("Manual Keep-Awake")
+                SectionHeader("Manual Keep-Awake")
             } footer: {
-                Text("The duration applies when you left-click the menu bar icon or flip the Keep Awake switch. The menu's \u{201C}Until…\u{201D} item keeps the Mac awake up to the time of day above.")
+                SectionFooter("Used when you click the menu bar icon or flip the Keep Awake switch. The menu's \u{201C}Until\u{2026}\u{201D} item holds sleep off up to the time above.")
             }
         }
         .formStyle(.grouped)
@@ -152,6 +181,35 @@ struct GeneralSettingsTab: View {
     }
 }
 
+/// The app's identity: its name and its version on one baseline, nothing else.
+/// The same shape as the hero's "Claude Code 1.0.44", so the two pages rhyme
+/// without either one growing a graphic.
+private struct Wordmark: View {
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Text("Caffeinate")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.primary)
+            if let version = Self.appVersion {
+                Text(version)
+                    .font(.title3)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.bottom, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Optional, not defaulted: a build with the key missing should show the
+    /// name alone rather than confidently printing a version that isn't real.
+    private static var appVersion: String? {
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              !raw.trimmingCharacters(in: .whitespaces).isEmpty
+        else { return nil }
+        return raw
+    }
+}
+
 // MARK: - Agents
 
 struct AgentsSettingsTab: View {
@@ -165,20 +223,23 @@ struct AgentsSettingsTab: View {
 
     var body: some View {
         Form {
+            // No header: the hero names itself. A label reading "Agent
+            // Integrations" above a card reading "Claude Code" is chrome.
             Section {
-                claudeRow
-                if integrations.claudeStatus.agentDetected {
-                    LabeledContent("Detection mode", value: detectionMode)
-                }
+                AgentHeroRow(
+                    status: integrations.claudeStatus,
+                    action: { integrationButton }
+                )
                 if let error = integrations.lastError {
                     SettingsIssueRow(message: error)
                 }
-            } header: {
-                Text("Agent Integrations")
             } footer: {
-                Text(integrationFooter)
+                SectionFooter(integrationFooter)
             }
 
+            // No "Timing" header either: it labelled exactly one row whose own
+            // label already says "Release grace period". The gap between cards
+            // is the beat that header was pretending to provide.
             Section {
                 Picker("Release grace period", selection: $settings.gracePeriodMinutes) {
                     ForEach(Self.gracePresets, id: \.self) { minutes in
@@ -186,16 +247,23 @@ struct AgentsSettingsTab: View {
                     }
                 }
             } footer: {
-                Text("After an agent finishes, sleep stays blocked this long — quick follow-up prompts don't flap the hold.")
+                SectionFooter("Sleep stays blocked this long after an agent finishes, so quick follow-up prompts don't flap the hold.")
             }
 
             Section {
-                Button("Remove All Integrations…", role: .destructive) {
-                    showingRemoveConfirmation = true
+                // A lone small button in a full-width card leaves three quarters
+                // of the card empty and reads as an accident. Naming the action
+                // in the label column and putting the verb on the trailing edge
+                // gives it the same row shape as every other row on the page.
+                LabeledContent {
+                    Button("Remove\u{2026}", role: .destructive) {
+                        showingRemoveConfirmation = true
+                    }
+                    .disabled(!integrations.claudeStatus.hooksInstalled)
+                } label: {
+                    Text("Remove all integrations")
+                    Text("Detection falls back to file activity. Only the entries Caffeinate added are removed.")
                 }
-                .disabled(!integrations.claudeStatus.hooksInstalled)
-            } footer: {
-                Text("Detection falls back to file activity afterwards. Caffeinate keeps working; it just can't tell a thinking agent from a finished one as precisely.")
             }
         }
         .formStyle(.grouped)
@@ -219,28 +287,9 @@ struct AgentsSettingsTab: View {
             Button("Remove", role: .destructive) { integrations.removeAllIntegrations() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Only the hook entries Caffeinate added are removed — the rest of each agent's configuration is left untouched. You can install them again at any time.")
+            Text("Only the hook entries Caffeinate added are removed \u{2014} the rest of each agent's configuration is left untouched. You can install them again at any time.")
         }
         .onAppear { integrations.refresh() }
-    }
-
-    // MARK: Claude Code row
-
-    /// Name + version in the label column, hooks state and the one action that
-    /// applies in the trailing column — the shape System Settings uses for
-    /// "here is a thing, here is what it's doing, here is the button".
-    @ViewBuilder
-    private var claudeRow: some View {
-        let status = integrations.claudeStatus
-        LabeledContent {
-            HStack(spacing: 12) {
-                StatusBadge(symbol: badgeSymbol, tint: badgeTint, text: badgeText)
-                integrationButton
-            }
-        } label: {
-            Text("Claude Code")
-            Text(agentSubtitle(status))
-        }
     }
 
     @ViewBuilder
@@ -248,56 +297,13 @@ struct AgentsSettingsTab: View {
         let status = integrations.claudeStatus
         if status.agentDetected {
             if status.needsRepair {
-                Button("Repair Hooks…") { showingInstallSheet = true }
+                Button("Repair Hooks\u{2026}") { showingInstallSheet = true }
             } else if status.hooksInstalled {
                 Button("Uninstall Hooks") { integrations.uninstallHooks() }
             } else {
-                Button("Install Hooks…") { showingInstallSheet = true }
+                Button("Install Hooks\u{2026}") { showingInstallSheet = true }
             }
         }
-    }
-
-    // MARK: Row copy
-
-    private func agentSubtitle(_ status: ClaudeCodeStatus) -> String {
-        guard status.agentDetected else { return "Not found on this Mac" }
-        if let version = status.agentVersion { return "Version \(version)" }
-        return "Detected"
-    }
-
-    private var badgeSymbol: String {
-        let status = integrations.claudeStatus
-        if !status.agentDetected { return "questionmark.circle" }
-        if status.needsRepair { return "exclamationmark.triangle.fill" }
-        return status.hooksInstalled ? "checkmark.circle.fill" : "minus.circle"
-    }
-
-    /// Color policy, deliberately narrow: orange is reserved for `needsRepair`,
-    /// the one state that is actually broken and actionable. Both "not detected"
-    /// and "hooks not installed" stay grey, because zero-configuration
-    /// file-activity detection is a supported product state (plan 04 §6), not a
-    /// fault — promoting it to a warning color would nag users into editing
-    /// their config, which is exactly the risk plan 04's risk table warns about.
-    private var badgeTint: Color {
-        let status = integrations.claudeStatus
-        if !status.agentDetected { return .secondary }
-        if status.needsRepair { return .orange }
-        return status.hooksInstalled ? .green : .secondary
-    }
-
-    private var badgeText: String {
-        let status = integrations.claudeStatus
-        if !status.agentDetected { return "Not detected" }
-        if status.needsRepair { return "Hooks need repair" }
-        return status.hooksInstalled ? "Hooks installed" : "Hooks not installed"
-    }
-
-    /// The third piece of information plan 04 §5 asks the row to carry. Every
-    /// word here has to be a fact the badge above does not already state, so
-    /// "hooks" is not repeated.
-    private var detectionMode: String {
-        let status = integrations.claudeStatus
-        return status.hooksInstalled && !status.needsRepair ? "Turn level" : "File activity"
     }
 
     /// Footers in System Settings track state; this one explains what the
@@ -305,15 +311,138 @@ struct AgentsSettingsTab: View {
     private var integrationFooter: String {
         let status = integrations.claudeStatus
         if !status.agentDetected {
-            return "No supported AI coding tool was found. Caffeinate still works as a manual keep-awake utility and will pick up Claude Code automatically once it's installed."
+            return "Caffeinate still works as a manual keep-awake, and will pick up Claude Code on its own once it's installed."
         }
         if status.needsRepair {
-            return "Caffeinate's entries in ~/.claude/settings.json are missing or out of date, so detection has fallen back to file activity. Repairing rewrites only those entries."
+            return "Caffeinate's entries in ~/.claude/settings.json are missing or out of date. Repairing rewrites only those."
         }
         if status.hooksInstalled {
-            return "Hooks report each turn as it starts and ends, so the Mac stays awake exactly while Claude Code is working. Caffeinate's entries sit in ~/.claude/settings.json next to your own configuration; uninstalling removes exactly those and nothing else."
+            return "Caffeinate's entries sit in ~/.claude/settings.json beside your own configuration; uninstalling removes exactly those and nothing else."
         }
-        return "Without hooks, Caffeinate watches file activity instead: it still holds sleep while an agent works, it just reacts later and guesses at the end of a turn. Installing deep-merges its entries into ~/.claude/settings.json and leaves your configuration in place."
+        return "File activity needs no setup and still holds sleep while an agent works — it just reacts later, and guesses at the end of a turn. Installing deep-merges hooks into ~/.claude/settings.json and leaves your configuration in place."
+    }
+}
+
+/// The one element on the page that is allowed to have presence: a tinted
+/// rounded-square icon, the agent's name at heading size, one plain-language
+/// line of live status, one button. Nothing else in the window is built this
+/// way, which is the point.
+private struct AgentHeroRow<Action: View>: View {
+    let status: ClaudeCodeStatus
+    @ViewBuilder let action: () -> Action
+
+    var body: some View {
+        let state = AgentState(status)
+        HStack(spacing: 12) {
+            AgentIcon(tint: state.tint, isActive: state.isActive)
+
+            // Only the name and the status sentence are combined. The button is
+            // a sibling, so VoiceOver still reaches it as its own element with
+            // its own label — combining the whole row would swallow it.
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("Claude Code")
+                        .font(.title3.weight(.semibold))
+                    if let version = status.agentVersion {
+                        // Secondary, not tertiary: at caption size tertiary grey
+                        // is not readable, and an unreadable element is not a
+                        // subtle one, it is a broken one.
+                        Text(version)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(state.statusLine)
+                    .font(.callout)
+                    .foregroundStyle(state.statusStyle)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+
+            Spacer(minLength: 12)
+            action()
+        }
+        // The hero's only structural privilege: it breathes. Space, not
+        // decoration, is what tells you which row is the important one.
+        .padding(.vertical, 8)
+    }
+}
+
+/// Everything the hero needs to say about one status value, derived once so the
+/// icon, the status line and the color policy can never disagree.
+///
+/// Color policy, deliberately narrow. Orange appears in exactly one state —
+/// `needsRepair`, the only one that is actually broken and actionable — and it
+/// appears only in the icon, never in the text, because the text may be sitting
+/// directly above a red error row and two alarm colors in one card is a panic,
+/// not a hierarchy. Every other state uses the accent hue, solid when hooks are
+/// live and washed out when they are not: file-activity detection is a
+/// supported product state (plan 04 §6), not a fault, and painting it a warning
+/// color would nag users into editing config the risk table says to leave alone.
+///
+/// Text weight carries a second, orthogonal signal: `.primary` means "there is
+/// something here worth reading", `.secondary` means "nothing to do".
+private struct AgentState {
+    let tint: Color
+    /// Solid icon = hooks are live. The only saturated block in the window.
+    let isActive: Bool
+    let statusLine: String
+    let statusStyle: Color
+
+    init(_ status: ClaudeCodeStatus) {
+        let neutral = Color(nsColor: .secondaryLabelColor)
+        guard status.agentDetected else {
+            tint = neutral
+            isActive = false
+            statusLine = "Not found on this Mac"
+            statusStyle = neutral
+            return
+        }
+        if status.needsRepair {
+            tint = .orange
+            isActive = false
+            statusLine = "Hooks are out of date — back on file activity"
+            statusStyle = .primary
+            return
+        }
+        if status.hooksInstalled {
+            tint = .accentColor
+            isActive = true
+            // The old badge and the old "Detection mode" row, in one sentence.
+            statusLine = "Following each turn, start to finish"
+            statusStyle = .primary
+            return
+        }
+        tint = .accentColor
+        isActive = false
+        statusLine = "Watching file activity"
+        statusStyle = neutral
+    }
+}
+
+/// System Settings' service glyph: a rounded square, filled when the service is
+/// live and washed out to the same hue when it is merely available.
+private struct AgentIcon: View {
+    let tint: Color
+    let isActive: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// The washed state has to be visible against the card behind it, and the
+    /// card is near-white in light and near-black in dark. A single opacity
+    /// cannot do both: 0.14 accent over a dark card is within a few points of
+    /// the card itself, so the square vanishes and only the glyph reads.
+    private var washedOpacity: Double { colorScheme == .dark ? 0.24 : 0.14 }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(isActive ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(washedOpacity)))
+            .frame(width: 32, height: 32)
+            .overlay {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(isActive ? Color.white : tint)
+            }
+            .accessibilityHidden(true)
     }
 }
 
@@ -321,12 +450,17 @@ struct AgentsSettingsTab: View {
 /// plan 03's plannedChanges. Copy commitments (which file, deep-merge keeps
 /// your config, one-click uninstall, and that you don't have to install at all)
 /// are product promises, not optional text — they match onboarding step 2.
-/// Laid out like a system consent sheet: icon + question, the evidence, then a
-/// divider and the Cancel/confirm pair with the default action on the right.
+///
+/// The sheet keeps exactly one graphic: the hero's own icon, in its not-yet-live
+/// state, so the sheet reads as that row expanding rather than as a dialog that
+/// wandered in — and installing visibly fills the square. The change list under
+/// it is plain type. Colored badges and a card per change would put two more
+/// hues and a second container level into a window that was just disciplined
+/// down to one accent, and neither carried information the words don't.
 struct InstallConsentSheet: View {
     let changes: [PlannedChangeSummary]
     /// Repair is the same write with a different promise; saying "Install" on a
-    /// sheet the user opened with "Repair Hooks…" is a broken sentence.
+    /// sheet the user opened with "Repair…" is a broken sentence.
     let isRepair: Bool
     let onInstall: () -> Void
     let onCancel: () -> Void
@@ -334,13 +468,10 @@ struct InstallConsentSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "doc.badge.gearshape")
-                    .font(.system(size: 30))
-                    .foregroundStyle(Color.accentColor)
-                    .accessibilityHidden(true)
+                AgentIcon(tint: .accentColor, isActive: false)
                 VStack(alignment: .leading, spacing: 6) {
                     Text(isRepair ? "Repair Claude Code hooks?" : "Install Claude Code hooks?")
-                        .font(.headline)
+                        .font(.title3.weight(.semibold))
                     Text(subtitle)
                         .fixedSize(horizontal: false, vertical: true)
                     Text("You don't have to: cancelling leaves Caffeinate on file-activity detection, which needs no configuration at all.")
@@ -352,19 +483,20 @@ struct InstallConsentSheet: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Changes to be made")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                SectionHeader("Changes to be made")
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 14) {
                         ForEach(changes) { change in
-                            changeCard(change)
+                            changeEntry(change)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(minHeight: 150, maxHeight: 260)
+                // The floor keeps a single-change list from looking like a
+                // mistake; the ceiling hands the list its scrollbar back if an
+                // agent ever plans more writes than the sheet can show.
+                .frame(minHeight: 90, maxHeight: 240)
             }
             .padding(20)
 
@@ -391,18 +523,12 @@ struct InstallConsentSheet: View {
         return "Caffeinate deep-merges its hook entries into the file below. All of your existing configuration is preserved, and you can uninstall with one click at any time."
     }
 
-    private func changeCard(_ change: PlannedChangeSummary) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Label {
-                    Text(change.path)
-                        .font(.callout.weight(.semibold))
-                        .textSelection(.enabled)
-                } icon: {
-                    Image(systemName: change.kind == .create ? "plus.circle.fill" : "pencil.circle.fill")
-                        .foregroundStyle(change.kind == .create ? Color.green : Color.accentColor)
-                }
-                Spacer(minLength: 8)
+    private func changeEntry(_ change: PlannedChangeSummary) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(change.path)
+                    .font(.body.weight(.medium))
+                    .textSelection(.enabled)
                 Text(change.kind == .create ? "New file" : "Merged")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -414,8 +540,6 @@ struct InstallConsentSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -436,9 +560,9 @@ struct SafetySettingsTab: View {
                     }
                 }
             } header: {
-                Text("Battery")
+                SectionHeader("Battery")
             } footer: {
-                Text("Holding resumes 3 points above the threshold, or as soon as you plug in. Starting a hold by hand overrides the pause.")
+                SectionFooter(batteryFooter)
             }
 
             Section {
@@ -458,33 +582,54 @@ struct SafetySettingsTab: View {
                     detail: "The hold is released while you are switched out."
                 )
             } header: {
-                Text("Always-On Protections")
+                SectionHeader("Always-On Protections")
             } footer: {
-                Text("These three can't be turned off.")
+                // Not "These three can't be turned off" — the header already
+                // says "Always-On". The footer's job is the fact the header
+                // can't carry: that they outrank a hold you started yourself.
+                SectionFooter("These override every hold, whether you started it or an agent did.")
             }
         }
         .formStyle(.grouped)
     }
+
+    /// A footer that describes hysteresis while the gate is switched off is
+    /// describing behaviour that isn't happening, and it makes the picker read
+    /// as decorative. So it switches with the setting.
+    private var batteryFooter: String {
+        guard settings.batteryThreshold > 0 else {
+            return "Caffeinate will hold sleep off at any battery level. Low Power Mode still releases the hold."
+        }
+        return "Holding resumes 3 points above the threshold, or as soon as you plug in. A hold you start by hand overrides the pause."
+    }
 }
 
-// MARK: - Shared rows
+// MARK: - Shared type
 
-/// Compact state pill for a settings row: a tinted symbol plus secondary text,
-/// the way System Settings annotates a service's current condition.
-private struct StatusBadge: View {
-    let symbol: String
-    let tint: Color
+/// Section headers step back so the hero can step forward: hierarchy comes from
+/// type and color weight, not from decoration.
+private struct SectionHeader: View {
     let text: String
+    init(_ text: String) { self.text = text }
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: symbol)
-                .foregroundStyle(tint)
-            Text(text)
-                .foregroundStyle(.secondary)
-        }
-        .font(.callout)
-        .accessibilityElement(children: .combine)
+        Text(text)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// Footers are the quietest text in the window by design — they explain, they
+/// do not announce.
+private struct SectionFooter: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -521,7 +666,7 @@ private struct ProtectionRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                 Text(detail)
-                    .font(.callout)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

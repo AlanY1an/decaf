@@ -4,12 +4,12 @@
 
 /// The kinds of power assertions the engine can create.
 public enum AssertionKind: String, Sendable, CaseIterable, Equatable {
-    /// kIOPMAssertPreventUserIdleSystemSleep — the only kind used in MVP.
-    /// Effective on battery; the display may still sleep.
+    /// kIOPMAssertPreventUserIdleSystemSleep — always held while any source
+    /// wants a hold. Effective on battery; the display may still sleep.
     case preventIdleSystemSleep
 
-    /// kIOPMAssertPreventUserIdleDisplaySleep — reserved for the V1.x
-    /// "keep display awake" preference. No writer in MVP.
+    /// kIOPMAssertPreventUserIdleDisplaySleep — held additionally iff some live
+    /// source carries `DisplayPolicy.keepOn` (the union in reconcile step 3).
     case preventIdleDisplaySleep
 
     /// The IOKit assertion type string to pass to

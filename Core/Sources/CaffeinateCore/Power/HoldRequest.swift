@@ -34,9 +34,19 @@ public enum Expiry: Equatable, Sendable {
 public struct HoldRequest: Equatable, Sendable {
     public var source: HoldSourceID
     public var expiry: Expiry
+    /// How this source wants the DISPLAY treated. Defaults to the pre-existing
+    /// behaviour (system awake, display sleeps normally). The engine unions the
+    /// policies of all live holds — one `.keepOn` source is enough to keep the
+    /// display assertion up (PowerStateEngine.reconcile step 3).
+    public var displayPolicy: DisplayPolicy
 
-    public init(source: HoldSourceID, expiry: Expiry) {
+    public init(
+        source: HoldSourceID,
+        expiry: Expiry,
+        displayPolicy: DisplayPolicy = .allowSleep
+    ) {
         self.source = source
         self.expiry = expiry
+        self.displayPolicy = displayPolicy
     }
 }

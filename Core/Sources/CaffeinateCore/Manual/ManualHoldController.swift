@@ -43,13 +43,22 @@ public final class ManualHoldController {
     /// battery gate is engaged counts as an informed override — that rule
     /// lives in the engine's setRequest path (plan 01 gate table).
     ///
+    /// `displayPolicy` is the caller's current choice (the composition root
+    /// passes SettingsStore.defaultDisplayPolicy); it defaults to the
+    /// pre-existing behaviour so older call sites are unchanged.
+    ///
     /// Returns the UI-facing snapshot (mode + folded absolute expiry) so the
     /// composition root can publish ManualState without re-deriving the fold.
     /// Liveness stays the engine's truth: the snapshot is a value, not state.
     @discardableResult
-    public func activate(_ mode: ManualMode) -> ManualState {
+    public func activate(
+        _ mode: ManualMode,
+        displayPolicy: DisplayPolicy = .allowSleep
+    ) -> ManualState {
         let expiry = fold(mode)
-        engine.setRequest(HoldRequest(source: .manual, expiry: expiry))
+        engine.setRequest(
+            HoldRequest(source: .manual, expiry: expiry, displayPolicy: displayPolicy)
+        )
         switch expiry {
         case .indefinite:
             return ManualState(mode: mode, expiry: nil)

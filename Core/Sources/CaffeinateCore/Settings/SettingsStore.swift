@@ -22,6 +22,8 @@ public enum SettingsKey {
     public static let gracePeriodMinutes = "gracePeriodMinutes"
     /// Whether onboarding has completed. Default false.
     public static let hasCompletedOnboarding = "hasCompletedOnboarding"
+    /// `DisplayPolicy.rawValue` applied to new holds. Default "allowSleep".
+    public static let defaultDisplayPolicy = "defaultDisplayPolicy"
 }
 
 /// Typed access to Caffeinate's persisted settings.
@@ -32,6 +34,9 @@ public final class SettingsStore {
         public static let untilTimeMinutes = 1080 // 18:00
         public static let batteryThreshold = 20
         public static let gracePeriodMinutes = 3
+        /// The behaviour most people never touch: keep working, let the screen
+        /// sleep normally.
+        public static let displayPolicy: DisplayPolicy = .allowSleep
     }
 
     private let defaults: UserDefaults
@@ -83,6 +88,23 @@ public final class SettingsStore {
                 ?? Defaults.gracePeriodMinutes
         }
         set { defaults.set(newValue, forKey: SettingsKey.gracePeriodMinutes) }
+    }
+
+    /// Display behaviour applied to every newly created hold: agent holds
+    /// always use it, and a manual hold starts from it (the menu can then
+    /// change the running manual hold, which also updates this default for the
+    /// next one).
+    public var defaultDisplayPolicy: DisplayPolicy {
+        get {
+            guard
+                let raw = defaults.string(forKey: SettingsKey.defaultDisplayPolicy),
+                let policy = DisplayPolicy(rawValue: raw)
+            else {
+                return Defaults.displayPolicy
+            }
+            return policy
+        }
+        set { defaults.set(newValue.rawValue, forKey: SettingsKey.defaultDisplayPolicy) }
     }
 
     /// Whether first-run onboarding has been completed.

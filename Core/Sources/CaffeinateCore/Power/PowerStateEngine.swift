@@ -2,7 +2,10 @@
 //
 // Responsibilities (plan 01 "PowerStateEngine 与 reconcile"):
 // - Merge all hold sources through a [HoldSourceID: HoldRequest] registry: ANY
-//   live, non-expired request means "want to hold".
+//   live, non-expired request means "want to hold". The same union rule decides
+//   the DISPLAY assertion: the system assertion is held whenever any source is
+//   live, the display assertion iff ANY live source carries
+//   DisplayPolicy.keepOn (see reconcile step 3).
 // - Idempotent reconcile: under the same (requests, gates, now) a second call
 //   makes ZERO PowerAsserting calls.
 // - Wall-clock truth: expiry is a plain `deadline <= now()` comparison. The
@@ -74,6 +77,18 @@ public final class PowerStateEngine: ObservableObject {
     /// reaching into the private registry.
     @Published public private(set) var activeSources: Set<HoldSourceID> = []
 
+    /// What is ACTUALLY in effect right now: `.keepOn` iff the display
+    /// assertion is currently held. It is deliberately derived from `held`
+    /// rather than from the requests, so a suspended hold (safety gate) reports
+    /// `.allowSleep` — nothing is fighting a display blank in that state.
+    @Published public private(set) var effectiveDisplayPolicy: DisplayPolicy = .allowSleep
+
+    /// Fires once per reconcile that changed any published property, AFTER all
+    /// of them have settled. `@Published` emits in `willSet`, so a subscriber
+    /// of an individual property that reads the engine back would observe a
+    /// stale object; the composition root subscribes here instead.
+    public let didSettle = PassthroughSubject<Void, Never>()
+
     /// Effective tuning. The runtime batteryThreshold comes from SettingsStore
     /// via `updateTuning` (review decision R3); defaults are PowerTuning's.
     public private(set) var tuning: PowerTuning
@@ -127,6 +142,50 @@ public final class PowerStateEngine: ObservableObject {
             PowerLog.logger.log("battery gate overridden by explicit manual activation")
         }
         requests[request.source] = request
+        reconcile()
+    }
+
+    /// Changes one live source's display policy in place, then reconciles.
+    ///
+    /// Deliberately NOT routed through `setRequest`: re-registering `.manual`
+    /// counts as an explicit activation and would trip the battery-gate
+    /// override (KYA semantics). Flipping a policy is not an activation, so the
+    /// gate rules stay exactly as they were. No-op when the source is absent or
+    /// already on that policy (keeps reconcile idempotent).
+    public func setDisplayPolicy(_ policy: DisplayPolicy, for source: HoldSourceID) {
+        guard var request = requests[source], request.displayPolicy != policy else { return }
+        request.displayPolicy = policy
+        requests[source] = request
+        PowerLog.logger.log(
+            "display policy for \(String(describing: source), privacy: .public) -> \(policy.rawValue, privacy: .public)"
+        )
+        reconcile()
+    }
+
+    /// Changes EVERY live source's display policy in one atomic step.
+    ///
+    /// The display policy is a single global preference (the menu writes the
+    /// setting's default, and every hold — manual or agent — follows it), so
+    /// this is the call the composition root makes. Doing it as one mutation
+    /// plus one reconcile, rather than a loop over `setDisplayPolicy(_:for:)`,
+    /// matters for two reasons: the engine never passes through a half-applied
+    /// state where some holds have flipped and others have not (which would
+    /// publish a transient `effectiveDisplayPolicy` the user never asked for),
+    /// and N sources cost one reconcile instead of N.
+    ///
+    /// Same reasoning as the per-source path: deliberately NOT routed through
+    /// `setRequest`, so flipping a policy never counts as a manual activation
+    /// and never trips the battery-gate override.
+    public func setDisplayPolicyForAllSources(_ policy: DisplayPolicy) {
+        var changed = false
+        for (source, request) in requests where request.displayPolicy != policy {
+            var updated = request
+            updated.displayPolicy = policy
+            requests[source] = updated
+            changed = true
+        }
+        guard changed else { return }
+        PowerLog.logger.log("display policy for all live sources -> \(policy.rawValue, privacy: .public)")
         reconcile()
     }
 
@@ -258,19 +317,37 @@ public final class PowerStateEngine: ObservableObject {
         // 2. Gate composition.
         let blocked = gates.blocksHolding
 
-        // 3. Desired assertion kinds (MVP: system-sleep only; V1.x appends the
-        //    display kind by preference).
+        // 3. Desired assertion kinds — a UNION over the live sources, exactly
+        //    like the multi-source hold decision itself:
+        //      system  : whenever any source is live and nothing suppresses it;
+        //      display : additionally, iff ANY live source asks for .keepOn.
+        //    A safety gate suspends the whole hold, so it drops BOTH kinds; the
+        //    gate semantics are untouched by this policy.
+        //    The extra kind is read off the policy itself
+        //    (`DisplayPolicy.additionalAssertionKind`) rather than hardcoded
+        //    here, so a future third policy cannot be added to the enum and
+        //    silently ignored by the engine.
         let wantsHold = !requests.isEmpty
-        let desired: Set<AssertionKind> =
-            (wantsHold && !blocked && !isSystemSleeping) ? [.preventIdleSystemSleep] : []
+        var desired: Set<AssertionKind> = []
+        if wantsHold, !blocked, !isSystemSleeping {
+            desired.insert(.preventIdleSystemSleep)
+            for request in requests.values {
+                if let extra = request.displayPolicy.additionalAssertionKind {
+                    desired.insert(extra)
+                }
+            }
+        }
 
-        // 4. Settle held vs desired.
-        for (kind, assertion) in held where !desired.contains(kind) {
+        // 4. Settle held vs desired. Both loops walk `AssertionKind.allCases`
+        //    rather than the Set so the IO order (and the log) is deterministic
+        //    regardless of Set hashing.
+        for kind in AssertionKind.allCases where !desired.contains(kind) {
+            guard let assertion = held[kind] else { continue }
             asserter.release(assertion.id)
             held.removeValue(forKey: kind)
             PowerLog.logger.log("released assertion \(assertion.id) (\(kind.rawValue, privacy: .public))")
         }
-        for kind in desired {
+        for kind in AssertionKind.allCases where desired.contains(kind) {
             if let existing = held[kind] {
                 // Renewal: create-then-release, no gap (review decision R9 —
                 // never IOPMAssertionSetProperty).
@@ -303,18 +380,33 @@ public final class PowerStateEngine: ObservableObject {
             }
         }
 
-        // 5. Recompute status; publish only on change.
+        // 5. Recompute published state; publish only on change.
+        var changed = false
         let newStatus = computeStatus(wantsHold: wantsHold, blocked: blocked)
         if newStatus != status {
             status = newStatus
+            changed = true
         }
         let sourceIDs = Set(requests.keys)
         if sourceIDs != activeSources {
             activeSources = sourceIDs
+            changed = true
+        }
+        // Effective policy = what the assertions actually say right now.
+        let newDisplayPolicy: DisplayPolicy =
+            held[.preventIdleDisplaySleep] != nil ? .keepOn : .allowSleep
+        if newDisplayPolicy != effectiveDisplayPolicy {
+            effectiveDisplayPolicy = newDisplayPolicy
+            changed = true
         }
 
         // 6. Re-arm the boundary timer (nearest deadline / renewal instant).
         rearmTimer(now: current)
+
+        // 7. One settled notification after every published property is final.
+        if changed {
+            didSettle.send()
+        }
     }
 
     private func computeStatus(wantsHold: Bool, blocked: Bool) -> Status {

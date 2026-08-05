@@ -30,7 +30,9 @@ struct SettingsView: View {
                 .tabItem { Label("Safety", systemImage: "bolt.shield") }
                 .tag(SettingsTab.safety)
         }
-        .frame(width: 460)
+        // A single fixed width plus a height floor: tabs differ in content
+        // height, and without the floor the window resizes as you switch tabs.
+        .frame(minWidth: 580, maxWidth: 580, minHeight: 420, alignment: .top)
     }
 }
 
@@ -233,7 +235,7 @@ struct InstallConsentSheet: View {
                     }
                 }
             }
-            .frame(minHeight: 120, maxHeight: 220)
+            .frame(minHeight: 160, maxHeight: 300)
 
             HStack {
                 Spacer()
@@ -242,7 +244,9 @@ struct InstallConsentSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 440)
+        // Sized to the settings window it sheets from; the change previews are
+        // file paths and JSON, which wrap badly in a narrow sheet.
+        .frame(width: 540)
     }
 }
 

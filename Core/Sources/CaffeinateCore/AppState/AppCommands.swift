@@ -20,4 +20,19 @@ public protocol AppCommands: AnyObject {
     /// User confirmed "keep awake anyway" in the low-battery override dialog
     /// (KYA semantics, plan 01 battery gate override).
     func confirmLowBatteryOverride()
+
+    /// Chooses the display behaviour: applies to the running manual hold
+    /// (and to live agent holds, which always follow the default) and is
+    /// persisted as the default for the next hold.
+    func setDisplayPolicy(_ policy: DisplayPolicy)
+
+    /// Blanks the display immediately (`pmset displaysleepnow`).
+    ///
+    /// Refused — logged, no process launched — while
+    /// `AppStateSnapshot.canTurnOffDisplayNow` is false, i.e. while the display
+    /// assertion is held: blanking then would be undone by our own assertion.
+    /// The menu item is expected to be disabled in that state, with
+    /// `turnOffDisplayUnavailableReason` as the explanation; this refusal is
+    /// the belt-and-braces half of the same rule.
+    func turnOffDisplayNow()
 }

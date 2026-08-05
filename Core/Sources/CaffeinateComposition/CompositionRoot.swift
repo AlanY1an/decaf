@@ -53,6 +53,8 @@ public final class CompositionRoot: ObservableObject {
     public let manualHold: ManualHoldController
     public let socketServer: HookSocketServer
     public let coordinator: DetectionCoordinator
+    /// "Turn the screen off now" adapter (pmset in production, a fake in tests).
+    public let displaySleeper: any DisplaySleeping
 
     private let batteryMonitor = BatteryMonitor()
     private let lowPowerModeMonitor = LowPowerModeMonitor()
@@ -81,9 +83,11 @@ public final class CompositionRoot: ObservableObject {
     public init(
         settings: SettingsStore = SettingsStore(),
         asserter: any PowerAsserting = IOPMPowerAsserter(),
+        displaySleeper: any DisplaySleeping = PmsetDisplaySleeper(),
         socketPath: String = HookSocketServer.defaultSocketPath
     ) {
         self.settings = settings
+        self.displaySleeper = displaySleeper
 
         let tuning = PowerTuning(
             batteryThreshold: settings.batteryThreshold,
@@ -127,12 +131,12 @@ public final class CompositionRoot: ObservableObject {
         lowPowerModeMonitor.start()
         workspaceMonitors.start()
 
-        // Engine status/source changes -> snapshot.
-        engine.$status
-            .sink { [weak self] _ in self?.republish() }
-            .store(in: &cancellables)
-        engine.$activeSources
-            .sink { [weak self] _ in self?.republish() }
+        // Engine state changes -> snapshot. `didSettle` fires after every
+        // published property is final; subscribing to the individual
+        // @Published properties would read the engine back in `willSet` and
+        // publish a snapshot one step behind.
+        engine.didSettle
+            .sink { [weak self] in self?.republish() }
             .store(in: &cancellables)
 
         // Detection pipeline.
@@ -194,6 +198,18 @@ public final class CompositionRoot: ObservableObject {
             batteryThreshold: settings.batteryThreshold,
             gracePeriod: TimeInterval(settings.gracePeriodMinutes * 60)
         ))
+        // The display policy is a setting too: changing it in the settings pane
+        // must reach the holds that are already running.
+        applyDisplayPolicyToLiveHolds(settings.defaultDisplayPolicy)
+        republish()
+    }
+
+    /// Pushes `policy` onto every live hold in one atomic engine step. Agent
+    /// holds always follow the default (there is no per-session override), and
+    /// the manual hold follows the user's latest menu choice — which is the
+    /// same value, since choosing from the menu also writes the default.
+    private func applyDisplayPolicyToLiveHolds(_ policy: DisplayPolicy) {
+        engine.setDisplayPolicyForAllSources(policy)
     }
 
     /// HooksInstallationInspector verdict from the integrations layer (probe
@@ -221,8 +237,15 @@ public final class CompositionRoot: ObservableObject {
         for source in appliedAgentSources.subtracting(desired) {
             engine.removeRequest(source)
         }
+        // Agent holds always take the setting's default display policy — the
+        // menu's per-use choice is manual-only, and it writes that default.
+        let agentDisplayPolicy = settings.defaultDisplayPolicy
         for source in desired.subtracting(appliedAgentSources) {
-            engine.setRequest(HoldRequest(source: source, expiry: .indefinite))
+            engine.setRequest(HoldRequest(
+                source: source,
+                expiry: .indefinite,
+                displayPolicy: agentDisplayPolicy
+            ))
         }
         appliedAgentSources = desired
 
@@ -276,7 +299,9 @@ public final class CompositionRoot: ObservableObject {
             agentSessions: sessionSummaries,
             safetyPause: safetyPause,
             precision: precision,
-            wantsHold: !engine.activeSources.isEmpty
+            wantsHold: !engine.activeSources.isEmpty,
+            effectiveDisplayPolicy: engine.effectiveDisplayPolicy,
+            selectedDisplayPolicy: settings.defaultDisplayPolicy
         )
         if newSnapshot != snapshot {
             snapshot = newSnapshot
@@ -299,7 +324,7 @@ extension CompositionRoot: AppCommands {
     }
 
     public func startManual(_ mode: ManualMode) {
-        manualState = manualHold.activate(mode)
+        manualState = manualHold.activate(mode, displayPolicy: settings.defaultDisplayPolicy)
         republish()
     }
 
@@ -314,5 +339,45 @@ extension CompositionRoot: AppCommands {
     /// override (KYA semantics); the rule lives in the engine's setRequest.
     public func confirmLowBatteryOverride() {
         startManual(settings.defaultManualMode)
+    }
+
+    /// Applies the chosen display behaviour to the running manual hold (and to
+    /// live agent holds, which follow the default by definition) and persists
+    /// it as the default for the next hold.
+    ///
+    /// The policy flip goes through `engine.setDisplayPolicy(_:for:)`, not
+    /// through a fresh `setRequest(.manual …)`: re-registering the manual
+    /// source counts as an explicit activation and would trip the battery-gate
+    /// override. Changing a display preference must never override a safety
+    /// gate.
+    public func setDisplayPolicy(_ policy: DisplayPolicy) {
+        settings.defaultDisplayPolicy = policy
+        applyDisplayPolicyToLiveHolds(policy)
+        logger.log("display policy set to \(policy.rawValue, privacy: .public)")
+        republish()
+    }
+
+    /// Blanks the display now (`pmset displaysleepnow`).
+    ///
+    /// CRITICAL INTERACTION — chosen rule: REFUSE, do not downgrade. While the
+    /// display assertion is held, blanking the screen and holding
+    /// preventIdleDisplaySleep fight each other (the display would blank and
+    /// wake immediately), so the action is unavailable while `.keepOn` is in
+    /// effect instead of silently rewriting the user's persisted choice. The
+    /// menu item is disabled with
+    /// `AppStateSnapshot.turnOffDisplayUnavailableReason`; this guard is the
+    /// second half of the same rule, for any caller that ignores the flag.
+    ///
+    /// Note "in effect", not "requested": a hold suspended by a safety gate
+    /// holds no display assertion, so blanking is allowed and works.
+    public func turnOffDisplayNow() {
+        guard engine.effectiveDisplayPolicy != .keepOn else {
+            logger.log("turnOffDisplayNow refused: display is being kept on")
+            return
+        }
+        let issued = displaySleeper.sleepDisplayNow()
+        if !issued {
+            logger.error("turnOffDisplayNow: display sleep request could not be issued")
+        }
     }
 }

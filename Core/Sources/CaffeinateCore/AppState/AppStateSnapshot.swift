@@ -72,18 +72,44 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// True when the state machine wants to hold, even if suppressed by
     /// `safetyPause` (drives the pausedBySafety icon state).
     public var wantsHold: Bool
+    /// What is ACTUALLY in effect right now: `.keepOn` iff the display
+    /// assertion is currently held. Suspended holds report `.allowSleep`
+    /// (nothing is keeping the screen lit while a safety gate is closed).
+    public var effectiveDisplayPolicy: DisplayPolicy
+    /// What the user has CHOSEN — the persisted default, applied to the running
+    /// manual hold and to every new hold. This is the menu's checkmark/radio
+    /// value; `effectiveDisplayPolicy` is the reality indicator. They differ
+    /// while nothing is held, or while a safety gate suspends the hold.
+    public var selectedDisplayPolicy: DisplayPolicy
+
+    /// Whether "Turn Off Display Now" may run. Holding the display assertion
+    /// and blanking the display fight each other (the screen would wake right
+    /// back up), so the action is unavailable exactly while `.keepOn` is in
+    /// effect. See `DisplayActionCopy.turnOffDisplayUnavailableReason`.
+    public var canTurnOffDisplayNow: Bool {
+        effectiveDisplayPolicy != .keepOn
+    }
+
+    /// nil when the action is available; otherwise the user-facing reason.
+    public var turnOffDisplayUnavailableReason: String? {
+        canTurnOffDisplayNow ? nil : DisplayActionCopy.turnOffDisplayUnavailableReason
+    }
 
     public init(
         manual: ManualState? = nil,
         agentSessions: [AgentSessionSummary] = [],
         safetyPause: SafetyPause? = nil,
         precision: [AgentKind: DetectionPrecision] = [:],
-        wantsHold: Bool = false
+        wantsHold: Bool = false,
+        effectiveDisplayPolicy: DisplayPolicy = .allowSleep,
+        selectedDisplayPolicy: DisplayPolicy = .allowSleep
     ) {
         self.manual = manual
         self.agentSessions = agentSessions
         self.safetyPause = safetyPause
         self.precision = precision
         self.wantsHold = wantsHold
+        self.effectiveDisplayPolicy = effectiveDisplayPolicy
+        self.selectedDisplayPolicy = selectedDisplayPolicy
     }
 }

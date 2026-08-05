@@ -39,7 +39,8 @@
 //    a settings window is not a product page.
 //
 // General:  the wordmark, launch at login (SMAppService, read directly — not a
-//           stored pref), default manual duration, "until" time.
+//           stored pref), default manual duration, "until" time, and the default
+//           display behavior (the menu can override it for the running hold).
 // Agents:   the hero, release grace period, remove all integrations.
 // Safety:   low-battery pause threshold, fixed always-on protections.
 //
@@ -60,14 +61,19 @@ struct SettingsView: View {
     private static let windowWidth: CGFloat = 620
     /// Fixed, not a floor: grouped forms scroll internally, so a stable window
     /// beats one that jumps every time you switch tabs. Measured — not guessed —
-    /// by rendering all six states unconstrained and scanning for the last inked
-    /// row in each. They land between 305pt (General) and 377pt, and the tallest
-    /// is Safety, not the Agents error state everyone assumes: 400 clears it
-    /// with a normal bottom margin and room for a footer that wraps one line
-    /// further in another locale. The previous 470 was measured against a
-    /// copy-heavier layout and then padded, which is how General ended up with
-    /// roughly 350pt of nothing in it.
-    private static let windowHeight: CGFloat = 400
+    /// by rendering every state unconstrained and scanning for the last inked
+    /// row in each. Re-measured when General grew its display row: General is
+    /// now the tallest page at 385pt, ahead of Safety at 350 and the Agents
+    /// error state at 316. 445 clears General with a normal bottom margin and
+    /// room for a footer that wraps one line further in another locale.
+    ///
+    /// It lands near the 470 this window carried two passes ago, so it is worth
+    /// saying why that is not a walk-back: 470 was wrong then because it was
+    /// measured against copy that had since been cut, leaving General with
+    /// roughly 350pt of nothing in it. General now genuinely fills this. A
+    /// tabbed window is sized by its tallest page, so the cost lands as air on
+    /// Agents — the price of a window that does not jump when you switch tabs.
+    private static let windowHeight: CGFloat = 445
 
     var body: some View {
         TabView(selection: $tabRouter.selectedTab) {
@@ -139,11 +145,45 @@ struct GeneralSettingsTab: View {
             } footer: {
                 SectionFooter("Used when you click the menu bar icon or flip the Keep Awake switch. The menu's \u{201C}Until\u{2026}\u{201D} item holds sleep off up to the time above.")
             }
+
+            // Its own card, not a third row of the one above: duration and
+            // "until" are manual-only, this governs agent holds too, and a card
+            // whose header says "Manual" would quietly misfile it.
+            //
+            // No header, following the Agents page — but the row label has to
+            // carry the qualifier itself, because "Display" alone next to
+            // "Sleeps normally" reads like the system-wide Energy setting the
+            // user already has in System Settings. "While keeping awake" is the
+            // phrase that makes it Caffeinate's business and not macOS's.
+            Section {
+                // Values come from `DisplayPolicy.settingsTitle`, not from
+                // literals here: the menu's check-markable item reads
+                // `menuTitle`, and the two labels for one setting have to be
+                // maintained side by side in CaffeinateCore or they drift.
+                Picker("Display while keeping awake", selection: $settings.defaultDisplayPolicy) {
+                    ForEach(DisplayPolicy.allCases, id: \.self) { policy in
+                        Text(policy.settingsTitle).tag(policy)
+                    }
+                }
+            } footer: {
+                // The tradeoff in plain words, then the scope. "The Mac keeps
+                // working either way" is the sentence that has to land: the
+                // whole point of going dark here is that nothing stops.
+                //
+                // Last clause says "already running", not "a hold you start by
+                // hand": the menu's toggle reaches every live hold, agent ones
+                // included, which is the case the feature exists for.
+                SectionFooter("The Mac keeps working either way \u{2014} a sleeping display just saves battery. Keep it on when you want to watch a run. New holds start this way, and the menu can change a hold that is already running.")
+            }
         }
         .formStyle(.grouped)
-        // The login-item state can change outside this window (System Settings >
-        // General > Login Items), so re-read it whenever the page appears.
-        .onAppear { launchAtLogin = SMAppService.mainApp.status == .enabled }
+        // Both of these can change outside this window: the login item from
+        // System Settings > General > Login Items, the display default from the
+        // menu's own override. Re-read whenever the page appears.
+        .onAppear {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            settings.refreshFromBacking()
+        }
     }
 
     /// Register/unregister the login item, mirroring the system's own state back

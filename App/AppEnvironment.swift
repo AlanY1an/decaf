@@ -47,6 +47,9 @@ final class UISettings: ObservableObject {
     /// Fired after any write-through; assembly wires this to
     /// `CompositionRoot.applyTuning()` (review decision R3).
     var onChange: (() -> Void)?
+    /// True only inside `refreshFromBacking()`; see the guard in the
+    /// `defaultDisplayPolicy` setter.
+    private var isSyncingFromBacking = false
 
     @Published var defaultManualMode: ManualMode {
         didSet {
@@ -57,6 +60,19 @@ final class UISettings: ObservableObject {
     @Published var untilTimeMinutes: Int {
         didSet {
             backing.untilTimeMinutes = untilTimeMinutes
+            onChange?()
+        }
+    }
+    /// What the display does while a hold is active. Agent holds always follow
+    /// this; a manual hold can be overridden from the menu, which writes back
+    /// here so the next hold starts the same way.
+    @Published var defaultDisplayPolicy: DisplayPolicy {
+        didSet {
+            // Suppressed while `refreshFromBacking()` is pulling a value that
+            // already came FROM the store: writing it back and firing onChange
+            // would re-enter the engine to re-apply a policy it just applied.
+            guard !isSyncingFromBacking else { return }
+            backing.defaultDisplayPolicy = defaultDisplayPolicy
             onChange?()
         }
     }
@@ -83,9 +99,28 @@ final class UISettings: ObservableObject {
         self.backing = backing
         self.defaultManualMode = backing.defaultManualMode
         self.untilTimeMinutes = backing.untilTimeMinutes
+        self.defaultDisplayPolicy = backing.defaultDisplayPolicy
         self.batteryThreshold = backing.batteryThreshold
         self.gracePeriodMinutes = backing.gracePeriodMinutes
         self.hasCompletedOnboarding = backing.hasCompletedOnboarding
+    }
+
+    /// Re-read preferences that another surface can legitimately change while
+    /// this object is alive. Only the display policy qualifies today: the menu's
+    /// override goes through `AppCommands.setDisplayPolicy` — the one writer
+    /// that can also retune the live hold — and that call persists the new
+    /// default behind this mirror's back.
+    ///
+    /// Called on settings-page appear (the same way the launch-at-login toggle
+    /// re-reads SMAppService) AND on every snapshot the composition root
+    /// publishes, so a settings window left open while the user flips the menu
+    /// toggle updates instead of showing a stale value.
+    func refreshFromBacking() {
+        let stored = backing.defaultDisplayPolicy
+        guard stored != defaultDisplayPolicy else { return }
+        isSyncingFromBacking = true
+        defaultDisplayPolicy = stored
+        isSyncingFromBacking = false
     }
 }
 
@@ -343,8 +378,18 @@ final class AppEnvironment {
         self.toggleGate = ManualToggleGate(store: store, commands: root)
 
         // Root snapshot → UI store (the UI's single data channel).
+        //
+        // The same tick re-syncs the preference mirror: the menu's display
+        // override is persisted by the composition root itself, so an open
+        // settings window would otherwise keep showing the pre-override value.
+        // `refreshFromBacking` is a no-op when nothing moved and never writes
+        // back, so this cannot loop.
+        let settingsMirror = self.settings
         root.$snapshot
-            .sink { [weak store] snapshot in store?.update(snapshot) }
+            .sink { [weak store] snapshot in
+                store?.update(snapshot)
+                settingsMirror.refreshFromBacking()
+            }
             .store(in: &sinks)
 
         // Preference writes → engine tuning (review decision R3).

@@ -77,7 +77,21 @@ enum MenuTextFormatter {
 
     // MARK: Status line (plan 04 §3 table; priority mirrors the icon)
 
+    /// The status line, plus the display clause when — and only when — the
+    /// display is actually being held on.
+    ///
+    /// `effectiveDisplayPolicy` is what is in force this instant, not what was
+    /// asked for: a hold suspended by a safety gate holds no display assertion,
+    /// so the clause correctly disappears while the line reads "Paused" (and the
+    /// "Keep Display On" check mark below stays on, because that is the choice,
+    /// not the reality). Nothing is appended for `.allowSleep`, which is the
+    /// default and the norm — a menu that narrates its own default is noise.
     static func statusLine(for s: AppStateSnapshot, now: Date = Date()) -> String {
+        let base = baseStatusLine(for: s, now: now)
+        return s.effectiveDisplayPolicy == .keepOn ? "\(base) · Display on" : base
+    }
+
+    private static func baseStatusLine(for s: AppStateSnapshot, now: Date) -> String {
         if let pause = s.safetyPause, s.wantsHold {
             switch pause {
             case .lowBattery(let percent, let threshold):
@@ -291,6 +305,47 @@ struct MenuContentView: View {
                 minutesSinceMidnight: settings.untilTimeMinutes, now: Date()
             )))
         }
+
+        Divider()
+
+        // The display, in its own group. "Keep Display On" modifies the hold
+        // above it, but "Turn Off Display Now" is an immediate action with
+        // nothing to do with duration, and filing it under the hold controls
+        // would read as though it ended the hold.
+        //
+        // The toggle is a point-of-use override, so it appears whenever there is
+        // a hold to override. That means ANY hold, not just a manual one:
+        // `setDisplayPolicy` reaches live agent holds too, and the headline case
+        // for this whole feature — kick off a long agent run, then darken the
+        // screen — happens while the only live hold is an agent's.
+        //
+        // The second clause keeps the control on screen whenever the choice is
+        // "on", which guarantees the item that re-enables "Turn Off Display Now"
+        // always sits directly above the disabled one, never a trip to Settings
+        // away. (Disabled requires the display assertion to be held, which
+        // requires a live hold AND the choice being `.keepOn`, so either clause
+        // alone already covers it — the pair is belt and braces.)
+        if snapshot.wantsHold || snapshot.selectedDisplayPolicy == .keepOn {
+            // Checked from `selectedDisplayPolicy`, not the effective one: this
+            // is a control, and a control shows the choice. (The status line
+            // above shows the reality — the two differ while a safety gate has
+            // the hold suspended.)
+            Toggle(DisplayPolicy.keepOn.menuTitle, isOn: Binding(
+                get: { snapshot.selectedDisplayPolicy == .keepOn },
+                set: { commands.setDisplayPolicy($0 ? .keepOn : .allowSleep) }
+            ))
+        }
+
+        // Holding the display awake and then blanking it fight each other — the
+        // screen lights straight back up. The engine refuses the command in that
+        // state (`canTurnOffDisplayNow`); the menu says so up front by disabling
+        // the item rather than silently changing a policy the user chose. The
+        // cure is the line directly above.
+        Button(DisplayActionCopy.turnOffDisplayNow) {
+            commands.turnOffDisplayNow()
+        }
+        .disabled(!snapshot.canTurnOffDisplayNow)
+        .help(snapshot.turnOffDisplayUnavailableReason ?? "")
 
         Divider()
 

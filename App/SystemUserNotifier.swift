@@ -32,6 +32,15 @@ final class SystemUserNotifier: UserNotifying, @unchecked Sendable {
     /// nil = never asked. Set once the system has answered, so a user who
     /// declined is not re-prompted on every later downgrade.
     private var authorized: Bool?
+    /// True between asking the system and hearing back. The prompt is modal to
+    /// the user but this call is not: a second downgrade landing while the
+    /// first is still waiting would otherwise see `authorized == nil` and ask
+    /// again. Its notice waits in `pending` instead.
+    private var asking = false
+    /// Notices that arrived while the authorization prompt was up. Bounded
+    /// because it can only grow while one prompt is on screen, and each entry
+    /// is one released hold the user is owed an explanation for.
+    private var pending: [UserNotice] = []
 
     init(center: UNUserNotificationCenter = .current()) {
         self.center = center
@@ -40,6 +49,16 @@ final class SystemUserNotifier: UserNotifying, @unchecked Sendable {
     func post(_ notice: UserNotice) {
         lock.lock()
         let known = authorized
+        if known == nil {
+            if asking {
+                // Ask once, tell the user about everything that happened while
+                // they were deciding.
+                pending.append(notice)
+                lock.unlock()
+                return
+            }
+            asking = true
+        }
         lock.unlock()
 
         switch known {
@@ -53,9 +72,13 @@ final class SystemUserNotifier: UserNotifying, @unchecked Sendable {
                 guard let self else { return }
                 self.lock.lock()
                 self.authorized = granted
+                self.asking = false
+                let queued = self.pending
+                self.pending.removeAll()
                 self.lock.unlock()
                 guard granted else { return }
                 self.deliver(notice)
+                for queued in queued { self.deliver(queued) }
             }
         }
     }

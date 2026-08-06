@@ -217,14 +217,24 @@ public final class CompositionRoot: ObservableObject {
 
     // MARK: - Settings propagation (review decision R3)
 
-    /// Re-reads SettingsStore-backed tuning into the engine. Called by the app
-    /// shell whenever a preference changes. (The detection layer's gracePeriod
-    /// is fixed at init; changes apply on next launch — documented deviation.)
+    /// Re-reads SettingsStore-backed tuning into the engine AND into the
+    /// detection layer. Called by the app shell whenever a preference changes.
+    ///
+    /// The grace period has two owners by design — the engine holds the value,
+    /// the detection layer does the counting (R11) — so a preference change has
+    /// to reach both. It used to reach only the engine, which made the
+    /// "Release grace period" picker a setting that took effect at next launch;
+    /// a menu bar app that is never quit has no next launch, so the picker did
+    /// nothing. `DetectionCoordinator.setGracePeriod` rebases the windows that
+    /// are already counting.
     public func applyTuning() {
+        let gracePeriod = TimeInterval(settings.gracePeriodMinutes * 60)
         engine.updateTuning(PowerTuning(
             batteryThreshold: settings.batteryThreshold,
-            gracePeriod: TimeInterval(settings.gracePeriodMinutes * 60)
+            gracePeriod: gracePeriod
         ))
+        let coordinator = coordinator
+        Task { await coordinator.setGracePeriod(gracePeriod) }
         // The display policy is a setting too: changing it in the settings pane
         // must reach the holds that are already running.
         applyDisplayPolicyToLiveHolds(settings.defaultDisplayPolicy)

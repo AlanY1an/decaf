@@ -156,32 +156,22 @@ enum MenuTextFormatter {
         return remainder == 0 ? "\(hours) hr" : "\(hours) hr \(remainder) min"
     }
 
-    // MARK: "Until HH:MM" item (cross-midnight aware; keepresso `.until` semantics)
+    // MARK: "Until HH:MM" items (dates come from CaffeinateCore.UntilOptions)
 
-    static func untilDate(
-        minutesSinceMidnight: Int,
-        now: Date = Date(),
-        calendar: Calendar = .current
-    ) -> Date {
-        let startOfDay = calendar.startOfDay(for: now)
-        let today = startOfDay.addingTimeInterval(TimeInterval(minutesSinceMidnight * 60))
-        if today > now { return today }
-        return calendar.date(byAdding: .day, value: 1, to: today)
-            ?? today.addingTimeInterval(24 * 60 * 60)
-    }
+    /// Title of the submenu that lets the time be picked here rather than in
+    /// Settings. Ellipsis, like "Keep For…": this app spells a submenu that
+    /// opens onto choices the same way throughout.
+    static let untilSubmenuTitle = "Until\u{2026}"
 
-    static func untilItemTitle(
-        minutesSinceMidnight: Int,
-        now: Date = Date(),
-        calendar: Calendar = .current
-    ) -> String {
-        let target = untilDate(
-            minutesSinceMidnight: minutesSinceMidnight, now: now, calendar: calendar
-        )
-        let time = timeString(target)
-        return calendar.isDate(target, inSameDayAs: now)
-            ? "Until \(time)"
-            : "Until \(time) Tomorrow"
+    /// "Until 6:00 PM", or "Until 1:00 AM Tomorrow" once the deadline has
+    /// crossed midnight. Absolute, never a countdown — the menu does not
+    /// refresh while it is open.
+    ///
+    /// The date math (which hours, which day, DST) is `UntilOptions` in Core,
+    /// where it is unit-tested; this function is only the sentence.
+    static func untilItemTitle(_ option: UntilOption) -> String {
+        let time = timeString(option.deadline)
+        return option.isTomorrow ? "Until \(time) Tomorrow" : "Until \(time)"
     }
 
     // MARK: Detection precision summary (R12: highest precision among active agents)
@@ -254,6 +244,12 @@ struct MenuContentView: View {
         let snapshot = store.snapshot
         let now = Date()
         let activeSessions = snapshot.agentSessions.filter { $0.phase.holdsAssertion }
+        // Both "Until" surfaces resolve against this one `now`, so the label a
+        // user reads and the deadline the click commits are the same instant.
+        let defaultUntil = UntilOptions.nextOccurrence(
+            minutesSinceMidnight: settings.untilTimeMinutes, now: now
+        )
+        let upcomingHours = UntilOptions.upcomingWholeHours(now: now)
 
         // Status line (disabled text).
         Text(MenuTextFormatter.statusLine(for: snapshot, now: now))
@@ -297,13 +293,41 @@ struct MenuContentView: View {
             }
         }
 
-        // "Until HH:MM" — single item; time comes from Settings > General.
-        Button(MenuTextFormatter.untilItemTitle(
-            minutesSinceMidnight: settings.untilTimeMinutes, now: now
-        )) {
-            commands.startManual(.until(MenuTextFormatter.untilDate(
-                minutesSinceMidnight: settings.untilTimeMinutes, now: Date()
-            )))
+        // "Until 6:00 PM" — one click for the time set in Settings > General,
+        // the hour you knock off on a normal day.
+        //
+        // It stays a top-level item now that the submenu below exists, and
+        // that is not redundancy. The usual time is the common case, and
+        // burying it inside a list of six hours would make the everyday action
+        // cost a hover plus a scan — a regression paid every day to tidy up a
+        // row. The pair reads the way "Keep Awake" / "Keep For…" already does:
+        // the default, then the way to choose something else.
+        Toggle(MenuTextFormatter.untilItemTitle(defaultUntil), isOn: Binding(
+            get: { snapshot.manual?.expiry == defaultUntil.deadline },
+            set: { _ in commands.holdUntil(defaultUntil.deadline) }
+        ))
+
+        // "Until…" — the same decision, made HERE instead of two windows away.
+        //
+        // The entries are the next whole hours after the moment the menu
+        // opened, so they roll with the day and across midnight on their own
+        // (UntilOptions, unit-tested in Core). Apple's Focus menu is the
+        // precedent: absolute clock times you point at, not a duration to do
+        // arithmetic on.
+        //
+        // Picking one here does NOT rewrite the stored default above — see
+        // AppCommands.holdUntil. Choosing when THIS hold should end is a
+        // different act from changing what "Until" means tomorrow.
+        Menu(MenuTextFormatter.untilSubmenuTitle) {
+            ForEach(upcomingHours) { option in
+                // Toggle, like the "Keep For…" items: each is an action, and
+                // the one matching the running hold's deadline carries the
+                // check mark, so the submenu also answers "when does this end?"
+                Toggle(MenuTextFormatter.untilItemTitle(option), isOn: Binding(
+                    get: { snapshot.manual?.expiry == option.deadline },
+                    set: { _ in commands.holdUntil(option.deadline) }
+                ))
+            }
         }
 
         Divider()
@@ -334,6 +358,7 @@ struct MenuContentView: View {
                 get: { snapshot.selectedDisplayPolicy == .keepOn },
                 set: { commands.setDisplayPolicy($0 ? .keepOn : .allowSleep) }
             ))
+            .help(DisplayActionCopy.keepDisplayOnHelp)
         }
 
         // Holding the display awake and then blanking it fight each other — the
@@ -345,7 +370,22 @@ struct MenuContentView: View {
             commands.turnOffDisplayNow()
         }
         .disabled(!snapshot.canTurnOffDisplayNow)
-        .help(snapshot.turnOffDisplayUnavailableReason ?? "")
+        // Available: say what it does NOT do. Unavailable: say why, and name
+        // the cure. An NSMenuItem has one tooltip, so the reason wins when
+        // there is one.
+        .help(snapshot.turnOffDisplayUnavailableReason ?? DisplayActionCopy.turnOffDisplayNowHelp)
+
+        // The footer of this group, in the shape the settings pane uses for its
+        // cards: one quiet line explaining the two rows above it.
+        //
+        // Not left to the tooltips alone. "Turn Off Display Now" sits one line
+        // from "Quit Caffeinate" and reads like an off switch — the fear it
+        // raises is that darkening the screen also stops the agent that is
+        // mid-run, which is the exact opposite of what this app does. A
+        // reassurance that only appears after a two-second hover is a
+        // reassurance most people never receive, and the cost here is one short
+        // line no wider than the rows it explains.
+        Text(DisplayActionCopy.screenOnlyNote)
 
         Divider()
 

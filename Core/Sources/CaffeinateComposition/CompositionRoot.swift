@@ -328,6 +328,31 @@ extension CompositionRoot: AppCommands {
         republish()
     }
 
+    /// "Until 6:00 PM" / the "Until…" submenu: hold to an absolute instant the
+    /// menu computed from the wall clock when it opened (`UntilOptions`).
+    ///
+    /// Refused when the instant has already passed, and refusal is a no-op —
+    /// any hold already running is left exactly as it was. A `.menu` evaluates
+    /// its content at open time and does not refresh while it stays open, so a
+    /// menu opened at 14:59 still offers "Until 3:00 PM" at 15:01. Two
+    /// alternatives were rejected: writing `.at(past)` would register the
+    /// manual source, engage the battery-gate override, and then have the
+    /// engine prune it on the very next reconcile — a hold that flickers in and
+    /// out for no reason; and rolling a stale hour forward to its next
+    /// occurrence would turn a mis-timed click into a 23-hour hold. Doing
+    /// nothing is the only outcome that cannot surprise anyone.
+    ///
+    /// Deliberately does NOT touch `SettingsStore.untilTimeMinutes`: choosing a
+    /// time for THIS hold is not the same act as changing the time the
+    /// one-click item uses tomorrow.
+    public func holdUntil(_ deadline: Date) {
+        guard deadline > Date() else {
+            logger.log("holdUntil refused: the chosen deadline has already passed")
+            return
+        }
+        startManual(.untilDate(deadline))
+    }
+
     public func stopManual() {
         manualHold.deactivate()
         manualState = nil

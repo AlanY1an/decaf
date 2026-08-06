@@ -14,6 +14,24 @@ public protocol AppCommands: AnyObject {
     /// Starts (or restarts) manual mode with the given mode.
     func startManual(_ mode: ManualMode)
 
+    /// Starts (or restarts) manual mode ending at an ABSOLUTE instant the UI
+    /// already resolved against the wall clock — the menu's "Until 6:00 PM"
+    /// item and its "Until…" submenu (see `UntilOptions`).
+    ///
+    /// Distinct from `startManual(.until(_:))`, which takes a time of day and
+    /// re-derives the next occurrence of it. Here the deadline is final: the
+    /// user picked an instant off a list of clock times and that instant is
+    /// what gets held, whatever happens to the clock afterwards.
+    ///
+    /// A point-of-use choice, NOT a preference: this never writes the stored
+    /// "until" default (Settings › General). Contrast `setDisplayPolicy`,
+    /// which is explicitly a default-changer.
+    ///
+    /// A deadline that is not in the future is refused — see the composition
+    /// root's implementation for why (a menu can outlive the hour it was drawn
+    /// from).
+    func holdUntil(_ deadline: Date)
+
     /// Stops the manual session only; other hold sources are untouched.
     func stopManual()
 

@@ -55,10 +55,42 @@ public enum DisplayPolicy: String, Codable, Sendable, CaseIterable, Equatable {
     }
 }
 
-/// Copy for the "Turn Off Display Now" action (kept next to DisplayPolicy so
-/// the whole display-related vocabulary lives in one file).
+/// Copy for the display controls — the action's title, the tooltips the menu
+/// hangs on both display items, the one-line note under them, and the settings
+/// footer. All of it next to DisplayPolicy so the three surfaces that explain
+/// this one behaviour cannot drift apart.
+///
+/// THE SENTENCE THIS FILE EXISTS TO LAND: turning the screen off does not stop
+/// the work. It reads as an off switch — every other "turn off the display"
+/// affordance on a Mac is one step from sleeping the machine — and a user who
+/// suspects it might end a running agent will never touch it. Every string
+/// below says the same thing in the space it has: the Mac stays awake, agents
+/// keep running, only the screen goes dark.
 public enum DisplayActionCopy {
     public static let turnOffDisplayNow = "Turn Off Display Now"
+
+    /// Tooltip for the menu's "Keep Display On" switch (SwiftUI's `.help`
+    /// becomes `NSMenuItem.toolTip`). A switch's tooltip has to describe BOTH
+    /// positions, and the off position is the one that needs the reassurance —
+    /// off is where the screen goes dark, and where the fear lives.
+    public static let keepDisplayOnHelp =
+        "Keeps the screen lit while sleep is being held off. Switch it off and the screen sleeps normally \u{2014} the Mac stays awake and agents keep running."
+
+    /// Tooltip for "Turn Off Display Now" while it is available. The disabled
+    /// case has its own reason string below; an item can only show one.
+    public static let turnOffDisplayNowHelp =
+        "Turns the screen off right now. Nothing stops \u{2014} the Mac stays awake and agents keep working in the background."
+
+    /// The same promise as a line of type under the two display menu items,
+    /// because a tooltip needs a hover most people never make. Short on
+    /// purpose: a menu is only as wide as its widest row, and this sits beside
+    /// rows of about the same length.
+    public static let screenOnlyNote = "The Mac keeps working with the screen off."
+
+    /// Footer under the settings pane's "Display while keeping awake" picker.
+    /// Says the same thing with room to also state the scope of the setting.
+    public static let settingsFooter =
+        "The Mac keeps working either way \u{2014} agents keep running and a sleeping display just saves battery. Keep it on when you want to watch a run. New holds start this way, and the menu can change a hold that is already running."
 
     /// Why the action is disabled. Shown as the menu item's tooltip /
     /// secondary label when `AppStateSnapshot.canTurnOffDisplayNow` is false.

@@ -143,7 +143,11 @@ struct GeneralSettingsTab: View {
             } header: {
                 SectionHeader("Manual Keep-Awake")
             } footer: {
-                SectionFooter("Used when you click the menu bar icon or flip the Keep Awake switch. The menu's \u{201C}Until\u{2026}\u{201D} item holds sleep off up to the time above.")
+                // Second sentence earns its length: it is the only place that
+                // says the menu's own time picker does not silently rewrite
+                // this. Without it, a user who picks 3 PM from the menu once
+                // has no way to know whether their 6 PM default survived.
+                SectionFooter("Used when you click the menu bar icon or flip the Keep Awake switch. The time above is the menu's one-click \u{201C}Until\u{201D} item; the menu's \u{201C}Until\u{2026}\u{201D} submenu can pick any other hour without changing it.")
             }
 
             // Its own card, not a third row of the one above: duration and
@@ -173,7 +177,12 @@ struct GeneralSettingsTab: View {
                 // Last clause says "already running", not "a hold you start by
                 // hand": the menu's toggle reaches every live hold, agent ones
                 // included, which is the case the feature exists for.
-                SectionFooter("The Mac keeps working either way \u{2014} a sleeping display just saves battery. Keep it on when you want to watch a run. New holds start this way, and the menu can change a hold that is already running.")
+                //
+                // The literal lives in CaffeinateCore next to the menu's
+                // tooltips and its one-line note. Three surfaces explain this
+                // one behaviour; kept apart they drift, and a reassurance that
+                // is worded differently in two places stops reassuring.
+                SectionFooter(DisplayActionCopy.settingsFooter)
             }
         }
         .formStyle(.grouped)

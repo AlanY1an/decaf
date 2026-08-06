@@ -9,7 +9,9 @@
 //   owned solely by PowerStateEngine.reconcile() (plan 01).
 // - Wall-clock folding happens exactly once, at activation: durations become
 //   `.at(now + duration)`, "until HH:MM" becomes the NEXT occurrence of that
-//   wall-clock time as an absolute Date (plan 05 D4). The stored Date is never
+//   wall-clock time as an absolute Date, and `.untilDate` — an instant the UI
+//   already resolved against the clock — is written through unchanged (plan 05
+//   D4). Whichever way it arrives, the stored Date is never
 //   reinterpreted on timezone or clock changes — expiry is a plain
 //   `deadline <= now` comparison inside the engine.
 // - Repeated activation is last-write-wins per source (the engine registry
@@ -80,6 +82,11 @@ public final class ManualHoldController {
             return .indefinite
         case .duration(let seconds):
             return .at(now().addingTimeInterval(seconds))
+        case .untilDate(let deadline):
+            // Already an absolute instant, chosen at the point of use from the
+            // wall clock (UntilOptions). Folding is a no-op ON PURPOSE: the
+            // one thing this mode guarantees is that nothing re-derives it.
+            return .at(deadline)
         case .until(let timeOfDay):
             // The user picked a wall-clock time (hour:minute). Take its NEXT
             // occurrence strictly after now — if today's instance has already

@@ -79,6 +79,23 @@ public enum StuckDetectionDefaults {
     /// Shortest interval that yields a trustworthy CPU delta. Below this the
     /// sampler keeps its baseline and reports `.unknown(.tooSoon)`.
     public static let minimumSampleSpacing: TimeInterval = 1
+
+    /// Longest interval that still counts as CONTINUOUS observation of a pid.
+    /// A larger gap means the sampler was not watching, and it drops its
+    /// baseline rather than differencing across the hole
+    /// (`.unknown(.observationGap)`).
+    ///
+    /// The gap that matters is a Mac that slept: no reconcile runs while the
+    /// system is down, and a suspended process accrues no CPU time, so a delta
+    /// taken across three hours of sleep is a confident `.idle` about an
+    /// interval nobody observed — which would condemn a session that was merely
+    /// asleep along with the machine, on the very first tick after the wake.
+    ///
+    /// Ten times the 30 s reconcile tick: far beyond any scheduling jitter or
+    /// timer coalescing the app sees while it is actually running, far below
+    /// `stuckThreshold`, so a gap costs a delay in detection and never a
+    /// premature verdict.
+    public static let maximumSampleGap: TimeInterval = 300
 }
 
 // MARK: - Verdict

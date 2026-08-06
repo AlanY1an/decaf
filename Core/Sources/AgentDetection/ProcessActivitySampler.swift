@@ -53,6 +53,16 @@ public enum ProcessCPUVerdict: Equatable, Sendable {
         /// stepped or the pid was reused by a different process; the baseline
         /// is reset and this sample starts over.
         case counterReset
+        /// Two samples arrived further apart than `maximumSampleGap`, so this
+        /// sampler was NOT watching the interval it is being asked about.
+        ///
+        /// The case that produces it is a Mac that slept: no reconcile runs
+        /// while the system is down, and a suspended process burns no CPU, so
+        /// differencing across the gap yields a confident `.idle` about hours
+        /// nobody observed — and condemns a session that was merely asleep
+        /// along with the machine. Continuity is part of what `windowedVerdict`
+        /// promises; when it breaks, the honest answer is that we do not know.
+        case observationGap
         /// `proc_pid_rusage` reported ESRCH — the process is gone. Liveness of
         /// the agent process is the PPID sweep's job, not this sampler's, so
         /// this is reported rather than folded into `.idle`.
@@ -129,6 +139,11 @@ extension ProcessActivitySampling {
     ///   `.unknown(.firstSample)`, not `.idle`. After an app relaunch the
     ///   sampler knows nothing about the preceding two hours and must not
     ///   pretend otherwise.
+    ///
+    /// Continuity is enforced by `sample` itself: a gap larger than
+    /// `maximumSampleGap` (a system sleep) restarts the observation window, so
+    /// "we have been watching for the full window" cannot be satisfied by two
+    /// samples with hours of unobserved time between them.
     public func windowedVerdict(
         pid: pid_t,
         at now: Date,
@@ -163,6 +178,10 @@ public final class ProcessActivitySampler: ProcessActivitySampling {
     /// Deltas shorter than this are too noisy to judge; the baseline is kept
     /// and the caller is told `.tooSoon`.
     private let minimumSampleSpacing: TimeInterval
+    /// Deltas longer than this span an interval this sampler did not observe
+    /// (a system sleep, a suspended app); the baseline is dropped and the
+    /// caller is told `.observationGap`.
+    private let maximumSampleGap: TimeInterval
     private let readCPU: (pid_t) -> ProcessCPUReading
 
     /// Guarded because the sampler is expected to be driven from a timer queue
@@ -173,10 +192,12 @@ public final class ProcessActivitySampler: ProcessActivitySampling {
     public init(
         busyThreshold: Double = StuckDetectionDefaults.cpuBusyThreshold,
         minimumSampleSpacing: TimeInterval = StuckDetectionDefaults.minimumSampleSpacing,
+        maximumSampleGap: TimeInterval = StuckDetectionDefaults.maximumSampleGap,
         readCPU: @escaping (pid_t) -> ProcessCPUReading = ProcessActivitySampler.readCPUNanoseconds
     ) {
         self.busyThreshold = busyThreshold
         self.minimumSampleSpacing = max(0, minimumSampleSpacing)
+        self.maximumSampleGap = max(minimumSampleSpacing, maximumSampleGap)
         self.readCPU = readCPU
     }
 
@@ -236,6 +257,25 @@ public final class ProcessActivitySampler: ProcessActivitySampling {
         // accumulating rather than resetting on every fast call.
         if elapsed < minimumSampleSpacing {
             return .unknown(.tooSoon)
+        }
+
+        // Too far apart to have been WATCHING. The registry samples every pid
+        // on every reconcile (30 s), so a gap this large means the app was not
+        // running the loop: the system slept, the process was suspended, or the
+        // timer was starved. A suspended process accrues no CPU time, so the
+        // delta across that hole is a confident `.idle` about an interval
+        // nobody observed — and `windowedVerdict` would then hand the stuck
+        // predicate its final witness on the first tick after a wake, against a
+        // session that was merely asleep along with the Mac. Start observation
+        // over instead: the cost is a delayed verdict, never a premature one.
+        if elapsed > maximumSampleGap {
+            baselines[pid] = Baseline(
+                cpuNanoseconds: current,
+                sampledAt: now,
+                observingSince: now,
+                lastBusyAt: nil
+            )
+            return .unknown(.observationGap)
         }
 
         let cpuDelta = Double(current - previous.cpuNanoseconds)

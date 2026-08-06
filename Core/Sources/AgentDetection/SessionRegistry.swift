@@ -452,7 +452,20 @@ public final class SessionRegistry {
         let moved = now.timeIntervalSince(session.livenessAt) > heartbeatCoalesceWindow
         guard revived || moved else { return false }
 
-        if moved { session.lastHeartbeatAt = now }
+        // A revival records the instant EVEN WHEN the coalescing window would
+        // have dropped it. Restoring `.working` without moving liveness leaves
+        // the session exactly as the stuck predicate found it, so the very next
+        // reconcile condemns it again — a downgrade/revival flap that releases
+        // the hold and posts a notification once per cycle. (Reachable whenever
+        // `heartbeatCoalesceWindow >= stuckThreshold`, which is what a
+        // compressed-threshold acceptance harness sets up, and what any future
+        // tuning of either constant could produce.)
+        //
+        // `max` because liveness never moves backwards: a heartbeat frame the
+        // socket reordered must not rewind the record it revives.
+        if moved || revived {
+            session.lastHeartbeatAt = max(now, session.lastHeartbeatAt ?? .distantPast)
+        }
         sessionsByID[sessionID] = session
         changeCount &+= 1
         return true

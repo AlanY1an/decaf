@@ -362,9 +362,14 @@ final class ClaudeIntegrationsProvider: AgentIntegrationsProviding {
                 hooksInstalled: true, needsRepair: true
             )
         }
-        // Precision row 1 (plan 02 §4): hooks count as installed only when
-        // entries are complete and healthy.
-        root.setHooksInstalled(status.hooksInstalled && !status.needsRepair, for: .claudeCode)
+        // Precision row 1 (plan 02 §4), from the probe verdict itself rather
+        // than from the two booleans above. `needsRepair` is true for every
+        // `broken` reason, and those are not equivalent here: an outdated entry
+        // set still delivers, a missing bridge does not. Collapsing them onto
+        // one Bool is what used to report the zero-config fallback for a live
+        // L1 layer, dropping the session-precise hold sources with it. The
+        // mapping is `HooksInstallState(probe:)` in Core, where it is tested.
+        root.setHooksInstallState(HooksInstallState(probe: result), for: .claudeCode)
         return status
     }
 

@@ -152,6 +152,71 @@ public enum MenuCopy {
         return "Idle — not preventing sleep"
     }
 
+    // MARK: Detection precision row (plan 04 §3)
+
+    /// The precision summary shown under the session rows, or nil when the
+    /// detection layer has nothing worth qualifying (precise hooks, or no agent
+    /// at all — a menu that narrates a working default is noise).
+    public struct PrecisionNote: Equatable, Sendable {
+        /// The disabled text row.
+        public var detail: String
+        /// The button under it, which opens Settings > Agents.
+        public var actionTitle: String
+    }
+
+    /// Which precision the menu speaks for: the highest-precision layer among
+    /// the agents actually holding right now (plan 04 R12).
+    ///
+    /// "Holding" counts `fallbackAgents` as well as session rows. Missing them
+    /// was a real gap: a fallback hold contributes no `agentSessions` row at
+    /// all, so an agent held purely by file activity used to fall into the
+    /// `activeAgents.isEmpty` branch and let *any* other agent's `.hooks` win
+    /// the max — the menu then said "Codex working" with no qualification while
+    /// the only thing holding was an approximate window.
+    public static func summaryPrecision(for s: AppStateSnapshot) -> DetectionPrecision? {
+        var activeAgents = Set(
+            s.agentSessions.filter { $0.phase.holdsAssertion }.map { $0.agent }
+        )
+        activeAgents.formUnion(s.fallbackAgents)
+
+        let candidates: [DetectionPrecision]
+        if activeAgents.isEmpty {
+            candidates = s.precision.values.filter { $0 != .unavailable }
+        } else {
+            candidates = activeAgents
+                .compactMap { s.precision[$0] }
+                .filter { $0 != .unavailable }
+        }
+        // Ordering comes from `DetectionPrecision.rank`, not from a switch
+        // here: a layer added to that enum must not need an edit in the menu to
+        // be ranked correctly.
+        return candidates.max { $0.rank < $1.rank }
+    }
+
+    public static func precisionNote(for s: AppStateSnapshot) -> PrecisionNote? {
+        switch summaryPrecision(for: s) {
+        case .fileActivity, .processOnly:
+            return PrecisionNote(
+                detail: "Detection: file activity (approximate)",
+                actionTitle: "Install hooks for precise detection\u{2026}"
+            )
+        case .hooksPartial:
+            // Honest about both halves. The hooks ARE delivering — sessions are
+            // tracked one by one, which is why this does not borrow the
+            // "approximate" line above — but the installed set predates this
+            // build, so whatever the newer entries carry (today: the mid-turn
+            // heartbeat) is missing. "Repair", matching Settings > Agents,
+            // because nothing here is the user's doing: the app moved and the
+            // config did not follow.
+            return PrecisionNote(
+                detail: "Detection: hooks (an older event set)",
+                actionTitle: "Repair hooks\u{2026}"
+            )
+        case .hooks, .unavailable, nil:
+            return nil
+        }
+    }
+
     // MARK: Accessibility
 
     /// Status item / icon accessibility label (plan 04 §4).

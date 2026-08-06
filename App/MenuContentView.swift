@@ -124,53 +124,23 @@ enum MenuTextFormatter {
 
     // MARK: Detection precision summary (R12: highest precision among active agents)
 
+    /// Both of these live in `MenuCopy` (CaffeinateCore) so the app target,
+    /// which has no test bundle, keeps only the assembly.
     static func summaryPrecision(for s: AppStateSnapshot) -> DetectionPrecision? {
-        let activeAgents = Set(
-            s.agentSessions.filter { $0.phase.holdsAssertion }.map { $0.agent }
-        )
-        let candidates: [DetectionPrecision]
-        if activeAgents.isEmpty {
-            candidates = s.precision.values.filter { $0 != .unavailable }
-        } else {
-            candidates = activeAgents
-                .compactMap { s.precision[$0] }
-                .filter { $0 != .unavailable }
-        }
-        return candidates.max { rank($0) < rank($1) }
+        MenuCopy.summaryPrecision(for: s)
     }
 
-    private static func rank(_ precision: DetectionPrecision) -> Int {
-        switch precision {
-        case .hooks: return 3
-        case .fileActivity: return 2
-        case .processOnly: return 1
-        case .unavailable: return 0
-        }
+    static func precisionNote(for s: AppStateSnapshot) -> MenuCopy.PrecisionNote? {
+        MenuCopy.precisionNote(for: s)
     }
 
-    // MARK: Names & accessibility
-
-    /// One owner for these strings: `AgentKind.displayName` in CaffeinateCore,
-    /// which the stuck-session notification also reads. Kept as a function here
-    /// so the existing call sites and their tests do not move.
-    static func agentDisplayName(_ agent: AgentKind) -> String {
-        agent.displayName
-    }
+    // MARK: Accessibility
 
     /// Status item accessibility label, updated with the icon state (plan 04 §4).
+    /// Same owner as the icon's own `accessibilityDescription`, so the label a
+    /// VoiceOver user hears cannot drift from the image they are hearing about.
     static func accessibilityLabel(for s: AppStateSnapshot) -> String {
-        switch iconState(for: s) {
-        case .idle:
-            return "Caffeinate, idle"
-        case .manualHold:
-            return "Caffeinate, manual hold active"
-        case .agentHold(let n):
-            return n == 1
-                ? "Caffeinate, agent working"
-                : "Caffeinate, agents working, \(n) sessions"
-        case .pausedBySafety:
-            return "Caffeinate, paused by a safety protection"
-        }
+        MenuCopy.accessibilityLabel(for: s)
     }
 }
 
@@ -211,10 +181,13 @@ struct MenuContentView: View {
             ))
         }
 
-        // Detection precision hint — only in FSEvents fallback mode (plan 04 §3).
-        if MenuTextFormatter.summaryPrecision(for: snapshot) == .fileActivity {
-            Text("Detection: file activity (approximate)")
-            Button("Install hooks for precise detection…") {
+        // Detection precision hint — shown whenever the layer that is holding
+        // is not fully precise: the FSEvents fallback, and an outdated hooks
+        // install, which each get their own sentence and their own button
+        // (plan 04 §3).
+        if let note = MenuTextFormatter.precisionNote(for: snapshot) {
+            Text(note.detail)
+            Button(note.actionTitle) {
                 tabRouter.selectedTab = .agents
                 NSApp.activate(ignoringOtherApps: true)
                 openSettings()

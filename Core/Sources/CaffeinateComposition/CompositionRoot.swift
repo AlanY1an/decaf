@@ -252,8 +252,15 @@ public final class CompositionRoot: ObservableObject {
     /// HooksInstallationInspector verdict from the integrations layer (probe
     /// at launch, install/uninstall from the settings UI).
     public func setHooksInstalled(_ installed: Bool, for agent: AgentKind) {
+        setHooksInstallState(installed ? .complete : .absent, for: agent)
+    }
+
+    /// The same verdict, unflattened. Prefer this: the boolean above cannot
+    /// carry `.outdated`, and folding that onto `false` is what used to report
+    /// `.fileActivity` for a live (if incomplete) hooks install.
+    public func setHooksInstallState(_ state: HooksInstallState, for agent: AgentKind) {
         let coordinator = coordinator
-        Task { await coordinator.setHooksInstalled(installed, for: agent) }
+        Task { await coordinator.setHooksInstallState(state, for: agent) }
     }
 
     // MARK: - DetectionOutput -> HoldRequest glue (R11 seam 1)

@@ -64,6 +64,16 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// nil = manual mode not active.
     public var manual: ManualState?
     public var agentSessions: [AgentSessionSummary]
+    /// Agents held by L2/L3 file-activity fallback — a real hold with no
+    /// per-session detail behind it, which is the zero-config default state of
+    /// this app (no hooks installed).
+    ///
+    /// It is a separate field rather than a synthetic `agentSessions` row on
+    /// purpose: a fallback hold has no session id, no project and no start
+    /// instant, and inventing them would put fiction in the menu's session
+    /// list. The icon and the status line consult this so that a held assertion
+    /// is never rendered as "Idle" (see `iconState` / `MenuCopy.statusLine`).
+    public var fallbackAgents: [AgentKind]
     /// nil = no safety gate engaged.
     public var safetyPause: SafetyPause?
     /// Per-agent detection precision (plan 02). The menu's single-value summary
@@ -98,6 +108,7 @@ public struct AppStateSnapshot: Equatable, Sendable {
     public init(
         manual: ManualState? = nil,
         agentSessions: [AgentSessionSummary] = [],
+        fallbackAgents: [AgentKind] = [],
         safetyPause: SafetyPause? = nil,
         precision: [AgentKind: DetectionPrecision] = [:],
         wantsHold: Bool = false,
@@ -106,6 +117,7 @@ public struct AppStateSnapshot: Equatable, Sendable {
     ) {
         self.manual = manual
         self.agentSessions = agentSessions
+        self.fallbackAgents = fallbackAgents
         self.safetyPause = safetyPause
         self.precision = precision
         self.wantsHold = wantsHold

@@ -63,72 +63,20 @@ enum MenuTextFormatter {
     /// Max agent session rows before folding (plan 04 §3).
     static let maxSessionRows = 5
 
-    private static let timeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter
-    }()
-
-    /// Locale-aware short time, e.g. "6:32 PM".
+    /// Locale-aware short time, e.g. "6:32 PM". One formatter for the whole app,
+    /// in CaffeinateCore.
     static func timeString(_ date: Date) -> String {
-        timeFormatter.string(from: date)
+        MenuCopy.timeString(date)
     }
 
     // MARK: Status line (plan 04 §3 table; priority mirrors the icon)
 
-    /// The status line, plus the display clause when — and only when — the
-    /// display is actually being held on.
-    ///
-    /// `effectiveDisplayPolicy` is what is in force this instant, not what was
-    /// asked for: a hold suspended by a safety gate holds no display assertion,
-    /// so the clause correctly disappears while the line reads "Paused" (and the
-    /// "Keep Display On" check mark below stays on, because that is the choice,
-    /// not the reality). Nothing is appended for `.allowSleep`, which is the
-    /// default and the norm — a menu that narrates its own default is noise.
+    /// The status line. The rule table and its copy live in CaffeinateCore's
+    /// `MenuCopy`, where they are unit-tested — including the case this menu got
+    /// wrong for a long time: a file-activity (no hooks) hold is a hold, and
+    /// must never render as "Idle — not preventing sleep".
     static func statusLine(for s: AppStateSnapshot, now: Date = Date()) -> String {
-        let base = baseStatusLine(for: s, now: now)
-        return s.effectiveDisplayPolicy == .keepOn ? "\(base) · Display on" : base
-    }
-
-    private static func baseStatusLine(for s: AppStateSnapshot, now: Date) -> String {
-        if let pause = s.safetyPause, s.wantsHold {
-            switch pause {
-            case .lowBattery(let percent, let threshold):
-                return "Paused · Battery \(percent)% below \(threshold)% threshold"
-            case .lowPowerMode:
-                return "Paused · Low Power Mode is on"
-            case .userSwitchedOut:
-                // No dedicated copy (plan 04 §3 / R13): the user has switched
-                // away and cannot see this menu; fall through to the normal
-                // computation for the instant they switch back.
-                break
-            }
-        }
-
-        let active = s.agentSessions.filter { $0.phase.holdsAssertion }
-        if !active.isEmpty {
-            let graceEnds = active.compactMap { session -> Date? in
-                if case .graceIdle(let until) = session.phase { return until }
-                return nil
-            }
-            if graceEnds.count == active.count, let latest = graceEnds.max() {
-                return "Just finished · Sleep allowed after \(timeString(latest))"
-            }
-            let name = agentDisplayName(active[0].agent)
-            return active.count == 1
-                ? "\(name) working"
-                : "\(name) working · \(active.count) sessions"
-        }
-
-        if let manual = s.manual {
-            if let expiry = manual.expiry {
-                return "Manual hold · Until \(timeString(expiry))"
-            }
-            return "Manual hold · Indefinite"
-        }
-
-        return "Idle — not preventing sleep"
+        MenuCopy.statusLine(for: s, now: now)
     }
 
     // MARK: Session rows

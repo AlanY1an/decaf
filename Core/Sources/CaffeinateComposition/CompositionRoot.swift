@@ -72,6 +72,10 @@ public final class CompositionRoot: ObservableObject {
     private var appliedAgentSources: Set<HoldSourceID> = []
     /// Latest detection-derived UI rows / precision map.
     private var sessionSummaries: [AgentSessionSummary] = []
+    /// Agents currently held by an L2/L3 fallback source. These produce no
+    /// session rows (file activity sees the agent, not its turns), so without
+    /// them the UI would have a held assertion and nothing to attribute it to.
+    private var fallbackAgents: [AgentKind] = []
     private var precision: [AgentKind: DetectionPrecision] = [:]
 
     private var cancellables: Set<AnyCancellable> = []
@@ -252,12 +256,14 @@ public final class CompositionRoot: ObservableObject {
     /// every safety gate applies to it without a special case.
     func apply(output: DetectionOutput, sessions: [AgentSession]) {
         var desired: Set<HoldSourceID> = []
+        var fallbacks: Set<AgentKind> = []
         for source in output.holdSources {
             switch source.kind {
             case .session(let id, _):
                 desired.insert(.agentSession(id: id))
             case .fallbackActivity:
                 desired.insert(.agentFallback(source.agent))
+                fallbacks.insert(source.agent)
             }
         }
 
@@ -303,6 +309,12 @@ public final class CompositionRoot: ObservableObject {
                 startedAt: session.startedAt
             )
         }
+        // The fallback holds, in a stable order so an unchanged detection state
+        // cannot publish a "changed" snapshot. Without this the menu and the
+        // icon had nothing to read in the app's default configuration: an
+        // `.agentFallback` request was live in the engine while `agentSessions`
+        // was empty, and both surfaces rendered that as "Idle".
+        fallbackAgents = fallbacks.sorted { $0.rawValue < $1.rawValue }
         precision = output.precision
         republish()
     }
@@ -334,6 +346,7 @@ public final class CompositionRoot: ObservableObject {
         let newSnapshot = AppStateSnapshot(
             manual: manualState,
             agentSessions: sessionSummaries,
+            fallbackAgents: fallbackAgents,
             safetyPause: safetyPause,
             precision: precision,
             wantsHold: !engine.activeSources.isEmpty,

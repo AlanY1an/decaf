@@ -4,30 +4,13 @@
 // so the icon is a set of four cached, monochrome template images (18 pt target
 // height); state changes swap the image — no animation, ever.
 //
-// Priority (high → low): pausedBySafety > agentHold > manualHold > idle.
+// This file is drawing only. `MenuBarIconState`, the snapshot → state mapping
+// (priority pausedBySafety > agentHold > manualHold > idle) and the
+// accessibility strings live in CaffeinateCore's MenuPresentation, where they
+// are unit-tested; nothing here decides anything.
 
 import AppKit
 import CaffeinateCore
-
-// MARK: - State
-
-/// The four visual states of the menu bar icon (plan 04 §2).
-enum MenuBarIconState: Equatable, Hashable {
-    case idle
-    case manualHold
-    /// `sessionCount` >= 1.
-    case agentHold(sessionCount: Int)
-    case pausedBySafety
-}
-
-/// Pure snapshot → icon-state mapping (plan 04 §2, verbatim).
-func iconState(for s: AppStateSnapshot) -> MenuBarIconState {
-    if s.safetyPause != nil && s.wantsHold { return .pausedBySafety }
-    let active = s.agentSessions.filter { $0.phase.holdsAssertion }
-    if !active.isEmpty { return .agentHold(sessionCount: active.count) }
-    if s.manual != nil { return .manualHold }
-    return .idle
-}
 
 // MARK: - Renderer
 
@@ -98,7 +81,7 @@ final class IconRenderer {
         // entire dark-mode / increased-contrast / Tahoe compatibility strategy
         // (plan 04 risk 3) — never set custom colors.
         image.isTemplate = true
-        image.accessibilityDescription = Self.accessibilityDescription(for: state)
+        image.accessibilityDescription = MenuCopy.accessibilityLabel(for: state)
         return image
     }
 
@@ -181,20 +164,5 @@ final class IconRenderer {
         NSColor.black.setFill()
         NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.5, dy: -1.5)).fill()
         context.restoreGraphicsState()
-    }
-
-    private static func accessibilityDescription(for state: MenuBarIconState) -> String {
-        switch state {
-        case .idle:
-            return "Caffeinate, idle"
-        case .manualHold:
-            return "Caffeinate, manual hold active"
-        case .agentHold(let n):
-            return n == 1
-                ? "Caffeinate, agent working"
-                : "Caffeinate, agents working, \(n) sessions"
-        case .pausedBySafety:
-            return "Caffeinate, paused by a safety protection"
-        }
     }
 }

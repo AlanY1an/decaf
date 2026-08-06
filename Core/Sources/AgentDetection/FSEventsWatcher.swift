@@ -37,10 +37,31 @@ public final class FSEventsWatcher {
         /// /Users/me/.claude/projects/
         public let activityPrefix: String
 
+        /// Both strings are normalised with the SAME rule, and the prefix is
+        /// re-anchored on the standardised root rather than standardised on its
+        /// own.
+        ///
+        /// `standardizingPath` rewrites `/private/tmp/x` to `/tmp/x` — but only
+        /// when the path exists. Standardising `path` and `activityPrefix`
+        /// independently can therefore leave them in two different spellings of
+        /// the same directory (typically because one exists and the other does
+        /// not yet), and `classify` would then reject every event under the
+        /// root as `.ignored`: no L2 activity, no transcript tail-read, no wait
+        /// signals — silently. `~/.claude` on a normal machine standardises to
+        /// itself, so this only bites on symlinked or `/private`-rooted homes,
+        /// which is exactly where the acceptance harness runs.
         public init(agent: AgentKind, path: String, activityPrefix: String) {
             self.agent = agent
-            self.path = (path as NSString).standardizingPath
-            self.activityPrefix = activityPrefix
+            let root = (path as NSString).standardizingPath
+            self.path = root
+            if activityPrefix.hasPrefix(path) {
+                self.activityPrefix = root + activityPrefix.dropFirst(path.count)
+            } else {
+                // Not actually under `path` — standardise it on its own and
+                // keep the trailing slash the prefix test relies on.
+                let standardized = (activityPrefix as NSString).standardizingPath
+                self.activityPrefix = standardized.hasSuffix("/") ? standardized : standardized + "/"
+            }
         }
 
         /// The claude root: ~/.claude with activity under projects/.

@@ -92,6 +92,13 @@ public final class CompositionRoot: ObservableObject {
         socketPath: String = HookSocketServer.defaultSocketPath,
         watcher: FSEventsWatcher = FSEventsWatcher(),
         sessionsStore: SessionsStore = SessionsStore(),
+        // The stuck-session downgrade's window and its CPU witness (plan 02
+        // §1.1b). Production values by default; the acceptance harness
+        // compresses the window so a two-hour contradiction can be observed in
+        // a run that lasts a minute, exactly as it redirects the transcript
+        // root and the asserter.
+        stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
+        activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
         // The app's only notification channel (plan 04's zero-notification rule
         // narrowed, REVIEW-DECISIONS 2026-08-06). Defaults to nil — silent —
         // because the concrete `UNUserNotificationCenter` adapter needs an
@@ -112,8 +119,10 @@ public final class CompositionRoot: ObservableObject {
         self.coordinator = DetectionCoordinator(
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
+            stuckThreshold: stuckThreshold,
             store: sessionsStore,
             watcher: watcher,
+            activitySampler: activitySampler,
             userNotifier: userNotifier
         )
     }

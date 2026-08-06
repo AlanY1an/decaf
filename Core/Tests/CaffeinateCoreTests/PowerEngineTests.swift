@@ -39,6 +39,24 @@ private func onBattery(_ percent: Int) -> BatterySnapshot {
     BatterySnapshot(hasBattery: true, isOnBattery: true, percent: percent)
 }
 
+/// Polls `condition` on the main actor, yielding between attempts so the
+/// engine's own `DispatchSourceTimer` (which fires on `.main`) gets to run.
+/// Returns false on timeout instead of hanging, so a broken timer FAILS the
+/// test rather than wedging the suite. Only the two recovery-tick tests use
+/// this; every other test still drives the injected clock directly.
+@MainActor
+private func waitUntil(
+    timeout: TimeInterval = 2,
+    _ condition: () -> Bool
+) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        try? await Task.sleep(nanoseconds: 5_000_000) // 5 ms
+    }
+    return condition()
+}
+
 @Suite @MainActor struct PowerEngineTests {
     // MARK: - Merge semantics (plan 01 matrix row 1)
 
@@ -425,6 +443,69 @@ private func onBattery(_ percent: Int) -> BatterySnapshot {
         engine.reconcile()
         #expect(fake.active.count == 1)
         #expect(engine.status == .holding(sourceCount: 1))
+    }
+
+    /// The test above proves the retry PATH; this one proves a retry actually
+    /// ARRIVES. Production never calls `reconcile()` on a whim: agent sources
+    /// are registered `.indefinite` (CompositionRoot), so they carry no
+    /// deadline, and a failed create leaves nothing in `held` to renew. The
+    /// engine's own timer is therefore the only trigger left — and it must be
+    /// armed. Without the recovery tick this test times out with zero
+    /// assertions live while `status` still claims `.holding`: the Mac sleeps
+    /// mid-agent-run and the UI says otherwise.
+    @Test func createFailureIsRetriedByTheEnginesOwnTimerWithNoExternalTrigger() async throws {
+        let (engine, fake, _) = makeEngine()
+        engine.retryInterval = 0.05 // keep the suite fast; cadence is the point, not its value
+        fake.failNextCreate = true
+
+        engine.setRequest(HoldRequest(source: .agentSession(id: "A"), expiry: .indefinite))
+        #expect(fake.active.isEmpty)
+        // A periodic wake MUST remain armed — without it the timer is cancelled
+        // and this is where the hold dies for good.
+        #expect(engine.armedTimerInterval != nil)
+
+        // Nothing below touches the engine: the recovery is the timer's alone.
+        let recovered = await waitUntil { fake.active.count == 1 }
+        #expect(recovered)
+        #expect(engine.status == .holding(sourceCount: 1))
+
+        // Once the hold is real again the engine drops back to the renewal
+        // schedule instead of keeping the retry tick running.
+        let armed = try #require(engine.armedTimerInterval)
+        #expect(armed == PowerTuning.default.renewalInterval)
+    }
+
+    /// The mirror case: a failed RENEWAL keeps the old `createdAt`, so
+    /// `createdAt + renewalInterval` is already in the past. Arming that raw
+    /// (negative) delay clamps to 0 and refires reconcile on `.main`
+    /// immediately, forever — a tight loop that burns a core and hammers IOKit
+    /// with a create per iteration. The armed delay must be floored to the
+    /// bounded recovery cadence.
+    @Test func failingRenewalArmsABoundedRetryInsteadOfAZeroDelaySpin() {
+        let (engine, fake, clock) = makeEngine()
+        engine.setRequest(HoldRequest(source: .agentSession(id: "A"), expiry: .indefinite))
+        // Healthy: the only future wake is the renewal instant.
+        #expect(engine.armedTimerInterval == PowerTuning.default.renewalInterval)
+
+        clock.advance(PowerTuning.default.renewalInterval)
+        fake.failNextCreate = true
+        engine.reconcile()
+
+        // Old assertion kept (backstop), renewal instant now behind us.
+        #expect(fake.active.count == 1)
+        #expect(engine.armedTimerInterval == engine.retryInterval)
+    }
+
+    /// A hold that is suspended by a safety gate desires nothing, so there is
+    /// nothing to retry: the timer stays cancelled rather than ticking forever
+    /// against a closed gate.
+    @Test func suspendedHoldArmsNoRecoveryTick() {
+        let (engine, fake, _) = makeEngine()
+        engine.setRequest(HoldRequest(source: .agentSession(id: "A"), expiry: .indefinite))
+        engine.updateBattery(onBattery(19))
+
+        #expect(fake.active.isEmpty)
+        #expect(engine.armedTimerInterval == nil)
     }
 
     @Test func removeRequestForAbsentSourceIsANoOp() {

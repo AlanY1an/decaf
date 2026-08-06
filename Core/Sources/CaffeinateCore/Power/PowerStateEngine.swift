@@ -117,6 +117,33 @@ public final class PowerStateEngine: ObservableObject {
     private let now: () -> Date
     private var timer: DispatchSourceTimer?
 
+    /// Cadence for the recovery tick, used for two things (both of which are
+    /// "we want an assertion we do not have right now, and no other trigger is
+    /// coming"):
+    /// - a create that FAILED, so `desired` contains a kind that `held` lacks.
+    ///   Agent sources are registered `.indefinite`, so without this tick there
+    ///   would be no periodic wake at all: the engine would report `holding`
+    ///   while nothing is actually asserted, and the Mac would sleep mid-run.
+    /// - an overdue renewal instant (`createdAt + renewalInterval` already in
+    ///   the past because the renewal create failed), which must NOT be armed
+    ///   at its literal — negative — delay.
+    ///
+    /// 5 s is chosen against the two bounds that matter. Recovery: the shortest
+    /// idle-sleep window macOS will accept is 1 minute, so 5 s gives ~12 retries
+    /// before the earliest moment the machine could sleep on us. Cost: 0.2
+    /// IOKit calls per second in the (rare) failure state, versus the thousands
+    /// per second a zero-delay rearm would produce on the main queue.
+    ///
+    /// Not part of `PowerTuning`: this is an implementation detail of the timer,
+    /// not a product setting. Internal so tests can shorten it.
+    var retryInterval: TimeInterval = 5
+
+    /// The delay the boundary timer was last armed with, or nil when no timer
+    /// is armed. Diagnostics only — the timer carries no semantics — but it is
+    /// the observable that proves a rearm never degenerates into a zero-delay
+    /// (main-queue-spinning) tick.
+    private(set) var armedTimerInterval: TimeInterval?
+
     public init(
         asserter: any PowerAsserting,
         tuning: PowerTuning = .default,
@@ -400,8 +427,9 @@ public final class PowerStateEngine: ObservableObject {
             changed = true
         }
 
-        // 6. Re-arm the boundary timer (nearest deadline / renewal instant).
-        rearmTimer(now: current)
+        // 6. Re-arm the boundary timer (nearest deadline / renewal instant, or
+        //    the recovery tick when something desired is not held).
+        rearmTimer(now: current, desired: desired)
 
         // 7. One settled notification after every published property is final.
         if changed {
@@ -445,9 +473,10 @@ public final class PowerStateEngine: ObservableObject {
     }
 
     /// Arms a single one-shot timer at min(nearest request deadline, nearest
-    /// renewal instant); cancels it when neither exists. The timer only wakes
-    /// reconcile — it carries no semantics (plan 01 step 6).
-    private func rearmTimer(now current: Date) {
+    /// renewal instant, recovery tick); cancels it only when none of the three
+    /// exists. The timer only wakes reconcile — it carries no semantics
+    /// (plan 01 step 6).
+    private func rearmTimer(now current: Date, desired: Set<AssertionKind>) {
         var nextFire: Date?
         func consider(_ candidate: Date) {
             if let existing = nextFire {
@@ -464,12 +493,28 @@ public final class PowerStateEngine: ObservableObject {
         for assertion in held.values {
             consider(assertion.createdAt.addingTimeInterval(tuning.renewalInterval))
         }
+        // Recovery tick: we want an assertion we do not hold (its create
+        // failed). Nothing else will wake us — `.indefinite` requests have no
+        // deadline and an unheld kind has no renewal instant — so without this
+        // candidate the timer would be cancelled and the hold would never be
+        // re-established, while `status` still claimed `.holding`.
+        if desired.contains(where: { held[$0] == nil }) {
+            consider(current.addingTimeInterval(retryInterval))
+        }
 
         timer?.cancel()
         timer = nil
+        armedTimerInterval = nil
         guard let fireAt = nextFire else { return }
 
-        let interval = max(0, fireAt.timeIntervalSince(current))
+        // Floor the delay. `fireAt` can already be in the past — a renewal whose
+        // create failed keeps the old `createdAt`, so `createdAt +
+        // renewalInterval` is behind us and the raw delay is negative. Arming
+        // that at 0 would refire reconcile on `.main` immediately, forever, in a
+        // tight loop. Retry at the bounded recovery cadence instead.
+        let delay = fireAt.timeIntervalSince(current)
+        let interval = delay > 0 ? delay : retryInterval
+        armedTimerInterval = interval
         let source = DispatchSource.makeTimerSource(queue: .main)
         source.schedule(wallDeadline: .now() + interval, leeway: .seconds(1))
         source.setEventHandler { [weak self] in

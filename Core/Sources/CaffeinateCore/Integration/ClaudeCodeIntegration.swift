@@ -150,24 +150,31 @@ public final class ClaudeCodeIntegration: AgentIntegration {
         // probe never throws and never writes.
         let settings = (try? editor.readJSONObject(atPath: paths.claudeSettingsFile)) ?? nil
 
-        let entriesComplete = settings.map(ClaudeSettingsEditor.ourEntriesComplete(in:)) ?? false
         let bridgeInPlace = fileSystem.fileExists(atPath: paths.bridgeBinary)
         let record = manifest.record(for: .claudeCode)
+        // Manifest-lost fallback (plan 03 §3.1): our markers alone still
+        // identify the install, so the mode is known even without a record.
+        let mode = record?.mode ?? .claudeHooks
 
-        if entriesComplete {
+        switch settings.map(ClaudeSettingsEditor.integrity(of:)) ?? .absent {
+        case .complete:
             return bridgeInPlace
-                ? .installed(.claudeHooks)
-                : .broken(.claudeHooks, .bridgeMissing)
+                ? .installed(mode)
+                : .broken(mode, .bridgeMissing)
+        case .outdated:
+            // The user upgraded Caffeinate; their settings.json still lists the
+            // previous build's event set. The Agents pane offers Repair — we do
+            // not silently rewrite a file the user owns.
+            return .broken(mode, .entriesOutdated)
+        case .damaged:
+            return .broken(mode, .entriesMissing)
+        case .absent:
+            if let record {
+                // Manifest says installed but every entry is gone.
+                return .broken(record.mode, .entriesMissing)
+            }
+            return .detected(version: probeVersion(binaryPath: binaryPath))
         }
-        if let record {
-            // Manifest says installed but entries are gone/incomplete.
-            return .broken(record.mode, .entriesMissing)
-        }
-        if let settings, ClaudeSettingsEditor.containsAnyOfOurEntries(settings) {
-            // Manifest lost but our markers remain — repairable/uninstallable.
-            return .broken(.claudeHooks, .entriesMissing)
-        }
-        return .detected(version: probeVersion(binaryPath: binaryPath))
     }
 
     // MARK: - Planned changes (consent-dialog data)

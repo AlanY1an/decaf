@@ -26,6 +26,15 @@ public enum IntegrationMode: String, Codable, Equatable, Sendable {
 public enum BrokenReason: String, Codable, Equatable, Sendable {
     /// Our entries vanished from the config file (overwritten by user/agent).
     case entriesMissing
+    /// Our entries are intact but describe an older version of Caffeinate: the
+    /// app now registers hooks this install does not have (plan 02 §1.1a added
+    /// `PostToolUse`). Nobody damaged anything — the app moved and the config
+    /// did not follow, which is why it is a separate reason from
+    /// `entriesMissing`: the same Repair button, a different sentence above it,
+    /// and no implication that the user's editor is to blame. Repair is the
+    /// normal idempotent `install()`; we never rewrite the file behind the
+    /// user's back.
+    case entriesOutdated
     /// The bridge binary is not at its expected App Support location.
     case bridgeMissing
     /// Codex only: hooks.json changed but `[hooks.state]` hash did not follow.

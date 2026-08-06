@@ -812,4 +812,215 @@ private func randomValue(depth: Int, using rng: inout SeededGenerator) -> Any {
             }
         }
     }
+
+    // MARK: - Hook-set upgrades (plan 02 §1.5 / plan 03 §3.3)
+
+    /// The event set grows between releases (`PostToolUse`, plan 02 §1.1a), so
+    /// "our entries are present" stopped being the same question as "our
+    /// entries are current". These tests fence the difference: an install that
+    /// is merely OLD must be named as old, repaired idempotently, and must
+    /// never be rewritten behind the user's back.
+    @Suite struct HookSetUpgrade {
+
+        /// Exactly what a pre-heartbeat Caffeinate wrote, with the user's own
+        /// configuration around it. Byte-shaped on purpose: this is the file
+        /// sitting on an already-installed machine right now.
+        static let legacySettingsJSON = #"""
+        {
+          "model": "opus",
+          "hooks": {
+            "SessionStart": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "Stop": [
+              { "hooks": [ { "type": "command", "command": "echo user-stop", "timeout": 30 } ] },
+              { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] }
+            ],
+            "StopFailure": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "SessionEnd": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "Notification": [
+              { "matcher": "permission_prompt", "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\" permission_prompt", "timeout": 5 } ] },
+              { "matcher": "idle_prompt", "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\" idle_prompt", "timeout": 5 } ] }
+            ],
+            "PreToolUse": [
+              { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/bin/audit-bash.sh" } ] }
+            ]
+          }
+        }
+        """#
+
+        /// What `legacySettingsJSON` reduces to once every Caffeinate entry —
+        /// v1's and the heartbeat we add on repair — has been filtered out.
+        static let userOnlySettingsJSON = #"""
+        {
+          "model": "opus",
+          "hooks": {
+            "Stop": [
+              { "hooks": [ { "type": "command", "command": "echo user-stop", "timeout": 30 } ] }
+            ],
+            "PreToolUse": [
+              { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/bin/audit-bash.sh" } ] }
+            ]
+          }
+        }
+        """#
+
+        @Test func currentTemplateRegistersTheHeartbeatWithoutAnArgvMatcher() throws {
+            #expect(ClaudeSettingsEditor.plainEvents.contains("PostToolUse"))
+            let heartbeat = try #require(
+                ClaudeSettingsEditor.templateEntries().first { $0.event == "PostToolUse" }
+            )
+            #expect(heartbeat.matcher == nil, "the heartbeat is told apart by hook_event_name (plan 02 §1.5)")
+            #expect(heartbeat.object["matcher"] == nil)
+            let inner = try #require(heartbeat.object["hooks"] as? [[String: Any]])
+            #expect(inner.first?["command"] as? String == ClaudeSettingsEditor.quotedBridgeCommand,
+                    "same bridge command as every other event")
+            #expect(inner.first?["timeout"] as? Int == 5)
+        }
+
+        @Test func historicalSetsAreAppendOnlyAndPredateTheHeartbeat() {
+            // If this list is ever edited rather than appended to, every user
+            // on the edited version starts being reported as "damaged".
+            for set in ClaudeSettingsEditor.historicalPlainEventSets {
+                #expect(!set.contains("PostToolUse"))
+                #expect(Set(set).isSubset(of: Set(ClaudeSettingsEditor.plainEvents)))
+            }
+            #expect(ClaudeSettingsEditor.historicalPlainEventSets.contains(
+                ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"]
+            ))
+        }
+
+        @Test func integrityClassifiesTheFourShapes() throws {
+            #expect(ClaudeSettingsEditor.integrity(of: [:]) == .absent)
+            #expect(ClaudeSettingsEditor.integrity(of: try jsonObject(#"{"model":"opus"}"#)) == .absent)
+
+            let current = try ClaudeSettingsEditor.merge(ourEntriesInto: [:])
+            #expect(ClaudeSettingsEditor.integrity(of: current) == .complete)
+
+            let legacy = try jsonObject(Self.legacySettingsJSON)
+            #expect(
+                ClaudeSettingsEditor.integrity(of: legacy)
+                    == .outdated(missing: [ClaudeSettingsEditor.EntryKey(event: "PostToolUse")])
+            )
+
+            // Damage: an event a shipped build always installed is gone, so the
+            // shape is one we never wrote.
+            var damaged = current
+            var hooks = try #require(damaged["hooks"] as? [String: Any])
+            hooks.removeValue(forKey: "SessionEnd")
+            damaged["hooks"] = hooks
+            guard case .damaged(let missing) = ClaudeSettingsEditor.integrity(of: damaged) else {
+                Issue.record("expected .damaged, got \(ClaudeSettingsEditor.integrity(of: damaged))")
+                return
+            }
+            #expect(missing == [ClaudeSettingsEditor.EntryKey(event: "SessionEnd")])
+        }
+
+        @Test func aMarkedEntryWeNeverWriteIsDamageNotAge() throws {
+            // Everything a v1 build installed is present, but there is also one
+            // of our commands under an event we do not register — the file has
+            // been edited by something other than this app.
+            var legacy = try jsonObject(Self.legacySettingsJSON)
+            var hooks = try #require(legacy["hooks"] as? [String: Any])
+            hooks["PreCompact"] = [
+                ["hooks": [["type": "command", "command": ClaudeSettingsEditor.quotedBridgeCommand]]]
+            ]
+            legacy["hooks"] = hooks
+            guard case .damaged = ClaudeSettingsEditor.integrity(of: legacy) else {
+                Issue.record("a marked entry outside the template must not read as merely outdated")
+                return
+            }
+        }
+
+        @Test func installedEntryKeysAreMatcherAwareAndIgnoreUserEntries() throws {
+            let legacy = try jsonObject(Self.legacySettingsJSON)
+            let keys = ClaudeSettingsEditor.installedEntryKeys(in: legacy)
+            #expect(keys.contains(ClaudeSettingsEditor.EntryKey(event: "Notification", matcher: "permission_prompt")))
+            #expect(keys.contains(ClaudeSettingsEditor.EntryKey(event: "Notification", matcher: "idle_prompt")))
+            #expect(!keys.contains(ClaudeSettingsEditor.EntryKey(event: "PostToolUse")))
+            // The user's own Stop hook and their PreToolUse audit hook are not
+            // ours and must not appear.
+            #expect(!keys.contains(ClaudeSettingsEditor.EntryKey(event: "PreToolUse", matcher: "Bash")))
+            #expect(keys.count == ClaudeSettingsEditor.expectedEntryKeys.count - 1)
+        }
+
+        /// The golden end-to-end: an already-installed old-shape settings.json
+        /// is reported as outdated, repaired by the ordinary idempotent
+        /// install, and everything the user owns survives byte-for-byte.
+        @Test func outdatedInstallIsDetectedAndRepairedWithoutDisturbingUserEntries() throws {
+            let harness = Harness()
+            harness.writeSettings(Self.legacySettingsJSON)
+            let original = try jsonObject(Self.legacySettingsJSON)
+            let integration = harness.makeIntegration()
+
+            // A machine that installed with the previous build also has a
+            // manifest record from it.
+            let manifest = InstallManifest(fileSystem: harness.fs, path: harness.paths.manifestFile)
+            try manifest.upsert(
+                InstallRecord(
+                    agent: .claudeCode,
+                    mode: .claudeHooks,
+                    touchedFiles: [harness.paths.bridgeBinary, harness.paths.claudeSettingsFile],
+                    backups: [:],
+                    bridgeVersion: "1.0.0",
+                    installedAt: harness.clock.date,
+                    createdFiles: []
+                )
+            )
+            harness.fs.addFile(harness.paths.bridgeBinary, Data("bridge-1.0.0".utf8), executable: true)
+
+            #expect(integration.probe() == .broken(.claudeHooks, .entriesOutdated),
+                    "an old event set is outdated, not damaged")
+            #expect(harness.fs.files[harness.paths.claudeSettingsFile] == Data(Self.legacySettingsJSON.utf8),
+                    "probe is read-only: no silent rewrite of the user's config")
+
+            // Repair == the ordinary install.
+            harness.clock.advance(60)
+            _ = try integration.install()
+            #expect(integration.probe() == .installed(.claudeHooks))
+
+            let repaired = try harness.settingsObject()
+            // Exactly one entry added, and it is ours.
+            #expect(eventArray(repaired, "PostToolUse").count == 1)
+            let added = try #require(eventArray(repaired, "PostToolUse").first as? [String: Any])
+            let addedHook = try #require((added["hooks"] as? [[String: Any]])?.first)
+            #expect(addedHook["command"] as? String == ClaudeSettingsEditor.quotedBridgeCommand)
+            #expect(added["matcher"] == nil)
+
+            // Nothing the user owns moved.
+            #expect(repaired["model"] as? String == "opus")
+            #expect(ClaudeSettingsEditor.semanticallyEqual(
+                ["hooks": ["PreToolUse": eventArray(repaired, "PreToolUse")]],
+                ["hooks": ["PreToolUse": eventArray(original, "PreToolUse")]]
+            ))
+            let stop = eventArray(repaired, "Stop")
+            #expect(stop.count == 2, "no duplicate of our Stop entry")
+            let userStop = try #require(stop.first as? [String: Any])
+            #expect((userStop["hooks"] as? [[String: Any]])?.first?["command"] as? String == "echo user-stop")
+
+            // Repair is idempotent: a second pass changes not one byte.
+            let afterRepair = harness.fs.files[harness.paths.claudeSettingsFile]
+            harness.clock.advance(60)
+            _ = try integration.install()
+            #expect(harness.fs.files[harness.paths.claudeSettingsFile] == afterRepair)
+
+            // And uninstall still lands on the user's own configuration: the
+            // reverse filter must clear the entries v1 wrote AND the one this
+            // build added, leaving nothing of ours behind.
+            harness.clock.advance(60)
+            try integration.uninstall()
+            let cleaned = try harness.settingsObject()
+            #expect(ClaudeSettingsEditor.semanticallyEqual(cleaned, try jsonObject(Self.userOnlySettingsJSON)),
+                    "uninstall removes the entries we added across BOTH versions and nothing else")
+            #expect(ClaudeSettingsEditor.integrity(of: cleaned) == .absent)
+        }
+
+        @Test func outdatedIsReportedEvenWhenTheManifestIsLost() throws {
+            let harness = Harness()
+            harness.writeSettings(Self.legacySettingsJSON)
+            harness.fs.addFile(harness.paths.bridgeBinary, Data("bridge-1.0.0".utf8), executable: true)
+            // No manifest record at all: our markers alone must still be enough
+            // to tell "old" from "someone else edited this".
+            #expect(harness.makeIntegration().probe() == .broken(.claudeHooks, .entriesOutdated))
+        }
+    }
 }

@@ -53,7 +53,12 @@ public enum ClaudeSettingsEditor {
     public static let hookTimeout = 5
 
     /// Events registered without a matcher (plan 02 §1.5).
-    public static let plainEvents = ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"]
+    ///
+    /// `PostToolUse` is the heartbeat (plan 02 §1.1a): the only hook that fires
+    /// mid-turn, and the reason `historicalPlainEvents` below exists.
+    public static let plainEvents = [
+        "SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "StopFailure", "SessionEnd",
+    ]
 
     /// The two `Notification` matchers, passed via argv (plan 02 §1.5).
     public static let notificationMatchers = ["permission_prompt", "idle_prompt"]
@@ -79,7 +84,7 @@ public enum ClaudeSettingsEditor {
         }
     }
 
-    /// All seven entries we install: five plain events + two Notification matchers.
+    /// Every entry we install: the plain events + the two Notification matchers.
     public static func templateEntries() -> [TemplateEntry] {
         plainEvents.map { TemplateEntry(event: $0, matcher: nil) }
             + notificationMatchers.map { TemplateEntry(event: "Notification", matcher: $0) }
@@ -173,9 +178,9 @@ public enum ClaudeSettingsEditor {
 
     // MARK: - Integrity / queries (probe support)
 
-    /// True when all seven of our entries are present (matcher-aware for
-    /// Notification). This is the same predicate merge uses for idempotence, so
-    /// "broken → repair" always converges.
+    /// True when every entry of the current template is present (matcher-aware
+    /// for Notification). This is the same predicate merge uses for
+    /// idempotence, so "broken → repair" always converges.
     public static func ourEntriesComplete(in settings: [String: Any]) -> Bool {
         guard let hooks = settings["hooks"] as? [String: Any] else { return false }
         return templateEntries().allSatisfy { template in
@@ -192,6 +197,110 @@ public enum ClaudeSettingsEditor {
             guard let array = value as? [Any] else { return false }
             return array.contains { entryIsMarked($0) }
         }
+    }
+
+    // MARK: - Installed-set comparison (upgrade detection)
+
+    /// One installed hook slot: the event, plus the argv matcher for the two
+    /// `Notification` entries that are only told apart by it.
+    public struct EntryKey: Hashable, Sendable, CustomStringConvertible {
+        public let event: String
+        public let matcher: String?
+
+        public init(event: String, matcher: String? = nil) {
+            self.event = event
+            self.matcher = matcher
+        }
+
+        public var description: String {
+            matcher.map { "\(event):\($0)" } ?? event
+        }
+    }
+
+    /// The set of slots this build installs.
+    public static var expectedEntryKeys: Set<EntryKey> {
+        Set(templateEntries().map { EntryKey(event: $0.event, matcher: $0.matcher) })
+    }
+
+    /// Plain events registered by earlier shipped builds, oldest shape first.
+    ///
+    /// This list is the only thing that lets `integrity(of:)` say "outdated"
+    /// instead of "damaged", and the distinction matters: an outdated install
+    /// is our own fault and repairing it is routine, while a damaged one means
+    /// something outside the app rewrote the user's file and the Agents pane
+    /// should say so in different words. Append here — never edit in place —
+    /// whenever `plainEvents` or `notificationMatchers` grows.
+    static let historicalPlainEventSets: [[String]] = [
+        // v1 (through the MVP): the six turn-boundary events, no heartbeat.
+        ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"],
+    ]
+
+    /// Full slot sets of earlier shipped builds (the `Notification` pair has
+    /// been constant since v1).
+    static var historicalEntryKeySets: [Set<EntryKey>] {
+        historicalPlainEventSets.map { events in
+            Set(
+                events.map { EntryKey(event: $0) }
+                    + notificationMatchers.map { EntryKey(event: "Notification", matcher: $0) }
+            )
+        }
+    }
+
+    /// Every slot in `settings` currently occupied by one of our entries.
+    ///
+    /// Matcher-aware, and it reports slots under event names we do not install
+    /// too — a marked entry we never wrote is exactly the kind of drift the
+    /// caller must not mistake for a stale install.
+    public static func installedEntryKeys(in settings: [String: Any]) -> Set<EntryKey> {
+        guard let hooks = settings["hooks"] as? [String: Any] else { return [] }
+        var keys: Set<EntryKey> = []
+        for (event, value) in hooks {
+            guard let array = value as? [Any] else { continue }
+            for entry in array where entryIsMarked(entry) {
+                let matcher = (entry as? [String: Any])?["matcher"] as? String
+                keys.insert(EntryKey(event: event, matcher: matcher))
+            }
+        }
+        return keys
+    }
+
+    /// How the installed slot set compares with the one this build writes.
+    public enum Integrity: Equatable, Sendable {
+        /// Every slot we install is occupied. (Extra marked slots do not
+        /// demote this: they cannot stop the hooks we need from firing.)
+        case complete
+        /// Exactly what some earlier shipped build installed, and nothing we
+        /// do not recognise — the user upgraded the app but their
+        /// settings.json still describes the previous version. Repair is a
+        /// plain re-run of `install()`.
+        case outdated(missing: [EntryKey])
+        /// Incomplete in a shape we never shipped: something other than us
+        /// edited the file.
+        case damaged(missing: [EntryKey])
+        /// None of our entries are present at all.
+        case absent
+    }
+
+    /// Classifies `settings` against the current template. Read-only.
+    public static func integrity(of settings: [String: Any]) -> Integrity {
+        let installed = installedEntryKeys(in: settings)
+        guard !installed.isEmpty else { return .absent }
+
+        let expected = expectedEntryKeys
+        if installed.isSuperset(of: expected) { return .complete }
+
+        let missing = expected.subtracting(installed).sorted { $0.description < $1.description }
+        // "Outdated" is a strong claim, so it takes two conditions: nothing
+        // present beyond what we install today (otherwise the file has been
+        // edited by someone else), and everything present that some earlier
+        // build installed (otherwise entries have been deleted, which is
+        // damage, not age).
+        let nothingUnexpected = expected.isSuperset(of: installed)
+        let matchesAShippedShape = historicalEntryKeySets.contains { installed.isSuperset(of: $0) }
+        if nothingUnexpected && matchesAShippedShape {
+            return .outdated(missing: missing)
+        }
+        return .damaged(missing: missing)
     }
 
     /// The uninstall acceptance contract (rule 5): parsed-level equality via

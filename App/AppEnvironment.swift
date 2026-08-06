@@ -228,7 +228,11 @@ struct PlannedChangeSummary: Identifiable, Equatable {
 /// `AgentIntegration` instances + the install manifest.
 @MainActor
 protocol AgentIntegrationsProviding: AnyObject {
-    func probeClaudeCode() -> ClaudeCodeStatus
+    /// Async because it is expensive: locating the binary can end in a login
+    /// shell (10 s fuse) and `--version` adds another 3. Blocking the main actor
+    /// on that meant no menu bar icon at all for the first ten seconds after
+    /// launch, for every nvm/fnm/volta/asdf user.
+    func probeClaudeCode() async -> ClaudeCodeStatus
     func plannedChanges() -> [PlannedChangeSummary]
     func installClaudeCodeHooks() throws
     func uninstallClaudeCodeHooks() throws
@@ -244,15 +248,45 @@ final class AgentIntegrationsModel: ObservableObject {
     @Published private(set) var claudeStatus = ClaudeCodeStatus(
         agentDetected: false, agentVersion: nil, hooksInstalled: false, needsRepair: false
     )
+    /// True while a probe is in flight. The default status above says "no agent
+    /// found", which is a claim we have not yet earned — surfaces that would
+    /// otherwise show it (onboarding step 2, the Agents hero) say "looking"
+    /// instead, so nobody is told to install Claude Code while we are still
+    /// looking for the copy they already have.
+    @Published private(set) var isProbing = false
     @Published private(set) var lastError: String?
+
+    private var probeTask: Task<Void, Never>?
+    private var probeQueued = false
 
     init(provider: any AgentIntegrationsProviding) {
         self.provider = provider
         refresh()
     }
 
+    /// Kicks off a probe and returns immediately; the published status updates
+    /// when it lands. Concurrent callers (launch, onboarding's onAppear, the
+    /// Agents tab's onAppear) share one probe instead of each paying for their
+    /// own login shell.
     func refresh() {
-        claudeStatus = provider.probeClaudeCode()
+        guard probeTask == nil else {
+            // A probe is already running, and it may have started before
+            // whatever just changed. Ask for one more when it lands.
+            probeQueued = true
+            return
+        }
+        isProbing = true
+        probeTask = Task { [weak self] in
+            guard let self else { return }
+            let status = await self.provider.probeClaudeCode()
+            self.claudeStatus = status
+            self.probeTask = nil
+            self.isProbing = false
+            if self.probeQueued {
+                self.probeQueued = false
+                self.refresh()
+            }
+        }
     }
 
     func plannedChanges() -> [PlannedChangeSummary] {
@@ -296,9 +330,17 @@ final class ClaudeIntegrationsProvider: AgentIntegrationsProviding {
         self.root = root
     }
 
-    func probeClaudeCode() -> ClaudeCodeStatus {
+    /// Runs the probe on a background task and comes back to the main actor with
+    /// the result. `ClaudeCodeIntegration` is Sendable and its caches are
+    /// locked, so the hop is safe; nothing mutable crosses but the answer.
+    func probeClaudeCode() async -> ClaudeCodeStatus {
+        let integration = self.integration
+        let result = await Task.detached(priority: .userInitiated) {
+            integration.probe()
+        }.value
+
         let status: ClaudeCodeStatus
-        switch integration.probe() {
+        switch result {
         case .notDetected:
             status = ClaudeCodeStatus(
                 agentDetected: false, agentVersion: nil,

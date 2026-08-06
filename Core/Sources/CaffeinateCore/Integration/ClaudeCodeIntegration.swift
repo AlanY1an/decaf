@@ -75,7 +75,14 @@ public struct SystemProcessRunner: ProcessRunning {
 
 // MARK: - ClaudeCodeIntegration
 
-public final class ClaudeCodeIntegration: AgentIntegration {
+/// `@unchecked Sendable` on purpose, and it is what makes the app's first launch
+/// bearable: `probe()` can cost seconds (a login-shell lookup for anyone using
+/// nvm/fnm/volta/asdf, plus `claude --version`), so the app runs it off the main
+/// actor and keeps only the published result there. Everything this class owns
+/// is either immutable (`fileSystem` / `runner` / `configuration` and the two
+/// value-type helpers built from them) or one of the two caches below, which are
+/// guarded by `cacheLock`.
+public final class ClaudeCodeIntegration: AgentIntegration, @unchecked Sendable {
     /// Everything environment-shaped, injected for testability.
     public struct Configuration {
         /// Absolute home directory (no trailing slash).
@@ -118,9 +125,19 @@ public final class ClaudeCodeIntegration: AgentIntegration {
     private let editor: ConfigFileEditor
     private let manifest: InstallManifest
 
+    /// Guards the two caches below. `probe()` is called from a background task
+    /// (the app never blocks its main actor on it) and from the settings pane's
+    /// own refresh, so the caches must survive concurrent readers.
+    private let cacheLock = NSLock()
     /// Cache for the slow shell lookup, valid for this process's lifetime
     /// (plan 03 §3.2). `.some(nil)` = looked up, not found.
     private var cachedShellLookup: String??
+    /// `claude --version` per resolved binary path, for this process's lifetime.
+    /// The probe runs on every launch and on every visit to the Agents tab; the
+    /// version of a binary that has not moved does not change under us, and a
+    /// 3-second fuse paid on every visit is a cost with nothing bought.
+    /// `.some(nil)` = probed, unparseable.
+    private var cachedVersions: [String: String?] = [:]
 
     public init(
         fileSystem: FileSystem,
@@ -335,15 +352,44 @@ public final class ClaudeCodeIntegration: AgentIntegration {
 
     /// Fixed candidate directories checked before falling back to the login
     /// shell. Order matters only for speed; any hit wins.
+    ///
+    /// The list is long on purpose. Every directory missing from it is a user
+    /// whose probe falls through to `$SHELL -lic` — ten seconds of a login shell
+    /// sourcing their whole profile, plus three more for `--version`. The
+    /// version managers below (volta, asdf, mise, fnm, nvm, pnpm, yarn, deno)
+    /// are exactly the population that used to pay that, and `~/.claude/local/bin`
+    /// is where Claude Code's own installer puts the binary.
     var candidateDirectories: [String] {
-        [
+        let home = configuration.homeDirectory
+        var directories = [
             "/opt/homebrew/bin",
             "/usr/local/bin",
-            configuration.homeDirectory + "/.local/bin",
-            configuration.homeDirectory + "/.cargo/bin",
-            configuration.homeDirectory + "/.bun/bin",
-            configuration.homeDirectory + "/.npm-global/bin",
+            // Claude Code's own local install location.
+            home + "/.claude/local/bin",
+            home + "/.local/bin",
+            home + "/.cargo/bin",
+            home + "/.bun/bin",
+            home + "/.npm-global/bin",
+            // Node version managers with a fixed shim directory.
+            home + "/.volta/bin",
+            home + "/.asdf/shims",
+            home + "/.local/share/mise/shims",
+            home + "/.fnm/aliases/default/bin",
+            home + "/Library/pnpm",
+            home + "/.yarn/bin",
+            home + "/.deno/bin",
         ]
+        // nvm has no shim directory: every installed Node version owns its own
+        // bin. Newest first, since that is where a global install of a current
+        // tool lives. A missing ~/.nvm just yields nothing.
+        let nvmVersions = home + "/.nvm/versions/node"
+        let installed = (try? fileSystem.contentsOfDirectory(atPath: nvmVersions)) ?? []
+        directories.append(
+            contentsOf: installed
+                .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+                .map { nvmVersions + "/" + $0 + "/bin" }
+        )
+        return directories
     }
 
     private func locateBinary() -> String? {
@@ -355,9 +401,11 @@ public final class ClaudeCodeIntegration: AgentIntegration {
         }
         // Slow path: interactive login shell, so the user's PATH tweaks apply.
         // Result (including "not found") is cached for the process lifetime.
-        if let cached = cachedShellLookup {
-            return cached
-        }
+        cacheLock.lock()
+        let cached = cachedShellLookup
+        cacheLock.unlock()
+        if let cached { return cached }
+
         let output = runner.runCapturingOutput(
             executable: configuration.shellPath,
             arguments: ["-lic", "command -v \(Self.binaryName)"],
@@ -368,21 +416,30 @@ public final class ClaudeCodeIntegration: AgentIntegration {
             .last
             .map { String($0).trimmingCharacters(in: .whitespaces) }
         let resolved = (path?.hasPrefix("/") == true) ? path : nil
+        cacheLock.lock()
         cachedShellLookup = .some(resolved)
+        cacheLock.unlock()
         return resolved
     }
 
     /// `claude --version` with a 3s fuse; any parse failure → nil ("version
-    /// unknown", plan 03 §3.2).
+    /// unknown", plan 03 §3.2). Cached per binary path for the process lifetime.
     private func probeVersion(binaryPath: String) -> String? {
-        guard
-            let output = runner.runCapturingOutput(
-                executable: binaryPath,
-                arguments: ["--version"],
-                timeout: Self.versionProbeTimeout
-            )
-        else { return nil }
-        return Self.parseVersion(from: output)
+        cacheLock.lock()
+        let cached = cachedVersions[binaryPath]
+        cacheLock.unlock()
+        if let cached { return cached }
+
+        let output = runner.runCapturingOutput(
+            executable: binaryPath,
+            arguments: ["--version"],
+            timeout: Self.versionProbeTimeout
+        )
+        let version = output.flatMap(Self.parseVersion(from:))
+        cacheLock.lock()
+        cachedVersions[binaryPath] = .some(version)
+        cacheLock.unlock()
+        return version
     }
 
     /// Extracts the first semver-looking token (e.g. "2.1.37" out of

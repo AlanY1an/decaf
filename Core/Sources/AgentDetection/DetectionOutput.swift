@@ -7,6 +7,24 @@
 import Foundation
 import HookWire
 
+/// A transcript wait signal currently extending a hold (plan 08).
+///
+/// Privacy: `until` is arithmetic over a record timestamp and a declared
+/// duration; `source` is one of our own identifiers. Neither can carry a byte
+/// of conversation — `prompt` / `reason` are never read (plan 08 hard limit 3).
+public struct WaitInfo: Sendable, Equatable {
+    /// The instant the agent said it would resume, plus the wake margin, after
+    /// clamping to the parser's 1-hour cap.
+    public var until: Date
+    /// Which whitelisted tool declared the wait.
+    public var source: WaitSignal.Kind
+
+    public init(until: Date, source: WaitSignal.Kind) {
+        self.until = until
+        self.source = source
+    }
+}
+
 /// One reason the detection layer wants the Mac kept awake (plan 02 §0).
 public struct HoldSource: Sendable, Equatable {
     public enum Kind: Equatable, Sendable {
@@ -18,10 +36,15 @@ public struct HoldSource: Sendable, Equatable {
 
     public var agent: AgentKind
     public var kind: Kind
+    /// Set when a wait signal is what keeps this source alive (or extends it):
+    /// the menu renders "holding until 14:32 · waiting" from here (plan 08
+    /// 实现步骤 4/5). `nil` for every ordinary hold.
+    public var wait: WaitInfo?
 
-    public init(agent: AgentKind, kind: Kind) {
+    public init(agent: AgentKind, kind: Kind, wait: WaitInfo? = nil) {
         self.agent = agent
         self.kind = kind
+        self.wait = wait
     }
 }
 
@@ -42,5 +65,18 @@ public struct DetectionOutput: Sendable, Equatable {
         self.shouldHold = shouldHold
         self.holdSources = holdSources
         self.precision = precision
+    }
+
+    /// The furthest instant a wait signal is currently holding the Mac awake,
+    /// or nil when nothing is waiting. The menu's "holding until …" line reads
+    /// this; the hold itself may well outlive it (an active session holds
+    /// indefinitely regardless).
+    public var waitingUntil: Date? {
+        holdSources.compactMap(\.wait?.until).max()
+    }
+
+    /// True when at least one hold is (also) explained by a wait signal.
+    public var isWaiting: Bool {
+        holdSources.contains { $0.wait != nil }
     }
 }

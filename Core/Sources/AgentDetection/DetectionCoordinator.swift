@@ -9,6 +9,8 @@
 // - HooksInstallationInspector result via `setHooksInstalled(_:for:)`.
 // - Socket listener health via `setSocketHealthy(_:)` — with the 15 s
 //   `socketDegradeGrace` watchdog semantics (plan 02 §1.6).
+// - Transcript writes via `noteTranscriptActivity(agent:paths:at:)`
+//   (FSEventsWatcher), tail-read and parsed into wait signals (plan 08).
 //
 // Reconcile discipline (plan 02 §1.2): a 30 s DispatchSourceTimer, the wake
 // notification, every ingested event, and a one-shot timer at the next known
@@ -35,6 +37,10 @@ public enum DetectionDefaults {
     /// L2 sliding idle window (plan 02 §2; vibe-caffeine's 30 s is the
     /// counter-example this value guards against).
     public static let l2IdleWindow: TimeInterval = 300
+    /// Upper bound on tail-read rounds per transcript per event, so draining a
+    /// huge backlog can never monopolise the actor. Whatever is left is picked
+    /// up by the next event or the next tick (plan 08 §性能).
+    public static let maxTailReadRoundsPerEvent = 8
 }
 
 public actor DetectionCoordinator {
@@ -56,6 +62,14 @@ public actor DetectionCoordinator {
     private let registry: SessionRegistry
     private let store: SessionsStore?
     private let watcher: FSEventsWatcher?
+    /// Incremental transcript reader (plan 08 §性能). nil disables wait-signal
+    /// awareness entirely — the app then behaves exactly as it did before the
+    /// feature existed, which is also the escape hatch if upstream renames the
+    /// tools out from under us.
+    private let tailReader: TranscriptTailReader?
+    private let waitParser: WaitSignalParser
+    /// Per-file parser cursor (carries at most a pending cron job id).
+    private var waitCursors: [URL: WaitSignalParser.Cursor] = [:]
 
     // MARK: Layer state
 
@@ -94,15 +108,23 @@ public actor DetectionCoordinator {
         clock: @escaping @Sendable () -> Date = { Date() },
         livenessProbe: @escaping @Sendable (pid_t) -> Bool = { ProcessLiveness.isAlive($0) },
         store: SessionsStore? = nil,
-        watcher: FSEventsWatcher? = nil
+        watcher: FSEventsWatcher? = nil,
+        tailReader: TranscriptTailReader? = TranscriptTailReader(),
+        waitParser: WaitSignalParser = WaitSignalParser()
     ) {
         self.clock = clock
+        self.tailReader = tailReader
+        self.waitParser = waitParser
         self.gracePeriod = gracePeriod
         self.l2IdleWindow = l2IdleWindow
         self.socketDegradeGrace = socketDegradeGrace
         self.sweepInterval = sweepInterval
         self.registry = SessionRegistry(
             gracePeriod: gracePeriod,
+            // The registry re-applies the cap from the current wall clock; it
+            // must be the same ceiling the parser used, or a custom-capped
+            // parser and the registry would disagree (plan 08 hard limit 2).
+            waitCap: waitParser.waitCap,
             clock: clock,
             isProcessAlive: livenessProbe
         )
@@ -137,9 +159,21 @@ public actor DetectionCoordinator {
         }
 
         if let watcher {
+            // Launch never replays history (plan 08 §性能): every transcript
+            // that already exists is seeded at EOF before the first event can
+            // arrive, so a cold start cannot resurrect an expired wait.
+            if let tailReader {
+                for (_, urls) in watcher.existingTranscriptFiles() {
+                    tailReader.primeToEnd(urls)
+                }
+            }
             watcher.onActivity = { [weak self] agent, date in
                 guard let self else { return }
                 Task { await self.noteFileActivity(agent: agent, at: date) }
+            }
+            watcher.onTranscriptActivity = { [weak self] agent, urls, date in
+                guard let self else { return }
+                Task { await self.noteTranscriptActivity(agent: agent, paths: urls, at: date) }
             }
             watcher.onRootVanished = { [weak self] agent in
                 guard let self else { return }
@@ -226,6 +260,70 @@ public actor DetectionCoordinator {
         if let existing = lastActivityAt[agent], existing >= date { return }
         lastActivityAt[agent] = date
         reconcile(now: max(date, clock()))
+    }
+
+    // MARK: Wait signals (plan 08)
+
+    /// One or more transcript files were appended to.
+    ///
+    /// Tail-reads each file from its tracked byte offset (never a full
+    /// re-parse — transcripts reach 30 MB here), parses only the new lines and
+    /// applies whatever wait signals they carry to the session named by the
+    /// record's own `sessionId`. Unseen sessions are created: a `/loop` can
+    /// start while the app is already running, and without hooks there is no
+    /// other way to hear about it.
+    ///
+    /// Also counts as L2 file activity, so callers do not have to make both
+    /// calls; the L1-priority rule still decides whether that window matters.
+    ///
+    /// Cannot fail: the reader degrades to "no new lines" and the parser
+    /// swallows every anomaly, so the worst case is exactly today's behaviour
+    /// (plan 08 hard limit 1).
+    public func noteTranscriptActivity(agent: AgentKind, paths: [URL], at date: Date? = nil) {
+        let now = max(date ?? clock(), clock())
+        noteFileActivity(agent: agent, at: date)
+
+        guard let tailReader, !paths.isEmpty else { return }
+
+        var applied = false
+        for url in paths {
+            var cursor = waitCursors[url] ?? WaitSignalParser.Cursor()
+            var rounds = 0
+            repeat {
+                let lines = tailReader.readNewLines(at: url)
+                if lines.isEmpty { break }
+                for line in lines {
+                    let result = waitParser.parse(line: line, now: now, cursor: &cursor)
+                    guard !result.isEmpty else { continue }
+                    // File order is authoritative: a stop later in the file
+                    // overrides a wait earlier in it, matching the registry's
+                    // standing "always trust the latest signal" rule. Within a
+                    // single record, terminations are applied last on purpose —
+                    // if one line both declares and cancels a wait, releasing
+                    // is the safe reading.
+                    for signal in result.signals {
+                        applied = registry.applyWaitSignal(signal, agent: agent, now: now) || applied
+                    }
+                    for termination in result.terminations {
+                        applied = registry.applyWaitTermination(termination, now: now) || applied
+                    }
+                }
+                rounds += 1
+            } while tailReader.hasPendingBytes(at: url)
+                && rounds < DetectionDefaults.maxTailReadRoundsPerEvent
+
+            if cursor.hasPendingCronJob {
+                waitCursors[url] = cursor
+            } else {
+                // Nothing to remember: keep the map the size of the loops in
+                // flight, not the size of the machine's session history.
+                waitCursors.removeValue(forKey: url)
+            }
+        }
+
+        if applied {
+            reconcile(now: now)
+        }
     }
 
     /// Watch-root existence per agent (tick check / RootChanged fallback).
@@ -321,7 +419,11 @@ public actor DetectionCoordinator {
                 // L1: one hold source per holding session (set semantics).
                 for session in registry.holdingSessions(now: now) where session.agent == agent {
                     holdSources.append(
-                        HoldSource(agent: agent, kind: .session(id: session.id, state: session.state))
+                        HoldSource(
+                            agent: agent,
+                            kind: .session(id: session.id, state: session.state),
+                            wait: session.waitInfo(at: now)
+                        )
                     )
                 }
             case .fileActivity, .processOnly:
@@ -331,6 +433,21 @@ public actor DetectionCoordinator {
                    now.timeIntervalSince(last) < l2IdleWindow {
                     holdSources.append(
                         HoldSource(agent: agent, kind: .fallbackActivity(lastActivityAt: last))
+                    )
+                }
+                // Wait signals are session-precise, not the lossy activity
+                // window the L1-priority rule is about, so they survive the
+                // fallback layer — and this is the layer that needs them most:
+                // the measured failure (a `/loop` released 300 s after the last
+                // transcript write, mid-gap) happens exactly here, with no
+                // hooks installed.
+                for session in registry.waitingSessions(now: now) where session.agent == agent {
+                    holdSources.append(
+                        HoldSource(
+                            agent: agent,
+                            kind: .session(id: session.id, state: session.state),
+                            wait: session.waitInfo(at: now)
+                        )
                     )
                 }
             case .unavailable:
@@ -365,6 +482,10 @@ public actor DetectionCoordinator {
         var candidates: [Date] = []
         if let grace = registry.nextGraceDeadline(after: now) {
             candidates.append(grace)
+        }
+        // A wait expiry must release on time, not at the next 30 s tick.
+        if let wait = registry.nextWaitDeadline(after: now) {
+            candidates.append(wait)
         }
         for (agent, last) in lastActivityAt {
             let expiry = last.addingTimeInterval(l2IdleWindow)

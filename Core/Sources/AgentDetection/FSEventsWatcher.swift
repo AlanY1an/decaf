@@ -103,10 +103,63 @@ public final class FSEventsWatcher {
         roots.first { path == $0.path || path.hasPrefix($0.path + "/") }
     }
 
+    // MARK: Transcript paths (plan 08 — the tail reader needs WHICH file moved)
+
+    /// Transcript-file suffix. One JSONL file per session under
+    /// `<root>/projects/<slug>/<session-uuid>.jsonl`.
+    public static let transcriptExtension = "jsonl"
+
+    /// The transcript file this event path denotes, or nil when the path is not
+    /// a transcript (a directory, a lock file, a `settings.json`, an event that
+    /// could not be attributed to a file at all).
+    ///
+    /// Deliberately narrower than `classify`: an unattributable overflow event
+    /// still counts as L2 activity, but there is no file to tail-read, so wait
+    /// signals simply wait for the next real write. Guessing (rescanning the
+    /// tree) is what plan 02 §2 says not to do.
+    public static func transcriptURL(path: String, roots: [Root]) -> URL? {
+        let normalized = (path as NSString).standardizingPath
+        guard case .activity = classify(path: path, flags: 0, roots: roots),
+              (normalized as NSString).pathExtension == transcriptExtension
+        else { return nil }
+        return URL(fileURLWithPath: normalized)
+    }
+
+    /// Every transcript file that exists under the configured roots right now.
+    ///
+    /// Used once, at launch, to seed the tail reader's offsets at EOF: history
+    /// written before we were running is history (same "since now" discipline
+    /// as `kFSEventStreamEventIdSinceNow`).
+    public func existingTranscriptFiles() -> [AgentKind: [URL]] {
+        var result: [AgentKind: [URL]] = [:]
+        for root in allRoots {
+            let projects = URL(fileURLWithPath: root.activityPrefix, isDirectory: true)
+            guard let walker = fileManager.enumerator(
+                at: projects,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            ) else { continue }
+            var files: [URL] = []
+            for case let url as URL in walker
+            where url.pathExtension == Self.transcriptExtension {
+                files.append(url)
+            }
+            if !files.isEmpty {
+                result[root.agent, default: []].append(contentsOf: files)
+            }
+        }
+        return result
+    }
+
     // MARK: Live watcher
 
     /// Called (on `queue`) for each activity signal.
     public var onActivity: ((AgentKind, Date) -> Void)?
+    /// Called (on `queue`) with the transcript files touched by an event batch,
+    /// so the coordinator can tail-read them for wait signals (plan 08).
+    /// Always paired with an `onActivity` call for the same agent; a batch that
+    /// named no file (queue overflow) fires only the latter.
+    public var onTranscriptActivity: ((AgentKind, [URL], Date) -> Void)?
     /// Called (on `queue`) when a watched root vanished (RootChanged).
     public var onRootVanished: ((AgentKind) -> Void)?
 
@@ -224,6 +277,11 @@ public final class FSEventsWatcher {
     fileprivate func handle(paths: [String], flags: [FSEventStreamEventFlags]) {
         var vanished: Set<AgentKind> = []
         var active: Set<AgentKind> = []
+        // Per agent, de-duplicated but order-preserving: one FSEvents batch
+        // routinely names the same transcript several times, and tail-reading
+        // it once is enough.
+        var transcripts: [AgentKind: [URL]] = [:]
+        var seenTranscripts: Set<URL> = []
         for (index, path) in paths.enumerated() {
             let eventFlags = index < flags.count ? flags[index] : 0
             // EventIdsWrapped: bookkeeping only, ignore (plan 02 §2).
@@ -233,6 +291,10 @@ public final class FSEventsWatcher {
             switch FSEventsWatcher.classify(path: path, flags: eventFlags, roots: streamedRoots) {
             case .activity(let agent):
                 active.insert(agent)
+                if let url = FSEventsWatcher.transcriptURL(path: path, roots: streamedRoots),
+                   seenTranscripts.insert(url).inserted {
+                    transcripts[agent, default: []].append(url)
+                }
             case .rootChanged(let agent):
                 vanished.insert(agent)
             case .ignored:
@@ -242,6 +304,9 @@ public final class FSEventsWatcher {
         let now = Date()
         for agent in active {
             onActivity?(agent, now)
+            if let urls = transcripts[agent] {
+                onTranscriptActivity?(agent, urls, now)
+            }
         }
         if !vanished.isEmpty {
             // Drop vanished roots from the stream; the tick existence check

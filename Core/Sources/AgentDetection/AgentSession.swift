@@ -32,6 +32,21 @@ public struct AgentSession: Equatable, Codable, Sendable {
     public var state: SessionState
     public var lastEventAt: Date
 
+    /// Deadline of a live wait signal read from this session's transcript
+    /// (plan 08). `nil` means "no declared wait".
+    ///
+    /// This is NOT a new state: it extends the state's own deadline, never
+    /// shortens it — `effectiveDeadline = max(graceDeadline, waitUntil)`. The
+    /// value is already clamped to the parser's hard cap (1 h), and every
+    /// existing safety gate plus the 30-minute assertion timeout still apply on
+    /// top of it, unchanged.
+    public var waitUntil: Date?
+
+    /// Which whitelisted tool produced `waitUntil`, so the menu can say why the
+    /// hold is being held. Carries no transcript content: the raw values are
+    /// our own identifiers (plan 08 hard limit 3).
+    public var waitSource: WaitSignal.Kind?
+
     public init(
         id: String,
         agent: AgentKind,
@@ -39,7 +54,9 @@ public struct AgentSession: Equatable, Codable, Sendable {
         ppid: pid_t,
         cwd: String? = nil,
         state: SessionState,
-        lastEventAt: Date
+        lastEventAt: Date,
+        waitUntil: Date? = nil,
+        waitSource: WaitSignal.Kind? = nil
     ) {
         self.id = id
         self.agent = agent
@@ -48,5 +65,7 @@ public struct AgentSession: Equatable, Codable, Sendable {
         self.cwd = cwd
         self.state = state
         self.lastEventAt = lastEventAt
+        self.waitUntil = waitUntil
+        self.waitSource = waitSource
     }
 }

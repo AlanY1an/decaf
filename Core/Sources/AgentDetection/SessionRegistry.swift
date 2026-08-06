@@ -128,7 +128,12 @@ public final class SessionRegistry {
 
     /// Grace period after Stop/StopFailure. The engine accepts 0–600 s
     /// (clamped); the UI offers 1–10 min presets (plan 02 §1.2).
-    public let gracePeriod: TimeInterval
+    ///
+    /// Settable (`setGracePeriod(_:)`), because this is a live preference: a
+    /// value fixed at construction means the Preferences picker does nothing
+    /// until the next launch, which for a menu-bar app that is never quit means
+    /// it does nothing at all.
+    public private(set) var gracePeriod: TimeInterval
 
     /// Plan 08 hard limit 2, enforced a SECOND time here.
     ///
@@ -235,6 +240,45 @@ public final class SessionRegistry {
         self.clock = clock
         self.isProcessAlive = isProcessAlive
         self.activitySampler = activitySampler
+    }
+
+    /// Applies a new grace period, clamped exactly as the initialiser clamps it.
+    ///
+    /// Grace windows already in flight are REBASED, not left frozen: a stored
+    /// `.grace(until:)` is `windowStart + oldGracePeriod`, so subtracting the
+    /// old value and adding the new one re-evaluates the window against the
+    /// setting the user just chose. Both directions matter and both are the
+    /// user's stated intent:
+    ///
+    /// - shortening (10 min → 1 min) with a window opened 3 minutes ago yields
+    ///   a deadline in the past, and the next `reconcile` migrates the session
+    ///   to IDLE — otherwise "release sooner" would not release for another 7
+    ///   minutes, i.e. would hold longer than the setting says it can;
+    /// - lengthening extends the running window rather than making the change
+    ///   apply only to the next Stop.
+    ///
+    /// Returns true when anything changed, so the caller knows to reconcile.
+    @discardableResult
+    public func setGracePeriod(_ newValue: TimeInterval) -> Bool {
+        let clamped = min(max(newValue, 0), 600)
+        guard clamped != gracePeriod else { return false }
+        let delta = clamped - gracePeriod
+        gracePeriod = clamped
+
+        // A grace window can never reach further than the current setting does
+        // from right now. The rebase alone assumes the stored deadline was
+        // written with the OLD value, which is true for every window this run
+        // opened but not for one `restore(_:)` read out of sessions.json after
+        // the preference changed between launches. The ceiling makes the
+        // invariant hold either way, and it can only ever shorten a hold.
+        let ceiling = clock().addingTimeInterval(clamped)
+        for (id, var session) in sessionsByID {
+            guard case .grace(let until) = session.state else { continue }
+            session.state = .grace(until: min(until.addingTimeInterval(delta), ceiling))
+            sessionsByID[id] = session
+            changeCount &+= 1
+        }
+        return true
     }
 
     // MARK: Wire-frame normalization (plan 02 §1.1 six-event mapping)

@@ -12,15 +12,17 @@
 // the window never auto-appears again.
 
 import AppKit
-import ServiceManagement
 import SwiftUI
+import os
 import CaffeinateCore
 
 @MainActor
 final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let settings: UISettings
+    private let launchAtLogin: LaunchAtLoginChoice
     private let onFinished: () -> Void
     private var didFinish = false
+    private let logger = Logger(subsystem: "dev.caffeinate.app", category: "onboarding")
 
     /// Indirection so the view's finish action can reach `self.finish()`
     /// (self is not available before super.init).
@@ -33,15 +35,18 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     init(
         settings: UISettings,
         integrations: AgentIntegrationsModel,
+        launchAtLogin: LaunchAtLoginChoice,
         onFinished: @escaping () -> Void
     ) {
         self.settings = settings
+        self.launchAtLogin = launchAtLogin
         self.onFinished = onFinished
 
         let relay = self.relay
         let view = OnboardingView(
             settings: settings,
             integrations: integrations,
+            launchAtLogin: launchAtLogin,
             finish: { relay.action() }
         )
         let hosting = NSHostingController(rootView: view)
@@ -58,9 +63,22 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
 
     /// Single completion funnel: the view's Done/Skip path and the window's
     /// close button both land here exactly once.
+    ///
+    /// The launch-at-login choice is applied HERE, not on the Done button's
+    /// path, because this window never comes back: dismissing it with the red
+    /// button used to mark onboarding complete while silently skipping the
+    /// registration, and the user found out on the next reboot, when an
+    /// overnight run wasn't protected. `applyIfNeeded()` is a no-op when the
+    /// user already flipped the switch on step 3.
     private func finish() {
         guard !didFinish else { return }
         didFinish = true
+        if let outcome = launchAtLogin.applyIfNeeded(), let message = outcome.message {
+            // The window is on its way out, so there is nowhere left to show
+            // this. Settings > General reads the login item's real state and
+            // will show the same sentence there.
+            logger.error("launch at login: \(message, privacy: .public)")
+        }
         settings.hasCompletedOnboarding = true
         onFinished()
     }
@@ -79,11 +97,13 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
 private struct OnboardingView: View {
     @ObservedObject var settings: UISettings
     @ObservedObject var integrations: AgentIntegrationsModel
+    let launchAtLogin: LaunchAtLoginChoice
     let finish: () -> Void
 
     @State private var step = 0
     @State private var installHooks = true
-    @State private var launchAtLogin = true
+    @State private var launchAtLoginEnabled = true
+    @State private var launchAtLoginError: String?
     @State private var installError: String?
 
     var body: some View {
@@ -142,7 +162,14 @@ private struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Agent detection").font(.title2.bold())
 
-            if integrations.claudeStatus.agentDetected {
+            if integrations.isProbing, !integrations.claudeStatus.agentDetected {
+                // The probe runs off the main actor and can take a moment on a
+                // machine with a version manager. Saying "nothing found" before
+                // we have finished looking would push the user past the one
+                // screen where hooks are offered.
+                Text("Looking for AI coding tools on this Mac\u{2026}")
+                    .foregroundStyle(.secondary)
+            } else if integrations.claudeStatus.agentDetected {
                 Toggle(isOn: $installHooks) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Install hooks for Claude Code (recommended)")
@@ -177,14 +204,41 @@ private struct OnboardingView: View {
 
     // MARK: Step 3 — finish
 
+    /// The toggle is live, exactly like the one in Settings > General: flipping
+    /// it registers or unregisters there and then, so a failure — most often
+    /// macOS parking the item pending approval — is reported while the user is
+    /// still looking at the switch that caused it. Appearing on this step
+    /// applies the default for the same reason.
     private var stepFinish: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("You're all set.").font(.title2.bold())
-            Toggle("Launch Caffeinate at login", isOn: $launchAtLogin)
+            Toggle("Launch Caffeinate at login", isOn: $launchAtLoginEnabled)
+                .onChange(of: launchAtLoginEnabled) { _, enabled in
+                    report(launchAtLogin.set(enabled))
+                }
             Text("A keep-awake tool that doesn't start with your Mac might as well not be installed — but it's your call.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let launchAtLoginError {
+                Text(launchAtLoginError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+        .onAppear {
+            report(launchAtLogin.applyIfNeeded())
+            launchAtLoginEnabled = launchAtLogin.isEnabled
+        }
+    }
+
+    /// Mirrors what the system actually did back into the switch. The
+    /// `didAttempt` guard is what keeps that mirror from re-entering through
+    /// `onChange` and wiping the message it just produced.
+    private func report(_ outcome: LaunchAtLoginOutcome?) {
+        guard let outcome, outcome.didAttempt else { return }
+        launchAtLoginError = outcome.message
+        launchAtLoginEnabled = outcome.isEnabled
     }
 
     // MARK: Controls
@@ -208,15 +262,15 @@ private struct OnboardingView: View {
         }
     }
 
+    /// Done is not where launch-at-login is applied — `finish()` is, so that the
+    /// close button cannot skip it (see OnboardingWindowController.finish).
     private func advance() {
         if step < 2 {
             step += 1
             return
         }
-        if launchAtLogin {
-            try? SMAppService.mainApp.register()
-        }
-        settings.hasCompletedOnboarding = true
+        // `hasCompletedOnboarding` is written by the funnel, not here: one
+        // writer, one place, whichever way the flow ends.
         finish()
     }
 }

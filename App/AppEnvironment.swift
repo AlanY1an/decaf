@@ -13,10 +13,36 @@
 import AppKit
 import Combine
 import Foundation
+import ServiceManagement
 import SwiftUI
+import AgentDetection
 import CaffeinateCore
 import CaffeinateComposition
 import HookWire
+
+// MARK: - Launch at login (the one ServiceManagement call site)
+
+/// `SMAppService.mainApp` behind CaffeinateCore's protocol. The whole reason
+/// this adapter is three lines: every rule about registering the login item —
+/// the no-op guard, `.requiresApproval`, mirroring failure back into the
+/// toggle, applying the onboarding choice exactly once — is unit-tested in
+/// CaffeinateCore, and nothing that matters is left in here.
+final class SMAppServiceRegistrar: LaunchAtLoginRegistering {
+    static let shared = SMAppServiceRegistrar()
+
+    var status: LaunchAtLoginStatus {
+        switch SMAppService.mainApp.status {
+        case .enabled: return .enabled
+        case .requiresApproval: return .requiresApproval
+        case .notFound: return .notFound
+        case .notRegistered: return .notRegistered
+        @unknown default: return .notRegistered
+        }
+    }
+
+    func register() throws { try SMAppService.mainApp.register() }
+    func unregister() throws { try SMAppService.mainApp.unregister() }
+}
 
 // MARK: - AppStateStore (plan 04 §1 contract shape)
 
@@ -442,11 +468,15 @@ final class AppEnvironment {
     }
 
     /// Plan 04 §6: first-run onboarding window, gated on `hasCompletedOnboarding`.
+    ///
+    /// The launch-at-login choice is owned here rather than by the view, so that
+    /// closing the window still applies it exactly once (plan 04 §6 default: on).
     func showOnboardingIfNeeded() {
         guard !settings.hasCompletedOnboarding, onboarding == nil else { return }
         let controller = OnboardingWindowController(
             settings: settings,
-            integrations: integrations
+            integrations: integrations,
+            launchAtLogin: LaunchAtLoginChoice(registrar: SMAppServiceRegistrar.shared)
         ) { [weak self] in
             self?.onboarding?.close()
             self?.onboarding = nil

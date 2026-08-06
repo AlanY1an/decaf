@@ -46,7 +46,6 @@
 //
 // Every change applies immediately (no Apply button, plan 04 step 6).
 
-import ServiceManagement
 import SwiftUI
 import CaffeinateCore
 
@@ -95,13 +94,11 @@ struct SettingsView: View {
 
 struct GeneralSettingsTab: View {
     @ObservedObject var settings: UISettings
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    /// The login item's own state is the source of truth — it can change in
+    /// System Settings, and onboarding writes it too. Never a stored pref.
+    private let registrar: any LaunchAtLoginRegistering = SMAppServiceRegistrar.shared
+    @State private var launchAtLogin = SMAppServiceRegistrar.shared.status == .enabled
     @State private var launchAtLoginError: String?
-
-    /// `register()` can succeed and still leave the item parked pending the
-    /// user's approval. Nothing in the app can clear that; only System Settings.
-    private static let approvalMessage =
-        "macOS is waiting for your approval. Allow Caffeinate in System Settings \u{203A} General \u{203A} Login Items."
 
     var body: some View {
         Form {
@@ -190,33 +187,24 @@ struct GeneralSettingsTab: View {
         // System Settings > General > Login Items, the display default from the
         // menu's own override. Re-read whenever the page appears.
         .onAppear {
-            launchAtLogin = SMAppService.mainApp.status == .enabled
+            launchAtLogin = registrar.status == .enabled
             settings.refreshFromBacking()
         }
     }
 
-    /// Register/unregister the login item, mirroring the system's own state back
-    /// into the toggle when the call fails.
+    /// Register/unregister the login item. The rule — including the no-op guard
+    /// that keeps the `.onAppear` resync from re-issuing a registration, and the
+    /// mirror that puts the toggle back where the system actually is after a
+    /// failure or a parked approval — is `LaunchAtLogin.apply` in CaffeinateCore,
+    /// shared with onboarding and tested there.
     private func apply(launchAtLogin enabled: Bool) {
-        // No-op guard: keeps the `.onAppear` resync above from re-issuing a
-        // registration call when the system already agrees with the toggle.
-        guard enabled != (SMAppService.mainApp.status == .enabled) else { return }
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-                // A registration parked in `.requiresApproval` is not enabled,
-                // so the resync will show the toggle off again. Say why.
-                launchAtLoginError = SMAppService.mainApp.status == .requiresApproval
-                    ? Self.approvalMessage
-                    : nil
-            } else {
-                try SMAppService.mainApp.unregister()
-                launchAtLoginError = nil
-            }
-        } catch {
-            launchAtLoginError = error.localizedDescription
-            launchAtLogin = SMAppService.mainApp.status == .enabled
-        }
+        let outcome = LaunchAtLogin.apply(enabled: enabled, using: registrar)
+        // Mirroring `isEnabled` back into the toggle re-enters this function
+        // with the mirrored value; that pass changes nothing, so it must not
+        // wipe the message the first pass just put on screen.
+        guard outcome.didAttempt else { return }
+        launchAtLoginError = outcome.message
+        launchAtLogin = outcome.isEnabled
     }
 
     static func date(fromMinutes minutes: Int) -> Date {
@@ -277,6 +265,7 @@ struct AgentsSettingsTab: View {
             Section {
                 AgentHeroRow(
                     status: integrations.claudeStatus,
+                    isProbing: integrations.isProbing,
                     action: { integrationButton }
                 )
                 if let error = integrations.lastError {
@@ -296,7 +285,13 @@ struct AgentsSettingsTab: View {
                     }
                 }
             } footer: {
-                SectionFooter("Sleep stays blocked this long after an agent finishes, so quick follow-up prompts don't flap the hold.")
+                // Second sentence because this picker used to be the one
+                // setting in the window that did NOT apply immediately — the
+                // detection layer read it once at launch. It does now, and a
+                // user who shortens the period while a session is counting down
+                // should know they can watch it happen rather than wonder
+                // whether they need to quit the app.
+                SectionFooter("Sleep stays blocked this long after an agent finishes, so quick follow-up prompts don't flap the hold. Changes apply straight away, including to a session already counting down.")
             }
 
             Section {
@@ -359,6 +354,9 @@ struct AgentsSettingsTab: View {
     /// current detection mode buys the user, and where the entries live.
     private var integrationFooter: String {
         let status = integrations.claudeStatus
+        if integrations.isProbing, !status.agentDetected {
+            return "Checking which AI coding tools are installed."
+        }
         if !status.agentDetected {
             return "Caffeinate still works as a manual keep-awake, and will pick up Claude Code on its own once it's installed."
         }
@@ -378,10 +376,13 @@ struct AgentsSettingsTab: View {
 /// way, which is the point.
 private struct AgentHeroRow<Action: View>: View {
     let status: ClaudeCodeStatus
+    /// The first probe has not landed yet: the row says so rather than
+    /// announcing "Not found on this Mac" before it has looked.
+    let isProbing: Bool
     @ViewBuilder let action: () -> Action
 
     var body: some View {
-        let state = AgentState(status)
+        let state = AgentState(status, isProbing: isProbing)
         HStack(spacing: 12) {
             AgentIcon(tint: state.tint, isActive: state.isActive)
 
@@ -438,8 +439,15 @@ private struct AgentState {
     let statusLine: String
     let statusStyle: Color
 
-    init(_ status: ClaudeCodeStatus) {
+    init(_ status: ClaudeCodeStatus, isProbing: Bool = false) {
         let neutral = Color(nsColor: .secondaryLabelColor)
+        if isProbing, !status.agentDetected {
+            tint = neutral
+            isActive = false
+            statusLine = "Looking for it\u{2026}"
+            statusStyle = neutral
+            return
+        }
         guard status.agentDetected else {
             tint = neutral
             isActive = false

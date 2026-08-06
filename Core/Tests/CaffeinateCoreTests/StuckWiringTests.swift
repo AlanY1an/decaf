@@ -5,8 +5,10 @@
 // cell. This suite covers the three things that only exist once it is wired in:
 //
 // 1. **Which sessions are eligible, and what happens to them.** Only `.working`
-//    is, and it is DOWNGRADED to `.idle` with a marker — never deleted. The
-//    record survives, the hold does not.
+//    is, and it is DOWNGRADED to `.stuck` with a marker — never deleted. The
+//    record survives, the hold does not. `.stuck` rather than `.idle` because
+//    the outcome must hold in NO `AgentHoldMode`, and `.idle` holds in
+//    `.whileRunning`.
 // 2. **Revival.** A heartbeat, any hook event, or a transcript write puts a
 //    downgraded session straight back, and the event then applies on top of the
 //    restored state (a `Stop` opens grace, an `idle_prompt` lands on idle).
@@ -140,7 +142,9 @@ private func session(_ id: String, in registry: SessionRegistry) -> AgentSession
 
         let after = session("lost-stop", in: registry)
         #expect(after != nil, "downgrade, never delete — the record has to survive to be revived")
-        #expect(after?.state == .idle)
+        // `.stuck`, not `.idle`: the outcome has to hold in NO hold mode, and
+        // `.idle` holds in `AgentHoldMode.whileRunning` (see AgentHoldModeTests).
+        #expect(after?.state == .stuck)
         #expect(after?.stuckDowngradedAt == clock.now)
         #expect(!registry.isHolding(), "the Mac is allowed to sleep again")
     }
@@ -159,7 +163,7 @@ private func session(_ id: String, in registry: SessionRegistry) -> AgentSession
 
         clock.advance(1)
         #expect(registry.reconcile().count == 1)
-        #expect(session("s", in: registry)?.state == .idle)
+        #expect(session("s", in: registry)?.state == .stuck)
     }
 
     /// Only WORKING is eligible. GRACE has a deadline of its own, IDLE holds
@@ -358,7 +362,7 @@ private func session(_ id: String, in registry: SessionRegistry) -> AgentSession
         clock.advance(threshold + 1)
         #expect(registry.reconcile().count == 1)
         let session = registry.sessions.first { $0.id == id }!
-        #expect(session.state == .idle)
+        #expect(session.state == .stuck)
         #expect(session.stuckDowngradedAt != nil)
         return session
     }

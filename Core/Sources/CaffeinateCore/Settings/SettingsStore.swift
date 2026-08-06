@@ -24,6 +24,8 @@ public enum SettingsKey {
     public static let hasCompletedOnboarding = "hasCompletedOnboarding"
     /// `DisplayPolicy.rawValue` applied to new holds. Default "allowSleep".
     public static let defaultDisplayPolicy = "defaultDisplayPolicy"
+    /// `AgentHoldMode.rawValue`. Default "whileWorking".
+    public static let agentHoldMode = "agentHoldMode"
 }
 
 /// Typed access to Caffeinate's persisted settings.
@@ -37,6 +39,11 @@ public final class SettingsStore {
         /// The behaviour most people never touch: keep working, let the screen
         /// sleep normally.
         public static let displayPolicy: DisplayPolicy = .allowSleep
+        /// Hold only while an agent is WORKING. This default is the product —
+        /// an agent left open at its prompt must not keep a Mac awake all
+        /// night — and `.whileRunning` is strictly an opt-in for people who
+        /// want the blunt instrument.
+        public static let agentHoldMode: AgentHoldMode = .whileWorking
     }
 
     private let defaults: UserDefaults
@@ -105,6 +112,30 @@ public final class SettingsStore {
             return policy
         }
         set { defaults.set(newValue.rawValue, forKey: SettingsKey.defaultDisplayPolicy) }
+    }
+
+    /// When an agent keeps this Mac awake — while it WORKS (the default) or for
+    /// as long as it is RUNNING at all.
+    ///
+    /// Read on every `CompositionRoot.applyTuning()`, not only at launch: a
+    /// preference that reaches `init` and nothing else is a preference that
+    /// does nothing in a menu bar app nobody ever quits (plan 02's ruling, and
+    /// the exact shape of the grace-period defect fixed earlier today).
+    ///
+    /// An unrecognised stored value falls back to the factory default rather
+    /// than trapping — `UserDefaults` is a file the user can edit, and a
+    /// garbled string must not be able to talk the app into the costlier mode.
+    public var agentHoldMode: AgentHoldMode {
+        get {
+            guard
+                let raw = defaults.string(forKey: SettingsKey.agentHoldMode),
+                let mode = AgentHoldMode(rawValue: raw)
+            else {
+                return Defaults.agentHoldMode
+            }
+            return mode
+        }
+        set { defaults.set(newValue.rawValue, forKey: SettingsKey.agentHoldMode) }
     }
 
     /// Whether first-run onboarding has been completed.

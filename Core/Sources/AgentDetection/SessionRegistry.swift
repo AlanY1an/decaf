@@ -28,26 +28,44 @@
 // state, it is a `max` applied to the state's own deadline. See "Wait signals"
 // below for the exact rules.
 
+import CaffeinateCore
 import Foundation
 import HookWire
 
 // MARK: - Holding semantics
 
 extension SessionState {
-    /// Whether this state keeps the Mac awake at `now` (plan 02 §1.2).
+    /// Whether this state keeps the Mac awake at `now` under `mode`
+    /// (plan 02 §1.2, extended by today's hold-mode ruling).
     ///
     /// Grace uses half-open interval semantics: at exactly `until` the hold is
-    /// over (06 §4 row S5 pins this to prevent off-by-one).
+    /// over (06 §4 row S5 pins this to prevent off-by-one). In `.whileRunning`
+    /// the grace deadline stops mattering — a session in its grace window is
+    /// still a session, and the mode holds for as long as one exists — but the
+    /// window itself is untouched, so `reconcile` still migrates it to `.idle`
+    /// on schedule and the hold survives on the `.idle` row instead. Nothing
+    /// about grace has to know a mode exists.
+    ///
+    /// `mode` defaults to `.whileWorking` so every existing caller keeps asking
+    /// exactly the question it was asking before this parameter existed.
     ///
     /// State only: a session's real answer is `AgentSession.isHolding(now:)`,
-    /// which also honours a live wait signal.
-    public func isHolding(now: Date) -> Bool {
+    /// which also honours a live wait signal — and refuses `.stuck` outright.
+    public func isHolding(now: Date, mode: AgentHoldMode = .whileWorking) -> Bool {
         switch self {
         case .working, .waitingPermission:
             return true
         case .grace(let until):
-            return now < until
+            return now < until || mode.holdsIdleAgents
         case .idle:
+            // The whole of the new mode, in one line: a session sitting at its
+            // prompt is an agent that is RUNNING but not WORKING.
+            return mode.holdsIdleAgents
+        case .stuck:
+            // Terminal in every mode. `.stuck` is not an observation of the
+            // agent, it is the app admitting it can no longer justify a hold —
+            // and an admission of ignorance must never be turned back into a
+            // reason to keep a Mac awake, however coarse the mode.
             return false
         }
     }
@@ -69,6 +87,10 @@ extension AgentSession {
     /// having learnt about a loop it has no hook events for (or a grace window
     /// that expired while the wait stands); `.idle` without one holds nothing,
     /// exactly as before.
+    /// Answers for `.whileWorking`, which is the only mode in which a deadline
+    /// is a meaningful thing to ask about: in `.whileRunning` the hold ends
+    /// when the session leaves the registry, an event no clock can predict.
+    /// `reconcile` consults this inside `if case .grace` only.
     public func effectiveDeadline() -> Date? {
         switch state {
         case .working, .waitingPermission:
@@ -77,12 +99,22 @@ extension AgentSession {
             return max(until, waitUntil ?? .distantPast)
         case .idle:
             return waitUntil
+        case .stuck:
+            // Holds in no mode, so there is no instant at which it stops.
+            return nil
         }
     }
 
     /// Whether this session keeps the Mac awake at `now` — state or wait.
-    public func isHolding(now: Date) -> Bool {
-        state.isHolding(now: now) || hasLiveWait(at: now)
+    ///
+    /// `.stuck` short-circuits both. A wait signal is normally evidence and
+    /// normally extends a hold, but a session the four witnesses condemned has
+    /// no business being revived by a line that arrives without a transcript
+    /// write to prove it is current (any real write revives it properly, via
+    /// `noteTranscriptWrite`, and this branch is then never reached).
+    public func isHolding(now: Date, mode: AgentHoldMode = .whileWorking) -> Bool {
+        if case .stuck = state { return false }
+        return state.isHolding(now: now, mode: mode) || hasLiveWait(at: now)
     }
 
     /// Wait metadata for `DetectionOutput`, present only while the wait is live.
@@ -134,6 +166,16 @@ public final class SessionRegistry {
     /// until the next launch, which for a menu-bar app that is never quit means
     /// it does nothing at all.
     public private(set) var gracePeriod: TimeInterval
+
+    /// When a session keeps the Mac awake (see `AgentHoldMode`).
+    ///
+    /// Settable for the same reason `gracePeriod` is: this is a live
+    /// preference, and a value fixed at construction is a preference that does
+    /// nothing until a relaunch that never comes. Unlike the grace period there
+    /// is nothing to rebase — the mode is a pure predicate over the states
+    /// already stored, so flipping it re-answers every session's hold question
+    /// on the caller's next reconcile with no migration at all.
+    public private(set) var holdMode: AgentHoldMode
 
     /// Plan 08 hard limit 2, enforced a SECOND time here.
     ///
@@ -229,10 +271,12 @@ public final class SessionRegistry {
         waitCap: TimeInterval = WaitSignalParser.defaultWaitCap,
         heartbeatCoalesceWindow: TimeInterval = SessionRegistry.defaultHeartbeatCoalesceWindow,
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
+        holdMode: AgentHoldMode = .whileWorking,
         clock: @escaping () -> Date = { Date() },
         isProcessAlive: @escaping (pid_t) -> Bool = ProcessLiveness.isAlive,
         activitySampler: (any ProcessActivitySampling)? = nil
     ) {
+        self.holdMode = holdMode
         self.gracePeriod = min(max(gracePeriod, 0), 600)
         self.waitCap = max(0, waitCap)
         self.heartbeatCoalesceWindow = max(0, heartbeatCoalesceWindow)
@@ -240,6 +284,26 @@ public final class SessionRegistry {
         self.clock = clock
         self.isProcessAlive = isProcessAlive
         self.activitySampler = activitySampler
+    }
+
+    /// Applies a new hold mode. Returns true when it actually changed, so the
+    /// caller knows to reconcile and re-publish.
+    ///
+    /// Nothing stored is touched. Both modes read the same states; they only
+    /// disagree about which of those states counts as a reason to stay awake.
+    /// That is what makes a live switch instantaneous and lossless in both
+    /// directions — turning the mode ON adopts the idle sessions that are
+    /// already registered, turning it OFF drops them on the very next hold
+    /// question, and neither direction can strand a session in a state its
+    /// history does not justify.
+    @discardableResult
+    public func setHoldMode(_ newValue: AgentHoldMode) -> Bool {
+        guard newValue != holdMode else { return false }
+        holdMode = newValue
+        // Not a stored-set mutation, so `changeCount` is deliberately NOT
+        // bumped: sessions.json holds sessions, not preferences, and rewriting
+        // it because a radio button moved would be noise.
+        return true
     }
 
     /// Applies a new grace period, clamped exactly as the initialiser clamps it.
@@ -550,19 +614,26 @@ public final class SessionRegistry {
 
     /// Undoes a stuck downgrade, restoring exactly what it took away.
     ///
-    /// The downgrade performs one move and one only — `.working` → `.idle` —
-    /// so undoing it is the inverse move. Anything other than `.idle` here
+    /// The downgrade performs one move and one only — `.working` → `.stuck` —
+    /// so undoing it is the inverse move. Anything other than `.stuck` here
     /// means the marker is stale (a state event landed after the downgrade
     /// without clearing it, which only `restore(_:)` from an inconsistent
     /// `sessions.json` can produce); the marker goes, the newer state stays.
     ///
-    /// Returns true when a marker was found, so callers can tell a revival from
-    /// an ordinary observation.
+    /// Either half is enough to trigger it — the state, or the marker on its
+    /// own. They can only disagree in a hand-built or hand-edited record, and
+    /// in both directions the safe reading is "this was a downgrade, undo it":
+    /// leaving `.stuck` standing after real evidence of life would strand a
+    /// live session in a state that holds in no mode.
+    ///
+    /// Returns true when a downgrade was found, so callers can tell a revival
+    /// from an ordinary observation.
     @discardableResult
     private func undoStuckDowngrade(_ session: inout AgentSession) -> Bool {
-        guard session.stuckDowngradedAt != nil else { return false }
+        let wasStuck = session.state == .stuck
+        guard wasStuck || session.stuckDowngradedAt != nil else { return false }
         session.stuckDowngradedAt = nil
-        if case .idle = session.state {
+        if wasStuck {
             session.state = .working
         }
         return true
@@ -812,11 +883,22 @@ public final class SessionRegistry {
             // one of them dissenting (including a CPU sample that merely could
             // not be taken) leaves the session exactly as it was.
             //
-            // Downgrade, never delete: the record survives as `.idle` with
+            // Downgrade, never delete: the record survives as `.stuck` with
             // `stuckDowngradedAt` set, so the next heartbeat, hook event or
             // transcript write puts it straight back to `.working`. Removing it
             // would make being wrong permanent and invisible, which is the
             // property the original bug had.
+            //
+            // `.stuck` rather than `.idle` is what keeps this fix intact under
+            // `AgentHoldMode.whileRunning`, where `.idle` sessions DO hold: see
+            // `SessionState.stuck`. Note also that only `.working` is ever
+            // eligible, in either mode — an agent parked at its prompt emits no
+            // hook events, no heartbeats, no transcript writes and no CPU by
+            // definition, so extending eligibility to `.idle` would condemn
+            // every healthy idle session within `stuckThreshold` and delete the
+            // new mode from the inside. What bounds an `.idle` hold instead is
+            // the PPID sweep below, which is a measurement of the agent
+            // process, not an inference about it.
             if case .working = session.state {
                 let verdict = StuckSessionDetector.evaluate(
                     now: now,
@@ -839,7 +921,7 @@ public final class SessionRegistry {
                             at: now
                         )
                     )
-                    session.state = .idle
+                    session.state = .stuck
                     session.stuckDowngradedAt = now
                     changed = true
                 }
@@ -891,12 +973,13 @@ public final class SessionRegistry {
         Array(sessionsByID.values)
     }
 
-    /// Sessions currently keeping the Mac awake, in a stable order
-    /// (startedAt, then id). A live wait counts as holding (plan 08).
+    /// Sessions currently keeping the Mac awake under the registry's current
+    /// hold mode, in a stable order (startedAt, then id). A live wait counts as
+    /// holding (plan 08).
     public func holdingSessions(now: Date? = nil) -> [AgentSession] {
         let now = now ?? clock()
         return sessionsByID.values
-            .filter { $0.isHolding(now: now) }
+            .filter { $0.isHolding(now: now, mode: holdMode) }
             .sorted {
                 ($0.startedAt, $0.id) < ($1.startedAt, $1.id)
             }
@@ -905,7 +988,20 @@ public final class SessionRegistry {
     /// Whether any session holds at `now` (set semantics, plan 02 §1.2).
     public func isHolding(now: Date? = nil) -> Bool {
         let now = now ?? clock()
-        return sessionsByID.values.contains { $0.isHolding(now: now) }
+        return sessionsByID.values.contains { $0.isHolding(now: now, mode: holdMode) }
+    }
+
+    /// Sessions that hold ONLY because the mode is `.whileRunning` — an agent
+    /// that is present but not working. Empty in `.whileWorking` by
+    /// construction.
+    ///
+    /// The menu has to word these differently ("running" is not "working"), and
+    /// the difference is a property of the hold decision rather than of the
+    /// session, so it is computed here rather than re-derived downstream from a
+    /// state the UI would have to interpret.
+    public func idleHoldingSessions(now: Date? = nil) -> [AgentSession] {
+        let now = now ?? clock()
+        return holdingSessions(now: now).filter { !$0.isHolding(now: now, mode: .whileWorking) }
     }
 
     /// Earliest future grace deadline, if any — the coordinator schedules its
@@ -920,7 +1016,9 @@ public final class SessionRegistry {
     /// Replaces the registry contents with persisted sessions (app relaunch
     /// path; caller must run `reconcile` right after, plan 02 §1.2).
     public func restore(_ sessions: [AgentSession]) {
-        sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        sessionsByID = Dictionary(uniqueKeysWithValues: sessions.map { session in
+            (session.id, SessionRegistry.migratingStuckState(session))
+        })
         // Cron job ids are in-memory correlation state and do not survive a
         // relaunch; a restored cron wait therefore stands until its deadline or
         // an uncorrelated CronDelete, both bounded by the cap.
@@ -931,6 +1029,22 @@ public final class SessionRegistry {
         // genuinely stuck session, a missing one merely delays a verdict).
         lastTranscriptWriteAt.removeAll()
         changeCount &+= 1
+    }
+
+    /// Rebuilds `.stuck` from a `sessions.json` written before that state
+    /// existed, where a downgrade was stored as `.idle` plus the marker.
+    ///
+    /// Without this, a relaunch in `.whileRunning` would read every previously
+    /// condemned session as an ordinary idle agent and hand it back the hold
+    /// the downgrade had just taken away — the persistence-shaped version of
+    /// exactly the hole `.stuck` exists to close. The pair is unambiguous:
+    /// nothing but the downgrade ever sets the marker, and every path that
+    /// changes state afterwards clears it.
+    private static func migratingStuckState(_ session: AgentSession) -> AgentSession {
+        guard session.stuckDowngradedAt != nil, session.state == .idle else { return session }
+        var migrated = session
+        migrated.state = .stuck
+        return migrated
     }
 }
 

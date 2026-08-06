@@ -356,7 +356,8 @@ private func everyFiveMinutes(_ index: Int) -> Bool { index % 10 == 0 }
 
         let session = stored("stuck-on-hardware", in: registry)
         #expect(session != nil, "downgrade, never delete")
-        #expect(session?.state == .idle)
+        // Terminal in every hold mode — see AgentHoldModeTests.
+        #expect(session?.state == .stuck)
         #expect(session?.stuckDowngradedAt != nil)
         #expect(session?.ppid == appPPID)
 
@@ -797,7 +798,7 @@ private func everyFiveMinutes(_ index: Int) -> Bool { index % 10 == 0 }
         // this is the delay the design accepts, not a permanent exemption.
         let later = runFor(90 * 60, clock: clock, registry: registry)
         #expect(later.count == 1)
-        #expect(stored("restored", in: registry)?.state == .idle)
+        #expect(stored("restored", in: registry)?.state == .stuck)
     }
 
     /// A downgrade releases the session's hold and nothing else. A manual hold

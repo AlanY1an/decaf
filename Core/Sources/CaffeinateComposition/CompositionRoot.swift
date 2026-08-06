@@ -76,6 +76,12 @@ public final class CompositionRoot: ObservableObject {
     /// session rows (file activity sees the agent, not its turns), so without
     /// them the UI would have a held assertion and nothing to attribute it to.
     private var fallbackAgents: [AgentKind] = []
+    /// Agents held only because `AgentHoldMode.whileRunning` is in force: an
+    /// idle session at its prompt, or a bare matched process. Always empty in
+    /// the default mode.
+    private var runningIdleAgents: [AgentKind] = []
+    private var holdMode: AgentHoldMode = SettingsStore.Defaults.agentHoldMode
+    private var runningModeCoverage: [AgentKind: RunningModeCoverage] = [:]
     private var precision: [AgentKind: DetectionPrecision] = [:]
 
     private var cancellables: Set<AnyCancellable> = []
@@ -120,9 +126,11 @@ public final class CompositionRoot: ObservableObject {
         self.engine = PowerStateEngine(asserter: asserter, tuning: tuning)
         self.manualHold = ManualHoldController(engine: engine)
         self.socketServer = HookSocketServer(socketPath: socketPath)
+        self.holdMode = settings.agentHoldMode
         self.coordinator = DetectionCoordinator(
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
+            holdMode: settings.agentHoldMode,
             stuckThreshold: stuckThreshold,
             store: sessionsStore,
             watcher: watcher,
@@ -204,6 +212,7 @@ public final class CompositionRoot: ObservableObject {
         return .started
     }
 
+
     public func stop() {
         for task in pumpTasks { task.cancel() }
         pumpTasks.removeAll()
@@ -235,6 +244,16 @@ public final class CompositionRoot: ObservableObject {
         ))
         let coordinator = coordinator
         Task { await coordinator.setGracePeriod(gracePeriod) }
+        // The hold mode has exactly the same defect surface as the grace period
+        // and therefore exactly the same treatment: read on every settings
+        // change, pushed into the layer that decides, and re-evaluated against
+        // the sessions already registered rather than only against the next
+        // ones. Flipping to "while an agent is running" must adopt the agent
+        // that is idle at its prompt RIGHT NOW — that session may never emit
+        // another hook event — and flipping back must drop it immediately.
+        let mode = settings.agentHoldMode
+        holdMode = mode
+        Task { await coordinator.setHoldMode(mode) }
         // The display policy is a setting too: changing it in the settings pane
         // must reach the holds that are already running.
         applyDisplayPolicyToLiveHolds(settings.defaultDisplayPolicy)
@@ -281,6 +300,18 @@ public final class CompositionRoot: ObservableObject {
             case .fallbackActivity:
                 desired.insert(.agentFallback(source.agent))
                 fallbacks.insert(source.agent)
+            case .agentProcess:
+                // Agent-granularity with no session behind it, which is exactly
+                // what `.agentFallback` already means to the engine, so it
+                // reuses that source id: two reasons for the same agent are one
+                // hold, and set semantics make the retraction come out right
+                // (the hold ends when the LAST reason does).
+                //
+                // It is deliberately NOT added to `fallbacks`. The menu words a
+                // fallback hold as "working", and this hold is the opposite
+                // claim — the agent is open and not working. Those agents go to
+                // `runningIdleAgents` below, which has its own sentence.
+                desired.insert(.agentFallback(source.agent))
             }
         }
 
@@ -314,8 +345,26 @@ public final class CompositionRoot: ObservableObject {
                 // learnt from a transcript wait signal is idle *and* holding
                 // until its declared instant — showing no row for a hold the
                 // menu is displaying would be the worse lie.
+                //
+                // In `.whileRunning` an idle session holds with no deadline at
+                // all. `sessions` is the registry's HOLDING set, so reaching
+                // this line without a wait means the mode is what is holding it
+                // — `.runningIdle`, which is the one phase that prints no
+                // instant, because there is no instant to print.
+                //
+                // An idle session holding under `.whileRunning` produces no row
+                // either: every `SessionPhase` means "working, in one of three
+                // ways", and an agent parked at its prompt is none of them.
+                // Those holds are reported at agent granularity by
+                // `runningIdleAgents`, which the menu words as "open, not
+                // working".
                 guard let waitUntil = session.waitUntil else { return nil }
                 phase = .graceIdle(until: waitUntil)
+            case .stuck:
+                // Holds in no mode; there is nothing to show and nothing to
+                // explain. (The user already heard about it once, from the
+                // downgrade notification.)
+                return nil
             }
             let projectName = session.cwd.map { ($0 as NSString).lastPathComponent } ?? session.agent.rawValue
             return AgentSessionSummary(
@@ -332,6 +381,13 @@ public final class CompositionRoot: ObservableObject {
         // `.agentFallback` request was live in the engine while `agentSessions`
         // was empty, and both surfaces rendered that as "Idle".
         fallbackAgents = fallbacks.sorted { $0.rawValue < $1.rawValue }
+        // Agents held purely because they are OPEN — an idle session at its
+        // prompt, or a matched process with nothing else to say. Kept apart
+        // from `fallbackAgents` because the menu says "working" for those and
+        // that sentence is false here.
+        runningIdleAgents = output.runningOnlyAgents
+        holdMode = output.holdMode
+        runningModeCoverage = output.runningModeCoverage
         precision = output.precision
         republish()
     }
@@ -364,8 +420,11 @@ public final class CompositionRoot: ObservableObject {
             manual: manualState,
             agentSessions: sessionSummaries,
             fallbackAgents: fallbackAgents,
+            runningIdleAgents: runningIdleAgents,
             safetyPause: safetyPause,
             precision: precision,
+            agentHoldMode: holdMode,
+            runningModeCoverage: runningModeCoverage,
             wantsHold: !engine.activeSources.isEmpty,
             effectiveDisplayPolicy: engine.effectiveDisplayPolicy,
             selectedDisplayPolicy: settings.defaultDisplayPolicy

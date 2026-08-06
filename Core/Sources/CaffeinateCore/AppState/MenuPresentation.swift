@@ -47,6 +47,12 @@ public func iconState(for s: AppStateSnapshot) -> MenuBarIconState {
     // "asleep when you close the lid" while the assertion was held.
     if !s.fallbackAgents.isEmpty { return .agentHold(sessionCount: 1) }
 
+    // `.whileRunning` with no session detail: the process table says the agent
+    // is open, and that is holding an assertion right now. Same reasoning as the
+    // line above — the cup is full because the Mac is awake, and the badge stays
+    // a single dot because "an agent is there" is the whole of what we know.
+    if !s.runningIdleAgents.isEmpty { return .agentHold(sessionCount: 1) }
+
     if s.manual != nil { return .manualHold }
 
     // Belt and braces. Some source is holding that produced neither a session
@@ -115,7 +121,14 @@ public enum MenuCopy {
                 return nil
             }
             if graceEnds.count == active.count, let latest = graceEnds.max() {
-                return "Just finished · Sleep allowed after \(timeString(latest))"
+                // The grace deadline is when sleep becomes allowed — but only in
+                // `.whileWorking`. Under `.whileRunning` the session is still
+                // open when the window lapses, and an open session holds; naming
+                // an instant there would promise a release that is not coming,
+                // and it is the one number in this menu a user would act on.
+                return s.agentHoldMode.holdsIdleAgents
+                    ? "Just finished · Sleep blocked while the agent stays open"
+                    : "Just finished · Sleep allowed after \(timeString(latest))"
             }
             let name = active[0].agent.displayName
             return active.count == 1
@@ -135,6 +148,24 @@ public enum MenuCopy {
             return s.fallbackAgents.count == 1
                 ? "\(name) working"
                 : "\(name) working · \(s.fallbackAgents.count) agents"
+        }
+
+        // `AgentHoldMode.whileRunning`, with nothing in flight: an agent sitting
+        // idle at its prompt, or a bare process match. This is the mode's own
+        // hold, and it is the one hold in the app with no work behind it.
+        //
+        // "open, not working" rather than borrowing the "working" sentence
+        // above, which would be false — and the clause after the dot is the one
+        // thing a user in this mode needs and cannot infer from anything else:
+        // the hold ends when the agent goes away, not on a clock. No absolute
+        // time appears because there is no instant to name (plan 04 §3's
+        // absolute-time rule is about never printing a countdown; it does not
+        // license inventing a deadline).
+        if let agent = s.runningIdleAgents.first {
+            let name = agent.displayName
+            return s.runningIdleAgents.count == 1
+                ? "\(name) open, not working · Sleep blocked until it closes"
+                : "\(name) open, not working · \(s.runningIdleAgents.count) agents"
         }
 
         if let manual = s.manual {
@@ -178,6 +209,11 @@ public enum MenuCopy {
             s.agentSessions.filter { $0.phase.holdsAssertion }.map { $0.agent }
         )
         activeAgents.formUnion(s.fallbackAgents)
+        // Presence holds count too, for the same reason fallback holds do: they
+        // produce no session row, so leaving them out would let a precise
+        // agent's `.hooks` win the max while the only thing actually holding is
+        // a process match.
+        activeAgents.formUnion(s.runningIdleAgents)
 
         let candidates: [DetectionPrecision]
         if activeAgents.isEmpty {
@@ -220,8 +256,23 @@ public enum MenuCopy {
     // MARK: Accessibility
 
     /// Status item / icon accessibility label (plan 04 §4).
+    ///
+    /// One case cannot be answered from the icon alone: under
+    /// `AgentHoldMode.whileRunning` the full cup can mean "an agent is open and
+    /// doing nothing", and "agent working" would be the wrong sentence for a
+    /// VoiceOver user deciding whether their machine is busy.
     public static func accessibilityLabel(for s: AppStateSnapshot) -> String {
-        accessibilityLabel(for: iconState(for: s))
+        let active = s.agentSessions.filter { $0.phase.holdsAssertion }
+        if s.safetyPause == nil,
+           active.isEmpty,
+           s.fallbackAgents.isEmpty,
+           !s.runningIdleAgents.isEmpty {
+            let count = s.runningIdleAgents.count
+            return count == 1
+                ? "Caffeinate, an agent is open, keeping the Mac awake"
+                : "Caffeinate, \(count) agents are open, keeping the Mac awake"
+        }
+        return accessibilityLabel(for: iconState(for: s))
     }
 
     public static func accessibilityLabel(for state: MenuBarIconState) -> String {

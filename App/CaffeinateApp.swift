@@ -36,6 +36,7 @@ struct CaffeinateApp: App {
 
         Settings {
             SettingsView(
+                store: env.store,
                 settings: env.settings,
                 integrations: env.integrations,
                 tabRouter: env.tabRouter

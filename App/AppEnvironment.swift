@@ -114,6 +114,18 @@ final class UISettings: ObservableObject {
             onChange?()
         }
     }
+    /// Which fact about an agent keeps the Mac awake: that it is working
+    /// (default) or that it is open at all. `onChange` carries it into the
+    /// detection layer through `CompositionRoot.applyTuning`, which re-evaluates
+    /// the sessions that are ALREADY registered — so flipping this adopts or
+    /// drops the agent idling at its prompt right now, rather than waiting for
+    /// the next one.
+    @Published var agentHoldMode: AgentHoldMode {
+        didSet {
+            backing.agentHoldMode = agentHoldMode
+            onChange?()
+        }
+    }
     @Published var hasCompletedOnboarding: Bool {
         didSet {
             backing.hasCompletedOnboarding = hasCompletedOnboarding
@@ -128,6 +140,7 @@ final class UISettings: ObservableObject {
         self.defaultDisplayPolicy = backing.defaultDisplayPolicy
         self.batteryThreshold = backing.batteryThreshold
         self.gracePeriodMinutes = backing.gracePeriodMinutes
+        self.agentHoldMode = backing.agentHoldMode
         self.hasCompletedOnboarding = backing.hasCompletedOnboarding
     }
 

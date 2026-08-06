@@ -15,6 +15,37 @@ public enum SessionState: Equatable, Codable, Sendable {
     /// Post-Stop grace window with an absolute wall-clock deadline.
     case grace(until: Date)
     case idle
+    /// The stuck detector found this `.working` record self-contradictory: all
+    /// four witnesses of `StuckSessionDetector` agreed it had been silent for
+    /// `stuckThreshold` (no hook event, no heartbeat, no transcript write, no
+    /// CPU, no live wait). The hold was released; the record survives.
+    ///
+    /// **Why this is a state and not `.idle` plus a marker.** The downgrade
+    /// used to land on `.idle`, which was harmless while `.idle` meant "holds
+    /// nothing" unconditionally. `AgentHoldMode.whileRunning` changes that:
+    /// there `.idle` — an agent sitting at its prompt — DOES hold. Reusing
+    /// `.idle` for the downgrade would therefore have handed a stuck session
+    /// its immortal hold straight back in the new mode, which is precisely the
+    /// hole the stuck detector exists to close.
+    ///
+    /// So the two meanings that were folded into `.idle` are separated, because
+    /// the mode makes them behave differently:
+    ///
+    /// - `.idle` — "the agent told us it is at its prompt". Real, reported,
+    ///   and evidence the agent is ALIVE. Holds in `.whileRunning`.
+    /// - `.stuck` — "we gave up on a record we could no longer justify". An
+    ///   admission of ignorance, not an observation. Holds in NO mode.
+    ///
+    /// Making it a case rather than a flag is deliberate: every exhaustive
+    /// switch over `SessionState` now has to answer for it at compile time,
+    /// which is the only way "a future mode must not accidentally hold a
+    /// zombie" survives contact with later edits.
+    ///
+    /// **Terminal, but not final.** It is terminal in the sense that no mode
+    /// and no deadline can make it hold again. Any actual sign of life —
+    /// heartbeat, hook event, transcript write — restores `.working` in one
+    /// step (`SessionRegistry.undoStuckDowngrade`), exactly as before.
+    case stuck
 }
 
 /// One tracked agent session (plan 02 §1.2; persisted in sessions.json with bootTime).
@@ -75,9 +106,16 @@ public struct AgentSession: Equatable, Codable, Sendable {
     /// "idle because we gave up on it", and only the latter is undone on the
     /// next sign of life (`SessionRegistry.undoStuckDowngrade`).
     ///
-    /// Invariant while non-nil: `state == .idle`, because the downgrade only
-    /// ever performs `.working` → `.idle` and every path that changes state
+    /// Invariant while non-nil: `state == .stuck`, because the downgrade only
+    /// ever performs `.working` → `.stuck` and every path that changes state
     /// afterwards clears the marker on the way through.
+    ///
+    /// The state carries WHETHER, this field carries WHEN — which is what the
+    /// notification reports and what a later triage would want. It is also the
+    /// migration handle: a `sessions.json` written before `.stuck` existed
+    /// stores `.idle` plus this marker, and `SessionRegistry.restore` uses the
+    /// pair to rebuild the state (otherwise a relaunch in `.whileRunning` would
+    /// promote every previously-condemned session back into a hold).
     ///
     /// Persisted, so a relaunch does not silently re-promote a session that was
     /// downgraded before the app restarted. Optional, so a `sessions.json`

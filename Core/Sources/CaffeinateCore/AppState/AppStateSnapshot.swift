@@ -24,6 +24,13 @@ public enum SessionPhase: Equatable, Sendable {
 
     /// Whether this phase contributes to holding the assertion (plan 04 §2:
     /// working / waitingPermission / graceIdle all hold).
+    ///
+    /// There is deliberately no case here for "open but not working". Every
+    /// case of this enum means the agent has work in flight, in one of three
+    /// ways; a session parked at its prompt under `AgentHoldMode.whileRunning`
+    /// is none of them, and giving it a phase would make it a row saying
+    /// "working". Those holds are reported at agent granularity by
+    /// `AppStateSnapshot.runningIdleAgents` instead.
     public var holdsAssertion: Bool {
         switch self {
         case .working, .waitingPermission, .graceIdle:
@@ -74,11 +81,32 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// list. The icon and the status line consult this so that a held assertion
     /// is never rendered as "Idle" (see `iconState` / `MenuCopy.statusLine`).
     public var fallbackAgents: [AgentKind]
+    /// Agents held purely because they are OPEN — a session idling at its
+    /// prompt, or a matched process with nothing else to say — under
+    /// `AgentHoldMode.whileRunning`.
+    ///
+    /// Same shape and the same reason as `fallbackAgents`, and kept apart from
+    /// it for the same reason both are kept out of `agentSessions`: this hold
+    /// states a different fact ("the agent is there") from a file-activity hold
+    /// ("the agent did something recently"), and the menu owes each of them a
+    /// different sentence. Empty in `.whileWorking`, always.
+    public var runningIdleAgents: [AgentKind]
     /// nil = no safety gate engaged.
     public var safetyPause: SafetyPause?
     /// Per-agent detection precision (plan 02). The menu's single-value summary
     /// is computed by a pure function in the UI layer (review decision R12).
     public var precision: [AgentKind: DetectionPrecision]
+    /// Which fact about an agent is currently keeping the Mac awake: that it is
+    /// working, or that it is there at all. The UI reads it to explain a hold
+    /// that has no work behind it; the setting itself lives in `SettingsStore`.
+    public var agentHoldMode: AgentHoldMode
+    /// Per-agent answer to "can `.whileRunning` be delivered for this agent" —
+    /// sessions (hooks), processes (L3 scan) or activity only (neither).
+    ///
+    /// Agents we can see nothing of are absent from the map rather than present
+    /// with a worst-case value: "not covered" and "not there" are different
+    /// answers, and the settings footer says different things about them.
+    public var runningModeCoverage: [AgentKind: RunningModeCoverage]
     /// True when the state machine wants to hold, even if suppressed by
     /// `safetyPause` (drives the pausedBySafety icon state).
     public var wantsHold: Bool
@@ -105,12 +133,32 @@ public struct AppStateSnapshot: Equatable, Sendable {
         canTurnOffDisplayNow ? nil : DisplayActionCopy.turnOffDisplayUnavailableReason
     }
 
+    /// The coverage the UI speaks for: the best among the agents this Mac
+    /// actually has, or nil when it has none. See `AgentHoldCopy.settingsFooter`.
+    ///
+    /// Agents at `.unavailable` precision are excluded rather than counted as
+    /// badly covered — the detection layer publishes a coverage value for every
+    /// agent kind it knows how to look for, installed or not, and reading those
+    /// straight would have the footer apologise for its inability to watch an
+    /// agent the user has never had. Promising nothing about an absent agent is
+    /// not a broken promise (the same filter as
+    /// `DetectionOutput.agentsMissingRunningModeCoverage`).
+    public var summaryRunningModeCoverage: RunningModeCoverage? {
+        let installed = runningModeCoverage.filter {
+            (precision[$0.key] ?? .unavailable) != .unavailable
+        }
+        return RunningModeCoverage.summary(of: installed.values)
+    }
+
     public init(
         manual: ManualState? = nil,
         agentSessions: [AgentSessionSummary] = [],
         fallbackAgents: [AgentKind] = [],
+        runningIdleAgents: [AgentKind] = [],
         safetyPause: SafetyPause? = nil,
         precision: [AgentKind: DetectionPrecision] = [:],
+        agentHoldMode: AgentHoldMode = .whileWorking,
+        runningModeCoverage: [AgentKind: RunningModeCoverage] = [:],
         wantsHold: Bool = false,
         effectiveDisplayPolicy: DisplayPolicy = .allowSleep,
         selectedDisplayPolicy: DisplayPolicy = .allowSleep
@@ -118,8 +166,11 @@ public struct AppStateSnapshot: Equatable, Sendable {
         self.manual = manual
         self.agentSessions = agentSessions
         self.fallbackAgents = fallbackAgents
+        self.runningIdleAgents = runningIdleAgents
         self.safetyPause = safetyPause
         self.precision = precision
+        self.agentHoldMode = agentHoldMode
+        self.runningModeCoverage = runningModeCoverage
         self.wantsHold = wantsHold
         self.effectiveDisplayPolicy = effectiveDisplayPolicy
         self.selectedDisplayPolicy = selectedDisplayPolicy

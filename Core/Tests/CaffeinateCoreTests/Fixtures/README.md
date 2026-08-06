@@ -46,3 +46,38 @@ matcher,hook command 为一个把 stdin 与 argv 追加到捕获文件的脚本,
 
 在已登录的真实环境重跑同一录制脚本,补录 `Stop` 与两种 Notification,
 替换三个 PENDING 文件并更新本表。
+
+---
+
+# 转录行 fixture:`wait_signals.jsonl`(计划 08 实现步骤 1)
+
+上面的 JSON 文件是 **hook stdin** 样本;`wait_signals.jsonl` 是另一类东西——
+**转录文件本身的行**(`~/.claude/projects/<slug>/<session-uuid>.jsonl`,每行一条
+JSON),用于驱动 `WaitSignalParserTests.swift`。
+
+记录形状取自计划 08「证据(2026-08-05 本机实测)」一节已实测的四个白名单工具
+(`ScheduleWakeup` / `Monitor` / `CronCreate` / `CronDelete`),路径、会话 id 与
+job id 已改为样例值;**字段名与嵌套结构未改动**。
+
+| 行 | 内容 | 用途 |
+|---|---|---|
+| 1 | `ScheduleWakeup { delaySeconds: 420 }` | 实证复现里那条决定性记录的形状 |
+| 2 | `ScheduleWakeup { stop: true }` | 循环终止 → `WaitTermination` |
+| 3 | `Monitor { timeout_ms: 900000 }` | 毫秒换算 |
+| 4 | `CronCreate { cron: "17 4 * * *" }` | cron next-fire 计算 |
+| 5 | 紧跟其后的 `tool_result` | job id 定点狙击(仅这一行可读) |
+| 6 | `CronDelete { id }` | 按 job id 取消 |
+| 7 | `Bash`(白名单外) | 未知工具静默忽略 |
+| 8 | `isSidechain: true` 的 `ScheduleWakeup` | 子 agent 记录忽略 |
+| 9–11 | 缺字段 / 类型不符 / 半行截断 | 硬边界 1:一律吞掉 |
+| 12 | `delaySeconds: 86400` | 硬边界 2:截断到 `waitCap` |
+| 13 | 一行内并列多个 `tool_use` | 不得漏掉第二个信号 |
+
+## 隐私哨兵(不要删)
+
+每一条记录的 `prompt` / `reason` 里都埋了同一个字符串
+`SENTINEL-DO-NOT-LEAK-7f3a91`。`WaitSignalParserTests` 里的
+`neverEmitsPromptOrReasonContent` 递归展开全部解析输出与全部 diagnostic,断言这个
+哨兵一个字符都不会出现——这是计划 08 硬边界 3(**只读最小字段,绝不触碰内容**)的
+测试侧闸门。`fixtureFileIsIntactAndCarriesTheSentinel` 另外断言哨兵确实还在文件里,
+防止有人删掉哨兵之后隐私测试变成空跑。

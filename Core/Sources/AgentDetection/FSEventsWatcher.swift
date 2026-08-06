@@ -19,6 +19,20 @@
 //   we deliberately do NOT rescan (this layer only needs "did something move").
 // - RootChanged → stop watching that root, fall back to tick existence checks.
 // - EventIdsWrapped → ignored.
+//
+// Concurrency invariant (the reason this file has a seam in it):
+// the stream handle and the set of roots it covers are QUEUE-CONFINED to
+// `queue`, which is also the stream's own FSEventStreamSetDispatchQueue. Two
+// independent threads reach this type — the coordinator's actor calls
+// `tickRootCheck()` from a cooperative-pool thread, and the FSEvents callback
+// runs `handle(paths:flags:)` — and both can decide to tear the stream down
+// (a root appearing/vanishing, a RootChanged event). Unsynchronised, both can
+// pass the same `guard let stream` and call `FSEventStreamRelease` twice: an
+// over-release, i.e. a crash, i.e. powerd reclaiming every assertion we hold.
+// So every read and write of that state goes through `queue`, each such
+// function opens with `assertOnQueue()`, and the handle itself releases at
+// most once. Confining lifecycle to the stream's own delivery queue also
+// means a callback can never be in flight while the stream is being released.
 
 import CoreServices
 import Foundation
@@ -188,8 +202,19 @@ public final class FSEventsWatcher {
     private let latency: TimeInterval
     private let queue: DispatchQueue
     private let fileManager: FileManager
+    private let startStream: FSEventStreamStarting
 
-    private var stream: FSEventStreamRef?
+    /// Marks `queue` so `isOnQueue` can answer without a precondition trap;
+    /// per instance, because two watchers may share a queue in tests.
+    private let queueKey = DispatchSpecificKey<UInt8>()
+
+    // MARK: Queue-confined stream state
+    //
+    // Touch these two ONLY from `queue` (see the concurrency invariant at the
+    // top of this file). Every function that does starts with `assertOnQueue()`.
+
+    /// The running stream, or nil when nothing is being watched.
+    private var streamHandle: FSEventStreamHandle?
     /// Roots currently included in the running stream.
     private var streamedRoots: [Root] = []
 
@@ -197,16 +222,54 @@ public final class FSEventsWatcher {
         roots: [Root] = FSEventsWatcher.defaultRoots(),
         latency: TimeInterval = DetectionDefaults.fseventsLatency,
         queue: DispatchQueue = DispatchQueue(label: "dev.caffeinate.app.fsevents", qos: .utility),
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        // Seam, defaulted to the real CoreServices stream. Tests substitute a
+        // fake to drive the lifecycle (and assert its queue confinement)
+        // without a kernel stream.
+        startStream: @escaping FSEventStreamStarting = FSEventsWatcher.startCoreServicesStream
     ) {
         self.allRoots = roots
         self.latency = latency
         self.queue = queue
         self.fileManager = fileManager
+        self.startStream = startStream
+        queue.setSpecific(key: queueKey, value: 1)
     }
 
     deinit {
-        stopStream()
+        // Synchronous on purpose, and it must stay that way: an `async` here
+        // would run after the object is gone, leaving the stream running and
+        // its handle unreleased. `queue` is also the stream's delivery queue,
+        // so this also drains any batch already in flight.
+        runOnQueueSync { self.stopStreamOnQueue() }
+        queue.setSpecific(key: queueKey, value: nil)
+    }
+
+    // MARK: Queue confinement helpers
+
+    private var isOnQueue: Bool {
+        DispatchQueue.getSpecific(key: queueKey) != nil
+    }
+
+    /// States the invariant in code: this function touches queue-confined state.
+    private func assertOnQueue() {
+        dispatchPrecondition(condition: .onQueue(queue))
+    }
+
+    private func runOnQueueSync(_ body: () -> Void) {
+        if isOnQueue {
+            body()
+        } else {
+            queue.sync(execute: body)
+        }
+    }
+
+    private func runOnQueueAsync(_ body: @escaping () -> Void) {
+        if isOnQueue {
+            body()
+        } else {
+            queue.async(execute: body)
+        }
     }
 
     /// Existence check for one agent's watch root (drives §4 precision).
@@ -230,72 +293,84 @@ public final class FSEventsWatcher {
     /// Tick entry point (plan 02 §2): checks which roots exist and (re)starts
     /// the single multi-path stream when the existing-root set changed.
     /// Returns the current per-agent existence map.
+    ///
+    /// Called from the coordinator's actor, i.e. NOT on `queue` — so the
+    /// existence probe (which reads immutable state only) happens here and the
+    /// stream reconciliation is handed to `queue`, where it cannot collide with
+    /// an event callback doing the same thing.
     @discardableResult
     public func tickRootCheck() -> [AgentKind: Bool] {
         let existence = rootExistence()
         let present = allRoots.filter { existence[$0.agent] == true }
-        if present != streamedRoots {
-            stopStream()
-            if !present.isEmpty {
-                startStream(for: present)
-            }
+        runOnQueueAsync { [weak self] in
+            self?.applyStreamedRootsOnQueue(present)
         }
         return existence
     }
 
-    /// Stops watching entirely.
+    /// Stops watching entirely. Synchronous: after this returns the stream is
+    /// released and no further callback can arrive.
     public func stop() {
-        stopStream()
+        runOnQueueSync { self.stopStreamOnQueue() }
     }
 
-    // MARK: Stream plumbing
+    /// Test seam: delivers one event batch exactly as the C callback does —
+    /// asynchronously, on the watcher's own queue.
+    public func injectEventBatch(paths: [String], flags: [FSEventStreamEventFlags]) {
+        runOnQueueAsync { [weak self] in
+            self?.handle(paths: paths, flags: flags)
+        }
+    }
 
-    private func startStream(for roots: [Root]) {
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
-        let flags = FSEventStreamCreateFlags(
-            kFSEventStreamCreateFlagUseCFTypes
-                | kFSEventStreamCreateFlagFileEvents
-                | kFSEventStreamCreateFlagNoDefer
-                | kFSEventStreamCreateFlagWatchRoot
-        )
-        guard let stream = FSEventStreamCreate(
-            kCFAllocatorDefault,
-            fsEventsCallback,
-            &context,
-            roots.map(\.path) as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+    /// Runs `body` after everything already queued on the watcher's queue has
+    /// run. Test seam for the asynchronous stream reconciliation above.
+    public func drain(_ body: @escaping () -> Void) {
+        queue.async(execute: body)
+    }
+
+    // MARK: Stream plumbing (queue-confined)
+
+    private func applyStreamedRootsOnQueue(_ present: [Root]) {
+        assertOnQueue()
+        guard present != streamedRoots else { return }
+        stopStreamOnQueue()
+        if !present.isEmpty {
+            startStreamOnQueue(for: present)
+        }
+    }
+
+    private func startStreamOnQueue(for roots: [Root]) {
+        assertOnQueue()
+        // One stream at a time, always: starting over a live handle would leak
+        // it and lose the only reference that can release it.
+        stopStreamOnQueue()
+        guard let handle = startStream(
+            roots.map(\.path),
             latency,
-            flags
-        ) else {
-            return
-        }
-        FSEventStreamSetDispatchQueue(stream, queue)
-        guard FSEventStreamStart(stream) else {
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
-            return
-        }
-        self.stream = stream
-        self.streamedRoots = roots
+            queue,
+            { [weak self] paths, flags in
+                // Delivered on `queue` by construction.
+                self?.handle(paths: paths, flags: flags)
+            }
+        ) else { return }
+        streamHandle = handle
+        streamedRoots = roots
     }
 
-    private func stopStream() {
-        guard let stream else { return }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        self.stream = nil
-        self.streamedRoots = []
+    private func stopStreamOnQueue() {
+        assertOnQueue()
+        // Clearing the reference BEFORE releasing is what makes a second caller
+        // a no-op instead of a second release: there is exactly one owner of a
+        // handle, and it hands ownership over here.
+        guard let handle = streamHandle else { return }
+        streamHandle = nil
+        streamedRoots = []
+        handle.stopAndRelease()
     }
 
-    /// Called from the C callback on `queue`.
-    fileprivate func handle(paths: [String], flags: [FSEventStreamEventFlags]) {
+    /// Called from the stream callback, on `queue`.
+    private func handle(paths: [String], flags: [FSEventStreamEventFlags]) {
+        assertOnQueue()
         var vanished: Set<AgentKind> = []
         var active: Set<AgentKind> = []
         // Per agent, de-duplicated but order-preserving: one FSEvents batch
@@ -333,9 +408,9 @@ public final class FSEventsWatcher {
             // Drop vanished roots from the stream; the tick existence check
             // will restart them if/when they come back.
             let remaining = streamedRoots.filter { !vanished.contains($0.agent) }
-            stopStream()
+            stopStreamOnQueue()
             if !remaining.isEmpty {
-                startStream(for: remaining)
+                startStreamOnQueue(for: remaining)
             }
             for agent in vanished {
                 onRootVanished?(agent)
@@ -344,10 +419,124 @@ public final class FSEventsWatcher {
     }
 }
 
+// MARK: - Stream lifecycle seam
+
+/// One running FSEvents stream. The watcher owns exactly one at a time and
+/// releases it exactly once, from its own queue.
+public protocol FSEventStreamHandle: AnyObject {
+    /// Stops, invalidates and releases the underlying stream. Idempotent, but
+    /// the watcher is structured so it is called once per handle anyway.
+    func stopAndRelease()
+}
+
+/// Creates and starts a stream over `paths`, delivering each batch on `queue`.
+/// Returns nil when the stream could not be created or started.
+public typealias FSEventStreamStarting = (
+    _ paths: [String],
+    _ latency: TimeInterval,
+    _ queue: DispatchQueue,
+    _ onBatch: @escaping ([String], [FSEventStreamEventFlags]) -> Void
+) -> FSEventStreamHandle?
+
+extension FSEventsWatcher {
+
+    /// The real CoreServices implementation (plan 02 §2 flags).
+    public static func startCoreServicesStream(
+        paths: [String],
+        latency: TimeInterval,
+        queue: DispatchQueue,
+        onBatch: @escaping ([String], [FSEventStreamEventFlags]) -> Void
+    ) -> FSEventStreamHandle? {
+        CoreServicesStreamHandle(
+            paths: paths,
+            latency: latency,
+            queue: queue,
+            onBatch: onBatch
+        )
+    }
+}
+
+/// Retained by the stream context, so the callback never dereferences an object
+/// that has already been deallocated (the previous design passed the watcher
+/// itself unretained).
+private final class FSEventsCallbackBox {
+    let onBatch: ([String], [FSEventStreamEventFlags]) -> Void
+    init(_ onBatch: @escaping ([String], [FSEventStreamEventFlags]) -> Void) {
+        self.onBatch = onBatch
+    }
+}
+
+private final class CoreServicesStreamHandle: FSEventStreamHandle {
+    private let stream: FSEventStreamRef
+    private let box: Unmanaged<FSEventsCallbackBox>
+    /// Guards the release. The watcher already guarantees a single call; this
+    /// is the belt to that pair of braces, because an over-release is a crash
+    /// and a crash drops every power assertion the process holds.
+    private var released = false
+
+    init?(
+        paths: [String],
+        latency: TimeInterval,
+        queue: DispatchQueue,
+        onBatch: @escaping ([String], [FSEventStreamEventFlags]) -> Void
+    ) {
+        let box = Unmanaged.passRetained(FSEventsCallbackBox(onBatch))
+        var context = FSEventStreamContext(
+            version: 0,
+            info: box.toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        let flags = FSEventStreamCreateFlags(
+            kFSEventStreamCreateFlagUseCFTypes
+                | kFSEventStreamCreateFlagFileEvents
+                | kFSEventStreamCreateFlagNoDefer
+                | kFSEventStreamCreateFlagWatchRoot
+        )
+        guard let stream = FSEventStreamCreate(
+            kCFAllocatorDefault,
+            fsEventsCallback,
+            &context,
+            paths as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            latency,
+            flags
+        ) else {
+            box.release()
+            return nil
+        }
+        FSEventStreamSetDispatchQueue(stream, queue)
+        guard FSEventStreamStart(stream) else {
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            box.release()
+            return nil
+        }
+        self.stream = stream
+        self.box = box
+    }
+
+    func stopAndRelease() {
+        guard !released else { return }
+        released = true
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        // Only after Invalidate, which is the point past which no further
+        // callback can be delivered.
+        box.release()
+    }
+
+    deinit {
+        stopAndRelease()
+    }
+}
+
 private let fsEventsCallback: FSEventStreamCallback = {
     _, info, numEvents, eventPaths, eventFlags, _ in
     guard let info else { return }
-    let watcher = Unmanaged<FSEventsWatcher>.fromOpaque(info).takeUnretainedValue()
+    let box = Unmanaged<FSEventsCallbackBox>.fromOpaque(info).takeUnretainedValue()
     // Created with kFSEventStreamCreateFlagUseCFTypes → eventPaths is a CFArray
     // of CFString.
     guard let paths = Unmanaged<CFArray>
@@ -355,5 +544,5 @@ private let fsEventsCallback: FSEventStreamCallback = {
         .takeUnretainedValue() as? [String]
     else { return }
     let flags = Array(UnsafeBufferPointer(start: eventFlags, count: numEvents))
-    watcher.handle(paths: paths, flags: flags)
+    box.onBatch(paths, flags)
 }

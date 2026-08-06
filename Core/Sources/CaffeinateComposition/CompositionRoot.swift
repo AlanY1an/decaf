@@ -80,11 +80,18 @@ public final class CompositionRoot: ObservableObject {
 
     // MARK: - Init
 
+    /// `watcher` and `sessionsStore` join `asserter` / `displaySleeper` /
+    /// `socketPath` as the injectable edges of the world. Their defaults are the
+    /// production ones (~/.claude and Application Support); overriding them is
+    /// how the acceptance harness and integration tests drive the real assembly
+    /// against a temp directory without ever touching the user's real ~/.claude.
     public init(
         settings: SettingsStore = SettingsStore(),
         asserter: any PowerAsserting = IOPMPowerAsserter(),
         displaySleeper: any DisplaySleeping = PmsetDisplaySleeper(),
-        socketPath: String = HookSocketServer.defaultSocketPath
+        socketPath: String = HookSocketServer.defaultSocketPath,
+        watcher: FSEventsWatcher = FSEventsWatcher(),
+        sessionsStore: SessionsStore = SessionsStore()
     ) {
         self.settings = settings
         self.displaySleeper = displaySleeper
@@ -99,8 +106,8 @@ public final class CompositionRoot: ObservableObject {
         self.coordinator = DetectionCoordinator(
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
-            store: SessionsStore(),
-            watcher: FSEventsWatcher()
+            store: sessionsStore,
+            watcher: watcher
         )
     }
 
@@ -221,7 +228,13 @@ public final class CompositionRoot: ObservableObject {
 
     // MARK: - DetectionOutput -> HoldRequest glue (R11 seam 1)
 
-    private func apply(output: DetectionOutput, sessions: [AgentSession]) {
+    /// Internal rather than private so tests can drive the real glue with a
+    /// real `DetectionOutput` (same convention as SessionRegistry's
+    /// `private(set)` state). It is the single place a hold source becomes a
+    /// `HoldRequest`, which is exactly what plan 08 hard limit 2 needs proven:
+    /// a wait-held source must be indistinguishable from any other here, so
+    /// every safety gate applies to it without a special case.
+    func apply(output: DetectionOutput, sessions: [AgentSession]) {
         var desired: Set<HoldSourceID> = []
         for source in output.holdSources {
             switch source.kind {
@@ -254,8 +267,16 @@ public final class CompositionRoot: ObservableObject {
             switch session.state {
             case .working: phase = .working
             case .waitingPermission: phase = .waitingPermission
-            case .grace(let until): phase = .graceIdle(until: until)
-            case .idle: return nil // not holding; defensive
+            // A wait signal extends the deadline, never shortens it (plan 08),
+            // so the row shows the instant the hold actually ends.
+            case .grace(let until): phase = .graceIdle(until: max(until, session.waitUntil ?? until))
+            case .idle:
+                // Idle normally means "not holding" (defensive). A session
+                // learnt from a transcript wait signal is idle *and* holding
+                // until its declared instant — showing no row for a hold the
+                // menu is displaying would be the worse lie.
+                guard let waitUntil = session.waitUntil else { return nil }
+                phase = .graceIdle(until: waitUntil)
             }
             let projectName = session.cwd.map { ($0 as NSString).lastPathComponent } ?? session.agent.rawValue
             return AgentSessionSummary(

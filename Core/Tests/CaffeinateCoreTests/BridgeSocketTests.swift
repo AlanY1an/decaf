@@ -274,10 +274,14 @@ private final class ImmediateCloseListener {
         var description: String { file }
     }
 
-    /// The six hook events + two Notification matchers of plan 02 §1.1/§1.5.
+    /// The six state events + the heartbeat + two Notification matchers
+    /// (plan 02 §1.1/§1.1a/§1.5).
     static let fixtureCases: [FixtureCase] = [
         FixtureCase(file: "session_start.json", expectedEvent: "SessionStart", matcherArgument: nil),
         FixtureCase(file: "user_prompt_submit.json", expectedEvent: "UserPromptSubmit", matcherArgument: nil),
+        // No argv matcher: the heartbeat is told apart by hook_event_name like
+        // every event except the Notification pair (plan 02 §1.5).
+        FixtureCase(file: "post_tool_use.json", expectedEvent: "PostToolUse", matcherArgument: nil),
         FixtureCase(
             file: "notification_permission_prompt.json",
             expectedEvent: "Notification",
@@ -293,7 +297,16 @@ private final class ImmediateCloseListener {
         FixtureCase(file: "session_end.json", expectedEvent: "SessionEnd", matcherArgument: nil),
     ]
 
-    @Test(arguments: fixtureCases)
+    // `.serialized` is load-bearing, not tidiness. Each case spawns a real
+    // caff-bridge whose watchdog `_exit(0)`s after 90 ms no matter what, so
+    // running the cases concurrently races process spawn against that hard
+    // budget: on a busy machine the bridge dies before it connects and the
+    // frame simply never arrives. The eighth case (the heartbeat) was enough
+    // to tip this suite from green to red on the author's Mac. The budget
+    // itself belongs to Scripts/bench-bridge.sh (file header); these cases
+    // assert delivery, and they should not be able to fail for a reason that
+    // has nothing to do with delivery.
+    @Test(.serialized, arguments: fixtureCases)
     func bridgeDeliversFixtureFrameEndToEnd(_ testCase: FixtureCase) async throws {
         try requireBridgeBinary()
         let harness = try ServerHarness()

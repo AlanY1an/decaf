@@ -349,7 +349,11 @@ final class AppEnvironment {
 
     private init() {
         let settingsStore = SettingsStore()
-        let root = CompositionRoot(settings: settingsStore)
+        // The app bundle is the only place `UNUserNotificationCenter.current()`
+        // is legal, so the notifier is injected from here rather than defaulted
+        // inside the package (see SystemUserNotifier). Constructing it asks the
+        // user for nothing — authorization is requested at the first post.
+        let root = CompositionRoot(settings: settingsStore, userNotifier: SystemUserNotifier())
         let store = AppStateStore(snapshot: root.snapshot)
 
         let bundledBridgePath = Bundle.main.bundleURL

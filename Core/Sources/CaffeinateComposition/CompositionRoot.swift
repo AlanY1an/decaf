@@ -91,7 +91,13 @@ public final class CompositionRoot: ObservableObject {
         displaySleeper: any DisplaySleeping = PmsetDisplaySleeper(),
         socketPath: String = HookSocketServer.defaultSocketPath,
         watcher: FSEventsWatcher = FSEventsWatcher(),
-        sessionsStore: SessionsStore = SessionsStore()
+        sessionsStore: SessionsStore = SessionsStore(),
+        // The app's only notification channel (plan 04's zero-notification rule
+        // narrowed, REVIEW-DECISIONS 2026-08-06). Defaults to nil — silent —
+        // because the concrete `UNUserNotificationCenter` adapter needs an
+        // application bundle to exist and this package is also linked into
+        // `swift test` and `caff-smoke`. The app target injects the real one.
+        userNotifier: (any UserNotifying)? = nil
     ) {
         self.settings = settings
         self.displaySleeper = displaySleeper
@@ -107,7 +113,8 @@ public final class CompositionRoot: ObservableObject {
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
             store: sessionsStore,
-            watcher: watcher
+            watcher: watcher,
+            userNotifier: userNotifier
         )
     }
 

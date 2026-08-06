@@ -5,8 +5,24 @@
 // `holding = sessions.contains { $0.state.isHolding(now) }` (cc-caffeine pattern),
 // which makes concurrent sessions naturally correct.
 //
-// Normalization of raw wire frames into the six-event table of plan 02 §1.1 also
+// Normalization of raw wire frames into the event table of plan 02 §1.1 also
 // lives here (the bridge is a dumb pipe; review decision R5).
+//
+// Two axes, deliberately separate: STATE (what the session is doing) and
+// LIVENESS (when it was last observed at all). The six turn-boundary events
+// move state; `PostToolUse` is a heartbeat that moves liveness only (plan 02
+// §1.1a). Keeping them apart is what lets a caller tell a genuinely long turn
+// from a `.working` record whose `Stop` was lost.
+//
+// The stuck downgrade (plan 02 §1.1b) is what `reconcile` then does with that
+// distinction, and it is the FIFTH cleanup in this file — the only one that is
+// not a deadline coming due. The other four (PPID sweep, wait expiry, grace
+// expiry, `ppid <= 0` prune) all miss a `.working` session on a live pid, and
+// `ppid` is the shared Claude Code application process rather than a
+// per-session pid, so the sweep only fires when the whole app quits. The
+// downgrade is a contradiction test over four independent witnesses
+// (`StuckSessionDetector`), and its outcome is `.working` → `.idle` plus a
+// marker, never a removal: any later sign of life undoes it in one step.
 //
 // Wait signals (plan 08) are folded in here as well: `waitUntil` is not a new
 // state, it is a `max` applied to the state's own deadline. See "Wait signals"
@@ -88,10 +104,27 @@ public final class SessionRegistry {
         case idle
         case stopped
         case ended
+        /// A liveness measurement, not a state transition (plan 02 §1.1a).
+        ///
+        /// `PostToolUse` fires once per tool call, which is the only signal
+        /// that arrives *during* a turn — the six original events all sit on
+        /// turn boundaries, so a three-hour turn used to emit nothing between
+        /// its first and last event. A heartbeat refreshes `lastHeartbeatAt`
+        /// and nothing else: it cannot start a session, cannot resurrect one,
+        /// cannot change a state and cannot move a deadline.
+        case heartbeat
         /// Forward compatibility (plan 02 §1.1): unknown events only refresh
         /// `lastEventAt`; no state transition, no holding change.
         case unknown(String)
     }
+
+    /// Heartbeats arrive once per tool call, which on a busy turn is several
+    /// per second. Anything landing within this window of the session's stored
+    /// liveness instant is dropped without a write, so a fast agent cannot
+    /// thrash `sessions.json` or spin the change counter. The value only has
+    /// to be small relative to the staleness window it feeds (hours), so the
+    /// resolution lost is irrelevant and the writes saved are not.
+    public static let defaultHeartbeatCoalesceWindow: TimeInterval = 5
 
     /// Grace period after Stop/StopFailure. The engine accepts 0–600 s
     /// (clamped); the UI offers 1–10 min presets (plan 02 §1.2).
@@ -114,8 +147,34 @@ public final class SessionRegistry {
     /// from the current wall clock on every pass.
     public let waitCap: TimeInterval
 
+    /// See `defaultHeartbeatCoalesceWindow`. Clamped to >= 0.
+    public let heartbeatCoalesceWindow: TimeInterval
+
+    /// How long all four witnesses of `StuckSessionDetector` must agree before
+    /// a `.working` session is downgraded. `<= 0` disables the check entirely
+    /// (the predicate's own `.detectorDisabled` rule).
+    public let stuckThreshold: TimeInterval
+
     private let clock: () -> Date
     private let isProcessAlive: (pid_t) -> Bool
+
+    /// The CPU witness (plan 02 §3's L3). `nil` means the app has no way to
+    /// measure whether the agent process is burning CPU, and a stuck verdict
+    /// requires that witness — so a registry without a sampler never downgrades
+    /// anything. That is the pre-feature behaviour, kept reachable on purpose:
+    /// it is the escape hatch if the sampler ever misbehaves, and it is what
+    /// every test that does not care about stuck detection gets by default.
+    private let activitySampler: (any ProcessActivitySampling)?
+
+    /// Last observed write to each session's own transcript file — witness (b).
+    ///
+    /// Deliberately NOT a field on `AgentSession`: it is ephemeral observation
+    /// state, like `waitRefusedAt` and `cronJobIDBySession`, and persisting it
+    /// would be a lie after a relaunch (the app was not watching while it was
+    /// down). A missing entry reads as silence, which is correct — and harmless,
+    /// because the CPU witness cannot testify either until it has watched the
+    /// pid for a full window, so a fresh launch cannot condemn anything.
+    private var lastTranscriptWriteAt: [String: Date] = [:]
 
     /// Sessions keyed by hooks `session_id`.
     private var sessionsByID: [String: AgentSession] = [:]
@@ -163,13 +222,19 @@ public final class SessionRegistry {
     public init(
         gracePeriod: TimeInterval = DetectionDefaults.gracePeriod,
         waitCap: TimeInterval = WaitSignalParser.defaultWaitCap,
+        heartbeatCoalesceWindow: TimeInterval = SessionRegistry.defaultHeartbeatCoalesceWindow,
+        stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
         clock: @escaping () -> Date = { Date() },
-        isProcessAlive: @escaping (pid_t) -> Bool = ProcessLiveness.isAlive
+        isProcessAlive: @escaping (pid_t) -> Bool = ProcessLiveness.isAlive,
+        activitySampler: (any ProcessActivitySampling)? = nil
     ) {
         self.gracePeriod = min(max(gracePeriod, 0), 600)
         self.waitCap = max(0, waitCap)
+        self.heartbeatCoalesceWindow = max(0, heartbeatCoalesceWindow)
+        self.stuckThreshold = stuckThreshold
         self.clock = clock
         self.isProcessAlive = isProcessAlive
+        self.activitySampler = activitySampler
     }
 
     // MARK: Wire-frame normalization (plan 02 §1.1 six-event mapping)
@@ -182,6 +247,10 @@ public final class SessionRegistry {
             return .sessionStart
         case "UserPromptSubmit":
             return .working
+        case "PostToolUse":
+            // Liveness only. This is the one hook that fires mid-turn, and the
+            // whole reason it is registered (plan 02 §1.1a).
+            return .heartbeat
         case "Notification":
             switch wire.matcher {
             case "permission_prompt":
@@ -224,6 +293,10 @@ public final class SessionRegistry {
     /// table). Unregistered `session_id`s are first registered as if a
     /// `SessionStart` had arrived, then the signal is applied — the app can be
     /// launched mid-session and still pick it up.
+    ///
+    /// `.heartbeat` is the one exception to all of the above: it is forwarded
+    /// to `applyHeartbeat(sessionID:now:)`, which touches liveness and nothing
+    /// else and never registers an unknown session.
     public func apply(
         signal: Signal,
         sessionID: String,
@@ -233,6 +306,15 @@ public final class SessionRegistry {
         now: Date? = nil
     ) {
         let now = now ?? clock()
+
+        // Heartbeats leave this function before any of the bookkeeping below
+        // runs. Everything in the normal path — auto-registration, the
+        // `lastEventAt` refresh, the `waitRefusedAt` clearing, the transition
+        // switch — is a statement ABOUT STATE, and a heartbeat makes none.
+        if case .heartbeat = signal {
+            applyHeartbeat(sessionID: sessionID, now: now)
+            return
+        }
 
         var session: AgentSession
         if let existing = sessionsByID[sessionID] {
@@ -255,6 +337,17 @@ public final class SessionRegistry {
         if ppid > 0 { session.ppid = ppid }
         if let cwd { session.cwd = cwd }
 
+        // Revival, BEFORE the transition below (plan 02 §1.1b): a hook event is
+        // proof that the session the stuck detector gave up on is alive, so the
+        // downgrade is undone first and the event then applies to the state it
+        // should have found. That ordering is what makes the four cases come
+        // out right with no special-casing — a `Stop` arriving after a wrong
+        // downgrade opens the grace window it would always have opened, an
+        // `idle_prompt` still lands on IDLE, and a `SessionStart` or an unknown
+        // event (neither of which claims the turn is over) leaves the restored
+        // WORKING standing, which is the conservative side.
+        undoStuckDowngrade(&session)
+
         // Any hook event other than idle/end says the agent is live again, so a
         // standing refusal of its wait signals is lifted (a resumed session, or
         // simply the next loop iteration, must be able to re-arm).
@@ -263,12 +356,19 @@ public final class SessionRegistry {
             waitRefusedAt.removeValue(forKey: sessionID)
         case .idle, .ended:
             waitRefusedAt[sessionID] = now
+        case .heartbeat:
+            // Unreachable (handled above). A heartbeat neither lifts a standing
+            // refusal nor imposes one: refusal is hook authority, and a tool
+            // call is not a hook speaking about the user's intent.
+            break
         }
 
         switch signal {
         case .sessionStart, .unknown:
             // Registration / forward-compat refresh only; no transition.
             break
+        case .heartbeat:
+            break // Unreachable (handled above).
         case .working:
             // Latest signal wins from every state (out-of-order tolerance);
             // a prompt during grace cancels the grace window (row S6).
@@ -294,6 +394,7 @@ public final class SessionRegistry {
             // GONE is not a stored state: remove immediately, no grace — and a
             // wait signal earns no exemption from that either.
             cronJobIDBySession.removeValue(forKey: sessionID)
+            lastTranscriptWriteAt.removeValue(forKey: sessionID)
             if sessionsByID.removeValue(forKey: sessionID) != nil {
                 changeCount &+= 1
             }
@@ -302,6 +403,148 @@ public final class SessionRegistry {
 
         sessionsByID[sessionID] = session
         changeCount &+= 1
+    }
+
+    // MARK: Heartbeats (plan 02 §1.1a)
+
+    /// Records that `sessionID` was observed alive at `now`.
+    ///
+    /// Four things this deliberately does NOT do, each of which would turn a
+    /// measurement back into an inference:
+    ///
+    /// - **It does not create sessions.** Every other signal auto-registers an
+    ///   unknown `session_id`, because every other signal says something about
+    ///   what the session is doing. A heartbeat does not, so a session it
+    ///   created could only ever be `.idle` — it would hold nothing, and,
+    ///   carrying the shared application ppid, the sweep would never remove it.
+    ///   The registry would grow one dead row per lost `SessionEnd`. More
+    ///   importantly it makes the rule below free: a `PostToolUse` frame still
+    ///   in flight when `SessionEnd` lands cannot resurrect the session,
+    ///   because after removal there is nothing left to refresh.
+    /// - **It does not change state.** `.grace` stays `.grace`, `.idle` stays
+    ///   `.idle`. A tool call is evidence the process is alive, not evidence
+    ///   that the user asked for anything.
+    /// - **It does not move deadlines.** A grace window that a `Stop` armed
+    ///   runs out on schedule even if tool calls keep arriving inside it
+    ///   (post-Stop hooks, a sub-agent finishing up).
+    /// - **It does not move liveness backwards.** Frames can be reordered by
+    ///   the socket; only a strictly newer instant counts.
+    ///
+    /// Returns true when the stored value actually moved (i.e. the change
+    /// counter was bumped) — false when the heartbeat was coalesced away,
+    /// unknown, or stale.
+    @discardableResult
+    public func applyHeartbeat(sessionID: String, now: Date? = nil) -> Bool {
+        let now = now ?? clock()
+        guard var session = sessionsByID[sessionID] else { return false }
+
+        // Revival outranks coalescing. A heartbeat is the cheapest possible
+        // proof that a downgraded session is alive, and dropping it as
+        // "redundant" would leave the record idle until the next tool call
+        // happened to fall outside the window. (In practice a downgraded
+        // session is hours past its liveness instant and could never be
+        // coalesced anyway — but the rule must not depend on that.)
+        let revived = undoStuckDowngrade(&session)
+
+        // Coalesce against the folded liveness instant, not just the stored
+        // heartbeat: a heartbeat one second after `UserPromptSubmit` is as
+        // redundant as one a second after another heartbeat.
+        let moved = now.timeIntervalSince(session.livenessAt) > heartbeatCoalesceWindow
+        guard revived || moved else { return false }
+
+        if moved { session.lastHeartbeatAt = now }
+        sessionsByID[sessionID] = session
+        changeCount &+= 1
+        return true
+    }
+
+    // MARK: - Stuck sessions (plan 02 §1.1b)
+
+    /// Records that this session's own transcript file was written at `now` —
+    /// witness (b) of the stuck predicate, and the third way a downgraded
+    /// session comes back.
+    ///
+    /// Like a heartbeat and for the same reasons, this never creates a session:
+    /// a file write is evidence about a session, not a statement that one
+    /// exists, and an auto-registered shell would carry the shared application
+    /// ppid that nothing sweeps.
+    ///
+    /// Returns true only when the call actually revived a downgraded session,
+    /// i.e. when the stored set changed and the caller owes a reconcile. An
+    /// ordinary write on a healthy session records the instant and bumps
+    /// nothing: transcripts are appended constantly, and persisting
+    /// `sessions.json` on every append is exactly the thrash the heartbeat
+    /// coalescing window exists to avoid.
+    @discardableResult
+    public func noteTranscriptWrite(sessionID: String, at now: Date? = nil) -> Bool {
+        let now = now ?? clock()
+        guard var session = sessionsByID[sessionID] else { return false }
+
+        // Never backwards: FSEvents batches can be delivered out of order.
+        if (lastTranscriptWriteAt[sessionID] ?? .distantPast) < now {
+            lastTranscriptWriteAt[sessionID] = now
+        }
+
+        guard undoStuckDowngrade(&session) else { return false }
+        sessionsByID[sessionID] = session
+        changeCount &+= 1
+        return true
+    }
+
+    /// Undoes a stuck downgrade, restoring exactly what it took away.
+    ///
+    /// The downgrade performs one move and one only — `.working` → `.idle` —
+    /// so undoing it is the inverse move. Anything other than `.idle` here
+    /// means the marker is stale (a state event landed after the downgrade
+    /// without clearing it, which only `restore(_:)` from an inconsistent
+    /// `sessions.json` can produce); the marker goes, the newer state stays.
+    ///
+    /// Returns true when a marker was found, so callers can tell a revival from
+    /// an ordinary observation.
+    @discardableResult
+    private func undoStuckDowngrade(_ session: inout AgentSession) -> Bool {
+        guard session.stuckDowngradedAt != nil else { return false }
+        session.stuckDowngradedAt = nil
+        if case .idle = session.state {
+            session.state = .working
+        }
+        return true
+    }
+
+    /// One CPU verdict per distinct tracked pid, sampled once per reconcile.
+    ///
+    /// Two reasons this samples EVERY tracked pid rather than only the pids of
+    /// candidate sessions:
+    ///
+    /// - a delta needs a baseline, and `windowedVerdict` additionally refuses to
+    ///   answer until it has watched a pid for the full window. Sampling only
+    ///   when a session has already been silent for two hours would start that
+    ///   clock at the wrong moment and the witness would never testify;
+    /// - `lastBusyAt` is the veto that makes an instantaneous quiet sample safe.
+    ///   It only exists if we were sampling all along.
+    ///
+    /// Cost is one `proc_pid_rusage` per distinct pid per pass (a full
+    /// 1025-process scan measures 2.69 ms), and calls closer together than
+    /// `minimumSampleSpacing` keep the baseline and answer `.tooSoon`, so the
+    /// per-event reconciles are free and merely non-committal.
+    private func sampleProcessActivity(now: Date) -> [pid_t: ProcessCPUVerdict] {
+        guard let activitySampler, stuckThreshold > 0 else { return [:] }
+
+        var pids: Set<pid_t> = []
+        for session in sessionsByID.values where session.ppid > 0 {
+            pids.insert(session.ppid)
+        }
+        // Bound the sampler's map by the sessions we actually track, or it
+        // would grow with the machine's process history.
+        activitySampler.retain(pids: pids)
+
+        var verdicts: [pid_t: ProcessCPUVerdict] = [:]
+        for pid in pids {
+            verdicts[pid] = activitySampler.windowedVerdict(
+                pid: pid, at: now, window: stuckThreshold
+            )
+        }
+        return verdicts
     }
 
     // MARK: Wait signals (plan 08)
@@ -436,11 +679,22 @@ public final class SessionRegistry {
 
     // MARK: Reconcile (wall-clock discipline, plan 02 §1.2)
 
-    /// One reconcile pass: wait expiry, grace-expiry migration, PPID sweep and
-    /// the prune of transcript-only sessions. Deadlines are recomputed from the
-    /// wall clock — correct after system sleep, no Timer countdowns.
-    public func reconcile(now: Date? = nil) {
+    /// One reconcile pass: wait expiry, grace-expiry migration, PPID sweep, the
+    /// stuck-session downgrade and the prune of transcript-only sessions.
+    /// Deadlines are recomputed from the wall clock — correct after system
+    /// sleep, no Timer countdowns.
+    ///
+    /// Returns the sessions downgraded by the stuck detector on THIS pass, so
+    /// the caller can tell the user (plan 04's zero-notification rule is
+    /// narrowed to exactly this case; see REVIEW-DECISIONS 2026-08-06).
+    /// Ordinarily empty; a downgrade is a rare, reported anomaly.
+    @discardableResult
+    public func reconcile(now: Date? = nil) -> [StuckDowngrade] {
         let now = now ?? clock()
+        var downgrades: [StuckDowngrade] = []
+
+        // Witness (c), once per distinct pid, before anything mutates the set.
+        let cpuVerdicts = sampleProcessActivity(now: now)
 
         for (id, var session) in sessionsByID {
             // PPID sweep: kill(pid, 0) == ESRCH means the agent process is gone
@@ -452,6 +706,7 @@ public final class SessionRegistry {
             if session.ppid > 0, !isProcessAlive(session.ppid) {
                 sessionsByID.removeValue(forKey: id)
                 cronJobIDBySession.removeValue(forKey: id)
+                lastTranscriptWriteAt.removeValue(forKey: id)
                 // The process is gone; a transcript line still in flight must
                 // not bring the session back (see `waitRefusedAt`).
                 waitRefusedAt[id] = now
@@ -491,6 +746,48 @@ public final class SessionRegistry {
                 changed = true
             }
 
+            // Stuck downgrade (plan 02 §1.1b). The ONLY cleanup in this loop
+            // that touches a `.working` session whose process is alive, and the
+            // only one that is not a deadline coming due: it is a contradiction
+            // test, not a timeout. `StuckSessionDetector` requires all four
+            // witnesses — no hook event, no heartbeat, no transcript write, no
+            // CPU burn, no live wait — to agree over `stuckThreshold`, and any
+            // one of them dissenting (including a CPU sample that merely could
+            // not be taken) leaves the session exactly as it was.
+            //
+            // Downgrade, never delete: the record survives as `.idle` with
+            // `stuckDowngradedAt` set, so the next heartbeat, hook event or
+            // transcript write puts it straight back to `.working`. Removing it
+            // would make being wrong permanent and invisible, which is the
+            // property the original bug had.
+            if case .working = session.state {
+                let verdict = StuckSessionDetector.evaluate(
+                    now: now,
+                    lastEventAt: session.lastEventAt,
+                    lastHeartbeatAt: session.lastHeartbeatAt,
+                    lastTranscriptWriteAt: lastTranscriptWriteAt[id],
+                    // A pid we did not sample (no sampler, or `ppid <= 0`)
+                    // cannot testify, and `.unknown` never condemns.
+                    cpu: cpuVerdicts[session.ppid] ?? .unknown(.processGone),
+                    hasLiveWait: session.hasLiveWait(at: now),
+                    threshold: stuckThreshold
+                )
+                if verdict.isStuck {
+                    downgrades.append(
+                        StuckDowngrade(
+                            sessionID: id,
+                            agent: session.agent,
+                            cwd: session.cwd,
+                            silentFor: now.timeIntervalSince(session.livenessAt),
+                            at: now
+                        )
+                    )
+                    session.state = .idle
+                    session.stuckDowngradedAt = now
+                    changed = true
+                }
+            }
+
             // Prune: a session with no usable pid is kept only for as long as a
             // wait keeps it alive.
             //
@@ -505,6 +802,7 @@ public final class SessionRegistry {
             if session.ppid <= 0, !session.hasLiveWait(at: now) {
                 sessionsByID.removeValue(forKey: id)
                 cronJobIDBySession.removeValue(forKey: id)
+                lastTranscriptWriteAt.removeValue(forKey: id)
                 changeCount &+= 1
                 continue
             }
@@ -520,6 +818,13 @@ public final class SessionRegistry {
         // the entry buys nothing and the map must not grow with the machine's
         // session history.
         waitRefusedAt = waitRefusedAt.filter { now.timeIntervalSince($0.value) < waitCap }
+
+        // Witness (b)'s map follows the registry exactly: no session, no entry.
+        // Both are the size of the agent sessions running on one Mac, so the
+        // rebuild is cheaper than tracking which removal path missed a key.
+        lastTranscriptWriteAt = lastTranscriptWriteAt.filter { sessionsByID[$0.key] != nil }
+
+        return downgrades
     }
 
     // MARK: Queries
@@ -563,6 +868,11 @@ public final class SessionRegistry {
         // relaunch; a restored cron wait therefore stands until its deadline or
         // an uncorrelated CronDelete, both bounded by the cap.
         cronJobIDBySession.removeAll()
+        // Transcript-write observations do not survive either: the app was not
+        // watching while it was down, and claiming otherwise would be the one
+        // direction that matters (a false "recently written" would shield a
+        // genuinely stuck session, a missing one merely delays a verdict).
+        lastTranscriptWriteAt.removeAll()
         changeCount &+= 1
     }
 }

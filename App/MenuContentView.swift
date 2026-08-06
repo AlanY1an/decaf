@@ -202,12 +202,11 @@ enum MenuTextFormatter {
 
     // MARK: Names & accessibility
 
+    /// One owner for these strings: `AgentKind.displayName` in CaffeinateCore,
+    /// which the stuck-session notification also reads. Kept as a function here
+    /// so the existing call sites and their tests do not move.
     static func agentDisplayName(_ agent: AgentKind) -> String {
-        switch agent {
-        case .claudeCode: return "Claude Code"
-        case .codex: return "Codex"
-        case .opencode: return "opencode"
-        }
+        agent.displayName
     }
 
     /// Status item accessibility label, updated with the icon state (plan 04 §4).

@@ -30,7 +30,59 @@ public struct AgentSession: Equatable, Codable, Sendable {
     /// Session working directory; the UI derives the project name from it.
     public var cwd: String?
     public var state: SessionState
+    /// Last hook event that carried *meaning* — a state transition or a
+    /// registration. Heartbeats deliberately do not touch this field; see
+    /// `lastHeartbeatAt`.
     public var lastEventAt: Date
+
+    /// Last `PostToolUse` heartbeat, i.e. the last instant this session was
+    /// MEASURED to be alive rather than inferred to be.
+    ///
+    /// State and liveness are separate axes and must stay that way. The six
+    /// hook events of plan 02 §1.1 fire only at turn boundaries, so a session
+    /// that entered `.working` and lost its `Stop` looked identical to one
+    /// three hours into a genuine turn: both are `.working` with an ancient
+    /// `lastEventAt`, and the ppid they carry is the shared Claude Code
+    /// application process, so the PPID sweep never fires for one session
+    /// alone. Registering `PostToolUse` as a heartbeat is what makes those two
+    /// distinguishable — every tool call refreshes this field WITHOUT
+    /// implying anything about state.
+    ///
+    /// `nil` means "never heard a heartbeat" (a session from before this
+    /// field existed, restored from sessions.json, or one that has not run a
+    /// tool yet). Consumers should use `livenessAt`, which folds it together
+    /// with `lastEventAt`.
+    public var lastHeartbeatAt: Date?
+
+    /// The most recent evidence of any kind that this session is alive —
+    /// `max(lastEventAt, lastHeartbeatAt)`.
+    ///
+    /// This is the single value a staleness check should read: a turn that
+    /// emits tool calls but no hook events is alive, and so is a session that
+    /// just transitioned but has not run a tool yet.
+    public var livenessAt: Date {
+        max(lastEventAt, lastHeartbeatAt ?? .distantPast)
+    }
+
+    /// Set when the stuck detector downgraded this session from `.working` to
+    /// `.idle`, and cleared the instant anything proves it alive again.
+    ///
+    /// The downgrade is the app admitting it can no longer justify a hold it is
+    /// holding — all four witnesses of `StuckSessionDetector` agreed the
+    /// `.working` record contradicts itself. Keeping the record (rather than
+    /// removing it) and marking WHY is what makes being wrong cheap: this field
+    /// is the only difference between "idle because the agent said so" and
+    /// "idle because we gave up on it", and only the latter is undone on the
+    /// next sign of life (`SessionRegistry.undoStuckDowngrade`).
+    ///
+    /// Invariant while non-nil: `state == .idle`, because the downgrade only
+    /// ever performs `.working` → `.idle` and every path that changes state
+    /// afterwards clears the marker on the way through.
+    ///
+    /// Persisted, so a relaunch does not silently re-promote a session that was
+    /// downgraded before the app restarted. Optional, so a `sessions.json`
+    /// written by an older build still decodes.
+    public var stuckDowngradedAt: Date?
 
     /// Deadline of a live wait signal read from this session's transcript
     /// (plan 08). `nil` means "no declared wait".
@@ -55,6 +107,8 @@ public struct AgentSession: Equatable, Codable, Sendable {
         cwd: String? = nil,
         state: SessionState,
         lastEventAt: Date,
+        lastHeartbeatAt: Date? = nil,
+        stuckDowngradedAt: Date? = nil,
         waitUntil: Date? = nil,
         waitSource: WaitSignal.Kind? = nil
     ) {
@@ -65,6 +119,8 @@ public struct AgentSession: Equatable, Codable, Sendable {
         self.cwd = cwd
         self.state = state
         self.lastEventAt = lastEventAt
+        self.lastHeartbeatAt = lastHeartbeatAt
+        self.stuckDowngradedAt = stuckDowngradedAt
         self.waitUntil = waitUntil
         self.waitSource = waitSource
     }

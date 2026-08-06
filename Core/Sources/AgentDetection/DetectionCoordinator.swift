@@ -17,6 +17,7 @@
 // deadline all funnel into `reconcile(now:)`, which recomputes everything from
 // the wall clock. The stream only emits when the output value changed.
 
+import CaffeinateCore
 import Foundation
 import HookWire
 #if canImport(AppKit)
@@ -70,6 +71,12 @@ public actor DetectionCoordinator {
     private let waitParser: WaitSignalParser
     /// Per-file parser cursor (carries at most a pending cron job id).
     private var waitCursors: [URL: WaitSignalParser.Cursor] = [:]
+    /// Where a stuck-session downgrade is reported to the user. `nil` keeps the
+    /// app silent — which is what every headless assembly (tests, the smoke
+    /// tool) gets, and what the package's own default composition gets, because
+    /// `UNUserNotificationCenter.current()` traps outside an app bundle. The
+    /// app target injects the real one.
+    private let userNotifier: (any UserNotifying)?
 
     // MARK: Layer state
 
@@ -107,14 +114,22 @@ public actor DetectionCoordinator {
         sweepInterval: TimeInterval = DetectionDefaults.sweepInterval,
         clock: @escaping @Sendable () -> Date = { Date() },
         livenessProbe: @escaping @Sendable (pid_t) -> Bool = { ProcessLiveness.isAlive($0) },
+        stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
         store: SessionsStore? = nil,
         watcher: FSEventsWatcher? = nil,
         tailReader: TranscriptTailReader? = TranscriptTailReader(),
-        waitParser: WaitSignalParser = WaitSignalParser()
+        waitParser: WaitSignalParser = WaitSignalParser(),
+        // The CPU witness of the stuck predicate. A real sampler by default —
+        // the whole point is that a released hold must be justified by a
+        // measurement, and a `nil` sampler makes the predicate permanently
+        // unable to condemn anything. Injected so tests script it.
+        activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
+        userNotifier: (any UserNotifying)? = nil
     ) {
         self.clock = clock
         self.tailReader = tailReader
         self.waitParser = waitParser
+        self.userNotifier = userNotifier
         self.gracePeriod = gracePeriod
         self.l2IdleWindow = l2IdleWindow
         self.socketDegradeGrace = socketDegradeGrace
@@ -125,8 +140,10 @@ public actor DetectionCoordinator {
             // must be the same ceiling the parser used, or a custom-capped
             // parser and the registry would disagree (plan 08 hard limit 2).
             waitCap: waitParser.waitCap,
+            stuckThreshold: stuckThreshold,
             clock: clock,
-            isProcessAlive: livenessProbe
+            isProcessAlive: livenessProbe,
+            activitySampler: activitySampler
         )
         self.store = store
         self.watcher = watcher
@@ -221,9 +238,23 @@ public actor DetectionCoordinator {
 
     /// Ingests one wire frame from the socket server, then reconciles
     /// immediately (plan 02 §1.2: every event triggers a tick).
+    ///
+    /// One exception, and only one: a `PostToolUse` heartbeat that the registry
+    /// coalesced away (plan 02 §1.1a) changed nothing — no state, no deadline,
+    /// no stored field — so the tick it would trigger could not produce a
+    /// different output. Heartbeats arrive on every tool call, and a reconcile
+    /// walks every session with a `kill(2)` probe and rebuilds the boundary
+    /// timer, so paying that on a frame that carried no information is the one
+    /// cost this feature does not have to have. Everything time-driven is still
+    /// covered by the 30 s tick and the boundary timer.
     public func ingest(_ wire: WireEvent, now: Date? = nil) {
         let now = now ?? clock()
+        let changeCountBefore = registry.changeCount
         registry.ingest(wire, now: now)
+        if registry.changeCount == changeCountBefore,
+           SessionRegistry.signal(for: wire) == .heartbeat {
+            return
+        }
         reconcile(now: now)
     }
 
@@ -281,11 +312,35 @@ public actor DetectionCoordinator {
     /// (plan 08 hard limit 1).
     public func noteTranscriptActivity(agent: AgentKind, paths: [URL], at date: Date? = nil) {
         let now = max(date ?? clock(), clock())
+
+        // Witness (b) of the stuck predicate, fed from the watcher the app
+        // already runs — no second file watcher, no extra IO. The transcript
+        // path is `<root>/projects/<slug>/<session-uuid>.jsonl`, so the file
+        // name IS the session id (plan 02 §2); nothing has to be parsed to
+        // learn that this session's file grew, which matters because the case
+        // this witness exists for is a turn that writes bytes we do not read.
+        //
+        // FIRST, before `noteFileActivity` — which reconciles, and a reconcile
+        // is the pass that can downgrade a stuck session. Recording the write
+        // afterwards would let the very evidence that clears a session arrive
+        // one instant too late, producing a downgrade and a user notification
+        // that the next line of this method immediately undoes.
+        //
+        // Runs even with no tail reader: knowing the file was touched is
+        // independent of reading it.
+        var applied = false
+        for url in paths {
+            let sessionID = url.deletingPathExtension().lastPathComponent
+            applied = registry.noteTranscriptWrite(sessionID: sessionID, at: now) || applied
+        }
+
         noteFileActivity(agent: agent, at: date)
 
-        guard let tailReader, !paths.isEmpty else { return }
+        guard let tailReader, !paths.isEmpty else {
+            if applied { reconcile(now: now) }
+            return
+        }
 
-        var applied = false
         for url in paths {
             var cursor = waitCursors[url] ?? WaitSignalParser.Cursor()
             var rounds = 0
@@ -348,7 +403,14 @@ public actor DetectionCoordinator {
             }
         }
 
-        registry.reconcile(now: now)
+        // The one pass that can release a hold nobody asked to release. Told
+        // immediately, and only here: `DetectionOutput` is a
+        // distinct-until-changed value stream, so a downgrade — an event, and
+        // one that can legitimately repeat for the same session after a
+        // revival — cannot be carried on it without being collapsed.
+        for downgrade in registry.reconcile(now: now) {
+            userNotifier?.post(downgrade.notice())
+        }
 
         // Degrade handover (plan 02 §1.6): the instant an agent's precision
         // falls from .hooks, existing L1 holds must not drop — seed the L2

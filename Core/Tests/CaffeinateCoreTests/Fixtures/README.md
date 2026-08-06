@@ -1,7 +1,7 @@
 # Hook stdin fixtures(02-1 门禁:字段名校准)
 
 本目录是 Claude Code hook 事件写入 hook 进程 stdin 的 JSON 样本,用于驱动
-`DetectionTests.swift` 中的六事件映射(计划 02 §1.1)校验。
+`DetectionTests.swift` 中的事件映射(计划 02 §1.1 / §1.1a)校验。
 
 ## 录制方式
 
@@ -25,6 +25,7 @@ matcher,hook command 为一个把 stdin 与 argv 追加到捕获文件的脚本,
 | `stop.json` | **PENDING-LIVE-VALIDATION** | 文档形状(`stop_hook_active` 字段);成功回合才会触发,沙箱无凭据无法录到 |
 | `notification_permission_prompt.json` | **PENDING-LIVE-VALIDATION** | 文档形状;需真实权限弹窗场景 |
 | `notification_idle_prompt.json` | **PENDING-LIVE-VALIDATION** | 文档形状;需真实闲置 60s 场景 |
+| `post_tool_use.json` | **PENDING-LIVE-VALIDATION** | 心跳事件(计划 02 §1.1a)。文档形状(`tool_name` / `tool_input` / `tool_response` 附加字段);沙箱无凭据,回合在任何工具调用之前就 `authentication_failed`,录不到。**bridge 只读 `session_id` / `hook_event_name` / `cwd` 三个字段,这三个在所有已录制事件里恒定同名**,所以本文件的不确定性只在附加字段上 |
 
 真实录制的四个文件仅把路径值归一化(沙箱临时路径 → `/Users/alan/Project/X`
 样例路径),**字段名与结构未做任何改动**。
@@ -44,8 +45,9 @@ matcher,hook command 为一个把 stdin 与 argv 追加到捕获文件的脚本,
 
 ## 待办(V1.x 前补录)
 
-在已登录的真实环境重跑同一录制脚本,补录 `Stop` 与两种 Notification,
-替换三个 PENDING 文件并更新本表。
+在已登录的真实环境重跑同一录制脚本,补录 `Stop`、两种 Notification 与
+`PostToolUse`(后者需要回合里真的发生一次工具调用,例如 `claude -p "list this
+directory"`),替换四个 PENDING 文件并更新本表。
 
 ---
 

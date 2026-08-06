@@ -108,11 +108,13 @@ private struct HookStdinFixture {
 
 private func makeRegistry(
     gracePeriod: TimeInterval = 180,
+    heartbeatCoalesceWindow: TimeInterval = SessionRegistry.defaultHeartbeatCoalesceWindow,
     clock: DetectionClock,
     liveness: DetectionLiveness = DetectionLiveness()
 ) -> SessionRegistry {
     SessionRegistry(
         gracePeriod: gracePeriod,
+        heartbeatCoalesceWindow: heartbeatCoalesceWindow,
         clock: { clock.now },
         isProcessAlive: { liveness.isAlive($0) }
     )
@@ -133,6 +135,7 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
         @Test(arguments: [
             ("session_start.json", "SessionStart"),
             ("user_prompt_submit.json", "UserPromptSubmit"),
+            ("post_tool_use.json", "PostToolUse"),
             ("notification_permission_prompt.json", "Notification"),
             ("notification_idle_prompt.json", "Notification"),
             ("stop.json", "Stop"),
@@ -273,6 +276,297 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
             #expect(!registry.isHolding())
             registry.ingest(try HookStdinFixture.load("session_end.json").wireEvent())
             #expect(registry.sessions.isEmpty)
+        }
+    }
+
+    // MARK: - PostToolUse heartbeat (plan 02 §1.1a)
+
+    /// The heartbeat exists to separate LIVENESS from STATE. Every test here is
+    /// a fence around that separation: a heartbeat may move `lastHeartbeatAt`
+    /// and nothing else, ever.
+    @Suite struct Heartbeat {
+
+        private func session(_ id: String, in registry: SessionRegistry) -> AgentSession? {
+            registry.sessions.first { $0.id == id }
+        }
+
+        @Test func postToolUseMapsToHeartbeat() throws {
+            let fixture = try HookStdinFixture.load("post_tool_use.json")
+            #expect(SessionRegistry.signal(for: fixture.wireEvent()) == .heartbeat)
+            // The heartbeat carries no argv matcher (plan 02 §1.5).
+            #expect(fixture.raw["matcher"] == nil)
+        }
+
+        @Test func heartbeatRefreshesLivenessWithoutTouchingStateOrLastEventAt() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let prompt = try HookStdinFixture.load("user_prompt_submit.json")
+            registry.ingest(prompt.wireEvent())
+            let before = try #require(session(prompt.sessionID, in: registry))
+            #expect(before.lastHeartbeatAt == nil)
+            #expect(before.livenessAt == clock.now)
+
+            clock.advance(600)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+
+            let after = try #require(session(prompt.sessionID, in: registry))
+            #expect(after.state == .working, "a heartbeat is not a state transition")
+            #expect(after.lastEventAt == before.lastEventAt, "lastEventAt tracks state events only")
+            #expect(after.lastHeartbeatAt == clock.now)
+            #expect(after.livenessAt == clock.now, "liveness is max(lastEventAt, lastHeartbeatAt)")
+            #expect(registry.isHolding())
+        }
+
+        /// The whole point: a genuinely long turn and a `.working` record whose
+        /// Stop was lost look identical on `state` and `lastEventAt`, and are
+        /// told apart by `livenessAt` alone.
+        @Test func longTurnStaysMeasurablyAliveWhileALostStopGoesSilent() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let heartbeatFixture = try HookStdinFixture.load("post_tool_use.json")
+
+            // Two sessions on the SAME ppid — this is the real shape on this
+            // machine: `ppid` is the shared Claude Code application process, so
+            // the PPID sweep can never bound one session on its own.
+            let sharedPPID: Int32 = 1991
+            var live = try HookStdinFixture.load("user_prompt_submit.json").wireEvent(ppid: sharedPPID)
+            live.sessionID = "live-long-turn"
+            var stuck = live
+            stuck.sessionID = "stuck-lost-stop"
+            registry.ingest(live)
+            registry.ingest(stuck)
+            let startedAt = clock.now
+
+            // Three hours. The live session runs a tool every 5 minutes; the
+            // stuck one emits nothing at all.
+            var beat = heartbeatFixture.wireEvent(ppid: sharedPPID)
+            beat.sessionID = "live-long-turn"
+            for _ in 0..<36 {
+                clock.advance(300)
+                registry.ingest(beat)
+            }
+            registry.reconcile()
+
+            let liveSession = try #require(session("live-long-turn", in: registry))
+            let stuckSession = try #require(session("stuck-lost-stop", in: registry))
+            // Indistinguishable on the old axes...
+            #expect(liveSession.state == .working)
+            #expect(stuckSession.state == .working)
+            #expect(liveSession.lastEventAt == stuckSession.lastEventAt)
+            // ...and unambiguous on the new one.
+            #expect(liveSession.livenessAt == clock.now)
+            #expect(stuckSession.livenessAt == startedAt)
+            #expect(clock.now.timeIntervalSince(stuckSession.livenessAt) == 10_800)
+            // Nothing here releases anything: a heartbeat is evidence, not a
+            // decision. Both still hold.
+            #expect(registry.holdingSessions().count == 2)
+        }
+
+        @Test func heartbeatDoesNotPullGraceBackToWorking() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let stop = try HookStdinFixture.load("stop.json")
+            registry.ingest(stop.wireEvent())
+            let deadline = clock.now.addingTimeInterval(180)
+            #expect(state(of: stop.sessionID, in: registry) == .grace(until: deadline))
+
+            clock.advance(30)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+            #expect(state(of: stop.sessionID, in: registry) == .grace(until: deadline),
+                    "a post-Stop tool call must not restart the turn")
+        }
+
+        @Test func heartbeatsInsideGraceDoNotExtendTheDeadline() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let stop = try HookStdinFixture.load("stop.json")
+            registry.ingest(stop.wireEvent())
+            let deadline = clock.now.addingTimeInterval(180)
+            let beat = try HookStdinFixture.load("post_tool_use.json").wireEvent()
+
+            // A heartbeat every 10 s for the whole window (sub-agent tails,
+            // post-Stop cleanup) — the grace window still expires on schedule.
+            // 17 beats keep it inside the 180 s window; the 18th lands exactly
+            // on the deadline, which is half-open, so it is already over.
+            for _ in 0..<17 {
+                clock.advance(10)
+                registry.ingest(beat)
+                registry.reconcile()
+                #expect(state(of: stop.sessionID, in: registry) == .grace(until: deadline))
+                #expect(registry.isHolding())
+            }
+            clock.advance(10)
+            registry.ingest(beat)
+            registry.reconcile()
+            #expect(state(of: stop.sessionID, in: registry) == .idle, "grace expired on wall clock")
+            #expect(!registry.isHolding(), "heartbeats must never keep a hold alive on their own")
+        }
+
+        @Test func heartbeatDoesNotReviveASessionRemovedBySessionEnd() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            registry.ingest(try HookStdinFixture.load("user_prompt_submit.json").wireEvent())
+            registry.ingest(try HookStdinFixture.load("session_end.json").wireEvent())
+            #expect(registry.sessions.isEmpty)
+
+            // A PostToolUse frame still in flight when SessionEnd landed.
+            clock.advance(1)
+            let countBefore = registry.changeCount
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+            #expect(registry.sessions.isEmpty, "an ended session must stay ended")
+            #expect(!registry.isHolding())
+            #expect(registry.changeCount == countBefore, "no write, no persistence churn")
+        }
+
+        @Test func heartbeatDoesNotRegisterUnknownSessions() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let countBefore = registry.changeCount
+
+            // Every other signal auto-registers; this one must not — an
+            // auto-registered heartbeat session could only be .idle, and with
+            // the shared application ppid nothing would ever sweep it away.
+            #expect(registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent()))
+            #expect(registry.sessions.isEmpty)
+            #expect(registry.changeCount == countBefore)
+            #expect(!registry.applyHeartbeat(sessionID: "never-seen"))
+        }
+
+        @Test func heartbeatDoesNotResurrectASessionTheSweepRemoved() throws {
+            let clock = DetectionClock()
+            let liveness = DetectionLiveness()
+            let registry = makeRegistry(clock: clock, liveness: liveness)
+            let prompt = try HookStdinFixture.load("user_prompt_submit.json")
+            registry.ingest(prompt.wireEvent(ppid: 4242))
+            liveness.kill(4242)
+            registry.reconcile()
+            #expect(registry.sessions.isEmpty)
+
+            clock.advance(1)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent(ppid: 4242))
+            #expect(registry.sessions.isEmpty, "the process is gone; a stale frame proves nothing")
+        }
+
+        @Test func heartbeatsWithinTheCoalesceWindowAreDroppedWithoutAWrite() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(heartbeatCoalesceWindow: 5, clock: clock)
+            let prompt = try HookStdinFixture.load("user_prompt_submit.json")
+            registry.ingest(prompt.wireEvent())
+
+            // Coalescing is against livenessAt, so a heartbeat right after a
+            // hook event is just as redundant as one after another heartbeat.
+            clock.advance(1)
+            #expect(!registry.applyHeartbeat(sessionID: prompt.sessionID))
+            #expect(session(prompt.sessionID, in: registry)?.lastHeartbeatAt == nil)
+
+            clock.advance(10)
+            #expect(registry.applyHeartbeat(sessionID: prompt.sessionID))
+            let accepted = clock.now
+            let countAfterFirst = registry.changeCount
+
+            // A burst inside the window: 50 tool calls in 2.5 s, zero writes.
+            for _ in 0..<50 {
+                clock.advance(0.05)
+                #expect(!registry.applyHeartbeat(sessionID: prompt.sessionID))
+            }
+            #expect(registry.changeCount == countAfterFirst, "a busy turn must not thrash sessions.json")
+            #expect(session(prompt.sessionID, in: registry)?.lastHeartbeatAt == accepted)
+
+            // Past the window it lands again, exactly once.
+            clock.advance(5)
+            #expect(registry.applyHeartbeat(sessionID: prompt.sessionID))
+            #expect(registry.changeCount == countAfterFirst &+ 1)
+        }
+
+        @Test func heartbeatNeverMovesLivenessBackwards() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let prompt = try HookStdinFixture.load("user_prompt_submit.json")
+            registry.ingest(prompt.wireEvent())
+            clock.advance(60)
+            #expect(registry.applyHeartbeat(sessionID: prompt.sessionID))
+            let latest = clock.now
+
+            // A frame reordered by the socket, carrying an older instant.
+            #expect(!registry.applyHeartbeat(sessionID: prompt.sessionID, now: latest.addingTimeInterval(-30)))
+            #expect(session(prompt.sessionID, in: registry)?.lastHeartbeatAt == latest)
+        }
+
+        @Test func heartbeatDoesNotLiftAnIdlePromptWaitRefusal() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let idle = try HookStdinFixture.load("notification_idle_prompt.json")
+            registry.ingest(idle.wireEvent(matcher: "idle_prompt"))
+            #expect(state(of: idle.sessionID, in: registry) == .idle)
+
+            // The user is sitting at the prompt; a trailing tool call is not
+            // the agent asking for the Mac to stay awake.
+            clock.advance(10)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+            let refused = registry.applyWaitSignal(
+                WaitSignal(
+                    sessionID: idle.sessionID,
+                    waitUntil: clock.now.addingTimeInterval(600),
+                    source: .scheduleWakeup
+                )
+            )
+            #expect(!refused, "hook authority survives a heartbeat")
+            #expect(!registry.isHolding())
+        }
+
+        @Test func heartbeatOnAnIdleSessionChangesNothingButLiveness() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let start = try HookStdinFixture.load("session_start.json")
+            registry.ingest(start.wireEvent())
+            #expect(!registry.isHolding())
+
+            clock.advance(30)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+            #expect(state(of: start.sessionID, in: registry) == .idle)
+            #expect(!registry.isHolding(), "liveness alone never creates a hold")
+            #expect(session(start.sessionID, in: registry)?.livenessAt == clock.now)
+        }
+
+        @Test func postToolUseIsNoLongerTreatedAsAnUnknownEvent() throws {
+            // Before the heartbeat existed, PostToolUse fell through to
+            // `.unknown`, which refreshes lastEventAt and clears the wait
+            // refusal. Both would have made a heartbeat a statement about state.
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let prompt = try HookStdinFixture.load("user_prompt_submit.json")
+            registry.ingest(prompt.wireEvent())
+            let firstEventAt = clock.now
+
+            clock.advance(120)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+            #expect(session(prompt.sessionID, in: registry)?.lastEventAt == firstEventAt)
+        }
+
+        @Test func lastHeartbeatAtSurvivesPersistenceAndIsOptionalOnDecode() throws {
+            let clock = DetectionClock()
+            let session = AgentSession(
+                id: "s1",
+                agent: .claudeCode,
+                startedAt: clock.now,
+                ppid: 1991,
+                state: .working,
+                lastEventAt: clock.now,
+                lastHeartbeatAt: clock.now.addingTimeInterval(300)
+            )
+            let data = try JSONEncoder().encode(session)
+            #expect(try JSONDecoder().decode(AgentSession.self, from: data) == session)
+
+            // A sessions.json written by a build that predates the field must
+            // still decode — as "no heartbeat heard yet", not as a failure.
+            let json = try JSONSerialization.jsonObject(with: data)
+            var object = try #require(json as? [String: Any])
+            #expect(object["lastHeartbeatAt"] != nil, "non-nil heartbeats are persisted")
+            object.removeValue(forKey: "lastHeartbeatAt")
+            let legacyData = try JSONSerialization.data(withJSONObject: object)
+            let legacy = try JSONDecoder().decode(AgentSession.self, from: legacyData)
+            #expect(legacy.lastHeartbeatAt == nil)
+            #expect(legacy.livenessAt == legacy.lastEventAt)
         }
     }
 
@@ -746,6 +1040,26 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
             #expect(!output.shouldHold)
             #expect(output.holdSources.isEmpty)
             #expect(output.precision[.claudeCode] == .fileActivity, "precision is about capability, not holding")
+        }
+
+        @Test func heartbeatsFlowThroughTheCoordinatorWithoutChangingTheOutput() async throws {
+            let clock = DetectionClock()
+            let coordinator = makeCoordinator(clock: clock)
+            await coordinator.setHooksInstalled(true, for: .claudeCode)
+            await coordinator.ingest(claudeWire(event: "UserPromptSubmit"), now: clock.now)
+            let before = await coordinator.currentOutput()
+            #expect(before.shouldHold)
+
+            clock.advance(600)
+            await coordinator.ingest(claudeWire(event: "PostToolUse"), now: clock.now)
+            let after = await coordinator.currentOutput()
+            #expect(after == before, "a heartbeat is not a hold decision")
+
+            let session = try #require(
+                await coordinator.currentHoldingSessions(now: clock.now).first
+            )
+            #expect(session.state == .working)
+            #expect(session.livenessAt == clock.now, "…but it is recorded")
         }
 
         @Test func l1PriorityRuleIgnoresFileActivityWhilePrecisionIsHooks() async {

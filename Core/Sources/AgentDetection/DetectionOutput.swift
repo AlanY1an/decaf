@@ -4,8 +4,72 @@
 // shapes only. Consumed by the composition root (plan 01 PR-6): holdSources are
 // folded into HoldRequest entries there (fallbackActivity → .agentFallback).
 
+import CaffeinateCore
 import Foundation
 import HookWire
+
+/// How complete an agent's hooks install is (plan 03's probe verdict, as the
+/// detection layer needs it).
+///
+/// The app used to hand this in as a `Bool` — `hooksInstalled && !needsRepair` —
+/// which collapsed "our entries are there but outdated" onto "no hooks at all",
+/// and the reported precision then collapsed with it, down to `.fileActivity`.
+/// An outdated install still delivers every event it has; the three cases are
+/// distinguishable at the source and there is no reason to throw that away
+/// between the probe and the menu.
+public enum HooksInstallState: Sendable, Equatable, Hashable {
+    /// No entries of ours in the agent's config.
+    case absent
+    /// Our entries are present but do not match what this build registers —
+    /// some hooks fire, at least one does not. Maps to
+    /// `DetectionPrecision.hooksPartial`.
+    case outdated
+    /// Every entry this build registers is present and healthy.
+    case complete
+}
+
+extension HooksInstallState {
+
+    /// The probe verdict, unflattened — the one place `IntegrationStatus`
+    /// becomes a precision input.
+    ///
+    /// This mapping is the reason `.hooksPartial` can be reached at all. The
+    /// app used to compute `hooksInstalled && !needsRepair` in the view layer,
+    /// which folded every `broken` reason onto the same `false`; but the
+    /// reasons are not equivalent for detection, and only one of them leaves
+    /// L1 running:
+    ///
+    /// - `.entriesOutdated` — our entries are present and the bridge is in
+    ///   place, so every event the config *does* list still arrives over the
+    ///   socket. Only the entries this build added are missing. That is
+    ///   `.outdated`, and it is the honest middle.
+    /// - `.entriesMissing` — the entries are gone; nothing is delivered.
+    /// - `.bridgeMissing` — the entries are intact but the binary they invoke
+    ///   is not there, so nothing is delivered either. Intact config, dead
+    ///   transport: it reads like a partial install and is in fact a total one,
+    ///   which is exactly why this is decided here over the probe's own reason
+    ///   rather than inferred from "are our entries present".
+    /// - `.trustHashMismatch` / `.notifyConflict` — Codex (V1.x); the hooks are
+    ///   not trusted / the slot is taken, so they do not fire.
+    ///
+    /// Anything short of an actual install (`.detected`, `.notDetected`) is
+    /// `.absent`.
+    public init(probe: IntegrationStatus) {
+        switch probe {
+        case .installed:
+            self = .complete
+        case .broken(_, .entriesOutdated):
+            self = .outdated
+        case .broken(_, .entriesMissing),
+             .broken(_, .bridgeMissing),
+             .broken(_, .trustHashMismatch),
+             .broken(_, .notifyConflict):
+            self = .absent
+        case .detected, .notDetected:
+            self = .absent
+        }
+    }
+}
 
 /// A transcript wait signal currently extending a hold (plan 08).
 ///

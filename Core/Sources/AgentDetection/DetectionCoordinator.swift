@@ -56,7 +56,9 @@ public actor DetectionCoordinator {
     // MARK: Injected dependencies & tuning
 
     private let clock: () -> Date
-    private let gracePeriod: TimeInterval
+    /// Live preference (see `setGracePeriod(_:)`), mirroring the registry's
+    /// clamped value.
+    private var gracePeriod: TimeInterval
     private let l2IdleWindow: TimeInterval
     private let socketDegradeGrace: TimeInterval
     private let sweepInterval: TimeInterval
@@ -86,7 +88,7 @@ public actor DetectionCoordinator {
     /// Watch-root existence per agent (drives §4 precision row 2).
     private var watchRootExists: [AgentKind: Bool] = [:]
     /// HooksInstallationInspector verdict per agent (§4 precision row 1).
-    private var hooksInstalled: [AgentKind: Bool] = [:]
+    private var hooksInstall: [AgentKind: HooksInstallState] = [:]
     /// Socket listener health. Healthy until told otherwise: sessions arriving
     /// before the first health report must not be discounted.
     private var socketHealthy = true
@@ -130,7 +132,6 @@ public actor DetectionCoordinator {
         self.tailReader = tailReader
         self.waitParser = waitParser
         self.userNotifier = userNotifier
-        self.gracePeriod = gracePeriod
         self.l2IdleWindow = l2IdleWindow
         self.socketDegradeGrace = socketDegradeGrace
         self.sweepInterval = sweepInterval
@@ -147,6 +148,8 @@ public actor DetectionCoordinator {
         )
         self.store = store
         self.watcher = watcher
+        // The registry clamps; mirror what it actually took, never what was asked.
+        self.gracePeriod = registry.gracePeriod
 
         var continuation: AsyncStream<DetectionOutput>.Continuation!
         self.updates = AsyncStream { continuation = $0 }
@@ -274,9 +277,45 @@ public actor DetectionCoordinator {
         reconcile(now: now)
     }
 
+    // MARK: Live tuning
+
+    /// Applies the "Release grace period" preference while the app is running.
+    ///
+    /// This is the whole mechanism behind that picker: the value used to be
+    /// fixed at construction, so changing the setting did nothing until the
+    /// next launch — and a menu-bar app that is never quit has no next launch.
+    /// The registry rebases grace windows already in flight, and the reconcile
+    /// below both migrates a window the change just expired and reschedules the
+    /// boundary timer onto the new deadline.
+    public func setGracePeriod(_ seconds: TimeInterval, now: Date? = nil) {
+        let changed = registry.setGracePeriod(seconds)
+        gracePeriod = registry.gracePeriod
+        guard changed else { return }
+        reconcile(now: now ?? clock())
+    }
+
+    /// The grace period currently in force (clamped to the registry's 0–600 s).
+    public var currentGracePeriod: TimeInterval { gracePeriod }
+
     /// HooksInstallationInspector verdict (installed = our entries complete).
+    ///
+    /// Kept as the boolean the composition root already calls; it maps onto the
+    /// richer `HooksInstallState` below (true = `.complete`, false = `.absent`).
     public func setHooksInstalled(_ installed: Bool, for agent: AgentKind, now: Date? = nil) {
-        hooksInstalled[agent] = installed
+        setHooksInstallState(installed ? .complete : .absent, for: agent, now: now)
+    }
+
+    /// How complete this agent's hooks install is (plan 03's probe verdict,
+    /// unflattened). `.outdated` is the case the boolean above could not carry:
+    /// the app used to fold it into `false` and then report `.fileActivity`,
+    /// which claimed the hooks were not delivering anything when in fact all of
+    /// them but the missing entry were.
+    public func setHooksInstallState(
+        _ state: HooksInstallState,
+        for agent: AgentKind,
+        now: Date? = nil
+    ) {
+        hooksInstall[agent] = state
         reconcile(now: now ?? clock())
     }
 
@@ -286,6 +325,10 @@ public actor DetectionCoordinator {
     /// is .hooks the refreshed window deliberately does not participate in the
     /// hold decision (plan 02 §2 L1-priority rule) — it only matters after a
     /// degrade, where the freshest activity instant gives the natural handover.
+    ///
+    /// `.hooksPartial` is the exception the L1-priority rule always implied:
+    /// that rule suppresses the lossy layer because L1 covers everything, and
+    /// an outdated install does not, so there the window stays in play.
     public func noteFileActivity(agent: AgentKind, at date: Date? = nil) {
         let date = date ?? clock()
         if let existing = lastActivityAt[agent], existing >= date { return }
@@ -418,8 +461,13 @@ public actor DetectionCoordinator {
         var precision: [AgentKind: DetectionPrecision] = [:]
         for agent in AgentKind.allCases {
             let current = precisionNow(for: agent, now: now)
-            if lastPrecision[agent] == .hooks,
-               current != .hooks,
+            // Any fall out of (or within) the hooks layer: .hooks → .fileActivity
+            // when the socket dies, and .hooks → .hooksPartial when the install
+            // goes outdated, which is the same handover one layer up — the
+            // fallback window has to be warm before it is the thing holding.
+            if let previous = lastPrecision[agent],
+               previous.deliversHookEvents,
+               current.rank < previous.rank,
                registry.holdingSessions(now: now).contains(where: { $0.agent == agent }) {
                 if (lastActivityAt[agent] ?? .distantPast) < now {
                     lastActivityAt[agent] = now
@@ -442,8 +490,18 @@ public actor DetectionCoordinator {
     // MARK: Precision (plan 02 §4 — first matching row wins, per agent)
 
     private func precisionNow(for agent: AgentKind, now: Date) -> DetectionPrecision {
-        if hooksInstalled[agent] == true, socketEffectivelyHealthy(now: now) {
-            return .hooks
+        if socketEffectivelyHealthy(now: now) {
+            switch hooksInstall[agent] ?? .absent {
+            case .complete:
+                return .hooks
+            case .outdated:
+                // Row 1, honestly: the entries that are installed still deliver.
+                // Falling through to `.fileActivity` here was the bug — it
+                // reported the zero-config fallback for a live L1 layer.
+                return .hooksPartial
+            case .absent:
+                break
+            }
         }
         if watchRootExists[agent] == true {
             return .fileActivity
@@ -477,8 +535,11 @@ public actor DetectionCoordinator {
         var holdSources: [HoldSource] = []
         for agent in AgentKind.allCases {
             switch precision[agent] ?? .unavailable {
-            case .hooks:
+            case .hooks, .hooksPartial:
                 // L1: one hold source per holding session (set semantics).
+                // A holding session already covers a live wait signal
+                // (`AgentSession.isHolding` honours `waitUntil`), so there is
+                // nothing to add for waits here.
                 for session in registry.holdingSessions(now: now) where session.agent == agent {
                     holdSources.append(
                         HoldSource(
@@ -486,6 +547,20 @@ public actor DetectionCoordinator {
                             kind: .session(id: session.id, state: session.state),
                             wait: session.waitInfo(at: now)
                         )
+                    )
+                }
+                // The L1-priority rule (plan 02 §2) suppresses the lossy L2
+                // window only when L1 is COMPLETE. With an outdated install the
+                // missing entries are exactly the events we would otherwise be
+                // relying on, so the fallback window stays in play as a floor:
+                // dropping a hold while an agent works is the failure this
+                // product cannot have, and the window is self-limiting
+                // (`l2IdleWindow`) so it cannot hold anything forever.
+                if precision[agent] == .hooksPartial,
+                   let last = lastActivityAt[agent],
+                   now.timeIntervalSince(last) < l2IdleWindow {
+                    holdSources.append(
+                        HoldSource(agent: agent, kind: .fallbackActivity(lastActivityAt: last))
                     )
                 }
             case .fileActivity, .processOnly:
@@ -552,7 +627,8 @@ public actor DetectionCoordinator {
         for (agent, last) in lastActivityAt {
             let expiry = last.addingTimeInterval(l2IdleWindow)
             if expiry > now,
-               let p = lastPrecision[agent], p == .fileActivity || p == .processOnly {
+               let p = lastPrecision[agent],
+               p == .fileActivity || p == .processOnly || p == .hooksPartial {
                 candidates.append(expiry)
             }
         }

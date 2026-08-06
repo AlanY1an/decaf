@@ -87,6 +87,10 @@ public final class CompositionRoot: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
     private var started = false
+    /// L3 process enumeration, or nil when none was injected (every assembly
+    /// except the app target). Nil means `.whileRunning` can still be delivered
+    /// from hook sessions, and honestly reports `.activityOnly` when it cannot.
+    private let scanner: ProcessScanner?
 
     // MARK: - Init
 
@@ -109,6 +113,14 @@ public final class CompositionRoot: ObservableObject {
         // root and the asserter.
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
+        // Plan 02 §3's L3 enumeration, and the reason `AgentHoldMode.whileRunning`
+        // means what it says without hooks installed. Defaults to nil — no
+        // scanning — for the same reason `userNotifier` does: the real
+        // enumerator reads this machine's actual process table, and a package
+        // that is also linked into `swift test` must not have its results
+        // depend on whether the developer happens to have `claude` open. The
+        // app target injects `DarwinProcessEnumerator()`.
+        processEnumerator: (any ProcessEnumerating)? = nil,
         // The app's only notification channel (plan 04's zero-notification rule
         // narrowed, REVIEW-DECISIONS 2026-08-06). Defaults to nil — silent —
         // because the concrete `UNUserNotificationCenter` adapter needs an
@@ -118,6 +130,7 @@ public final class CompositionRoot: ObservableObject {
     ) {
         self.settings = settings
         self.displaySleeper = displaySleeper
+        self.scanner = processEnumerator.map { ProcessScanner(enumerator: $0) }
 
         let tuning = PowerTuning(
             batteryThreshold: settings.batteryThreshold,
@@ -208,10 +221,56 @@ public final class CompositionRoot: ObservableObject {
             }
         })
 
+        // L3 process scan (plan 02 §3). Only runs while it can tell us
+        // something — `.whileRunning` selected and some agent not delivering
+        // hook events — so a Mac in the default mode, or one with hooks
+        // installed everywhere, pays nothing at all.
+        if scanner != nil {
+            pumpTasks.append(Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    await self.scanProcessesIfUseful()
+                    try? await Task.sleep(
+                        nanoseconds: UInt64(CompositionRoot.processScanInterval * 1_000_000_000)
+                    )
+                }
+            })
+        }
+
         republish()
         return .started
     }
 
+    /// Cadence of the L3 scan (plan 02 §3).
+    ///
+    /// A full 1025-process enumeration measures at 2.69 ms, so this is chosen
+    /// against latency rather than cost: 5 s is how long a user might wait to
+    /// see the menu notice an agent they just closed. It deliberately does NOT
+    /// pull the registry sweep onto its cadence — `noteAgentProcesses` skips
+    /// the reconcile when a scan repeats the previous answer, which is nearly
+    /// always — and it sits an order of magnitude above the CPU sampler's 1 s
+    /// `minimumSampleSpacing`, so scanning cannot starve the stuck detector's
+    /// third witness by sampling it too often to judge.
+    static let processScanInterval: TimeInterval = 5
+
+    /// One scan, if a scan would tell us anything (`ProcessScanner.shouldScan`).
+    ///
+    /// When it would not, nothing is reported — and the coordinator's
+    /// `processScanStaleAfter` then retires the last report on its own. That is
+    /// what makes switching back to `.whileWorking` safe without any explicit
+    /// teardown: a presence hold cannot outlive the scanning that justified it.
+    private func scanProcessesIfUseful() async {
+        guard let scanner,
+              ProcessScanner.shouldScan(mode: holdMode, precision: precision)
+        else { return }
+        let now = Date()
+        // Off the main actor: the enumeration is a syscall loop, and this class
+        // is what the menu reads.
+        let present = await Task.detached(priority: .utility) {
+            scanner.presentAgents(now: now)
+        }.value
+        await coordinator.noteAgentProcesses(present, at: now)
+    }
 
     public func stop() {
         for task in pumpTasks { task.cancel() }
@@ -254,6 +313,15 @@ public final class CompositionRoot: ObservableObject {
         let mode = settings.agentHoldMode
         holdMode = mode
         Task { await coordinator.setHoldMode(mode) }
+        // Scan straight away rather than waiting up to `processScanInterval`.
+        // Without this, the Settings footer would spend the first seconds after
+        // the switch telling the user this Mac cannot see processes — which was
+        // true a moment ago and is about to stop being true. A control that
+        // slanders itself for five seconds is a smaller lie than the one this
+        // feature exists to remove, but it is the same kind.
+        if mode.holdsIdleAgents {
+            Task { [weak self] in await self?.scanProcessesIfUseful() }
+        }
         // The display policy is a setting too: changing it in the settings pane
         // must reach the holds that are already running.
         applyDisplayPolicyToLiveHolds(settings.defaultDisplayPolicy)

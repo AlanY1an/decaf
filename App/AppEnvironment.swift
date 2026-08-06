@@ -439,7 +439,16 @@ final class AppEnvironment {
         // is legal, so the notifier is injected from here rather than defaulted
         // inside the package (see SystemUserNotifier). Constructing it asks the
         // user for nothing — authorization is requested at the first post.
-        let root = CompositionRoot(settings: settingsStore, userNotifier: SystemUserNotifier())
+        // `DarwinProcessEnumerator` is injected from here for the same reason:
+        // it reads this machine's real process table, so the package default is
+        // nil and only the shipping app scans. Without it,
+        // `AgentHoldMode.whileRunning` could only be honoured where hooks are
+        // installed, and would quietly degrade everywhere else.
+        let root = CompositionRoot(
+            settings: settingsStore,
+            processEnumerator: DarwinProcessEnumerator(),
+            userNotifier: SystemUserNotifier()
+        )
         let store = AppStateStore(snapshot: root.snapshot)
 
         let bundledBridgePath = Bundle.main.bundleURL

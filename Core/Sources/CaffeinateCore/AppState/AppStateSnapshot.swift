@@ -131,6 +131,20 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// value; `effectiveDisplayPolicy` is the reality indicator. They differ
     /// while nothing is held, or while a safety gate suspends the hold.
     public var selectedDisplayPolicy: DisplayPolicy
+    /// Whether an AI coding agent has EVER been seen on this Mac — the latch
+    /// persisted in `SettingsStore.hasEverDetectedAgent`, mirrored here because
+    /// the UI is a pure function of this snapshot.
+    ///
+    /// This app is also a plain `caffeinate` replacement: manual keep-awake with
+    /// durations and "Until" is a complete product for someone with no coding
+    /// agent installed, and that user should not be shown agent machinery that
+    /// can do nothing for them. This is the signal the menu keys that decision
+    /// on — see `hasLiveAgentEvidence` for the "right now" half of it and
+    /// `SettingsStore.hasEverDetectedAgent` for why it is a latch.
+    ///
+    /// Never used to hide anything from Settings › Agents. Adapting the menu is
+    /// only defensible while the feature stays discoverable somewhere fixed.
+    public var hasEverDetectedAgent: Bool
 
     /// Whether "Turn Off Display Now" may run. Holding the display assertion
     /// and blanking the display fight each other (the screen would wake right
@@ -162,6 +176,28 @@ public struct AppStateSnapshot: Equatable, Sendable {
         return RunningModeCoverage.summary(of: installed.values)
     }
 
+    /// Whether this snapshot, on its own, is evidence that an agent exists on
+    /// this Mac — the "right now" half of `hasEverDetectedAgent`.
+    ///
+    /// Four independent witnesses, OR-ed rather than reduced to the precision
+    /// map alone. In practice `precision` already covers the other three (a
+    /// session implies hooks, a fallback hold implies a watch root, a
+    /// running-idle agent implies a process match), but "in practice" is not a
+    /// guarantee, and the failure this guards against is asymmetric: a missed
+    /// witness withholds a control from someone who needs it, while a redundant
+    /// one costs nothing.
+    ///
+    /// `.unavailable` is filtered out because the detection layer publishes a
+    /// precision entry for every agent kind it knows how to look for, installed
+    /// or not; reading the map's mere non-emptiness would make every Mac look
+    /// agent-equipped.
+    public var hasLiveAgentEvidence: Bool {
+        !agentSessions.isEmpty
+            || !fallbackAgents.isEmpty
+            || !runningIdleAgents.isEmpty
+            || precision.values.contains { $0 != .unavailable }
+    }
+
     public init(
         manual: ManualState? = nil,
         agentSessions: [AgentSessionSummary] = [],
@@ -174,7 +210,8 @@ public struct AppStateSnapshot: Equatable, Sendable {
         runningModeCoverage: [AgentKind: RunningModeCoverage] = [:],
         wantsHold: Bool = false,
         effectiveDisplayPolicy: DisplayPolicy = .allowSleep,
-        selectedDisplayPolicy: DisplayPolicy = .allowSleep
+        selectedDisplayPolicy: DisplayPolicy = .allowSleep,
+        hasEverDetectedAgent: Bool = false
     ) {
         self.manual = manual
         self.agentSessions = agentSessions
@@ -188,5 +225,6 @@ public struct AppStateSnapshot: Equatable, Sendable {
         self.wantsHold = wantsHold
         self.effectiveDisplayPolicy = effectiveDisplayPolicy
         self.selectedDisplayPolicy = selectedDisplayPolicy
+        self.hasEverDetectedAgent = hasEverDetectedAgent
     }
 }

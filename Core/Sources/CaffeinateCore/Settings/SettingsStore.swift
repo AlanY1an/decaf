@@ -26,6 +26,8 @@ public enum SettingsKey {
     public static let defaultDisplayPolicy = "defaultDisplayPolicy"
     /// `AgentHoldMode.rawValue`. Default "whileWorking".
     public static let agentHoldMode = "agentHoldMode"
+    /// Latch: has an AI coding agent ever been seen on this Mac. Default false.
+    public static let hasEverDetectedAgent = "hasEverDetectedAgent"
 }
 
 /// Typed access to Caffeinate's persisted settings.
@@ -136,6 +138,36 @@ public final class SettingsStore {
             return mode
         }
         set { defaults.set(newValue.rawValue, forKey: SettingsKey.agentHoldMode) }
+    }
+
+    /// Whether an AI coding agent has EVER been seen on this Mac — a latch, not
+    /// a status.
+    ///
+    /// This app is two products in one bundle: the agent-aware keep-awake tool,
+    /// and a plain `caffeinate` replacement for someone who has never installed
+    /// a coding agent. The menu adapts to the second case by leaving out the
+    /// agent controls, and that adaptation needs a signal that CANNOT flap —
+    /// watching a menu row appear and vanish as sessions come and go, or as a
+    /// probe times out, would be worse than the row a user does not need.
+    ///
+    /// Hence a latch, and hence a persisted one:
+    ///
+    /// - **Monotonic.** Nothing sets it back to false. No session ending, no
+    ///   agent being closed, no socket rebuild and no failed probe can take a
+    ///   control away from a user who has one.
+    /// - **Persisted.** The hooks probe is asynchronous and can take upwards of
+    ///   ten seconds (it may end in a login shell). Without persistence, every
+    ///   launch would show the agentless menu for that window to a user who
+    ///   plainly has an agent — a flap on exactly the surface that must not
+    ///   flap.
+    ///
+    /// The cost is the other direction: a user who removes their agent keeps
+    /// the agent control forever. That asymmetry is deliberate. Showing a
+    /// control someone no longer needs costs one menu line; hiding a control
+    /// someone does need costs them the feature.
+    public var hasEverDetectedAgent: Bool {
+        get { defaults.bool(forKey: SettingsKey.hasEverDetectedAgent) }
+        set { defaults.set(newValue, forKey: SettingsKey.hasEverDetectedAgent) }
     }
 
     /// Whether first-run onboarding has been completed.

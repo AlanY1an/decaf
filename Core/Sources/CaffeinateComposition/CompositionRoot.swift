@@ -86,6 +86,10 @@ public final class CompositionRoot: ObservableObject {
     private var holdMode: AgentHoldMode = SettingsStore.Defaults.agentHoldMode
     private var runningModeCoverage: [AgentKind: RunningModeCoverage] = [:]
     private var precision: [AgentKind: DetectionPrecision] = [:]
+    /// In-memory mirror of `SettingsStore.hasEverDetectedAgent`, so the latch is
+    /// read once at init and written exactly once — `republish()` runs on every
+    /// engine settle and must not touch UserDefaults on each one.
+    private var everDetectedAgent: Bool
 
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
@@ -134,6 +138,7 @@ public final class CompositionRoot: ObservableObject {
         self.settings = settings
         self.displaySleeper = displaySleeper
         self.scanner = processEnumerator.map { ProcessScanner(enumerator: $0) }
+        self.everDetectedAgent = settings.hasEverDetectedAgent
 
         let tuning = PowerTuning(
             batteryThreshold: settings.batteryThreshold,
@@ -353,6 +358,25 @@ public final class CompositionRoot: ObservableObject {
         Task { await coordinator.setHooksInstallState(state, for: agent) }
     }
 
+    /// The integrations probe found this agent installed on this Mac.
+    ///
+    /// A separate entry point from the detection layer's own evidence because
+    /// it answers a question the detection layer cannot: the probe locates the
+    /// agent's BINARY, so it can say yes on a Mac where the agent is installed
+    /// but has never been run — no `~/.claude` to watch, no process to match,
+    /// no hooks, and therefore `DetectionPrecision.unavailable` across the
+    /// board. Without this, that user's menu would be missing the hold-mode
+    /// control until the first time they actually started an agent.
+    ///
+    /// One-way, and idempotent: see `SettingsStore.hasEverDetectedAgent`.
+    public func noteAgentDetected(_ agent: AgentKind) {
+        guard !everDetectedAgent else { return }
+        everDetectedAgent = true
+        settings.hasEverDetectedAgent = true
+        logger.log("agent detected for the first time: \(agent.rawValue, privacy: .public)")
+        republish()
+    }
+
     // MARK: - DetectionOutput -> HoldRequest glue (R11 seam 1)
 
     /// Internal rather than private so tests can drive the real glue with a
@@ -488,7 +512,7 @@ public final class CompositionRoot: ObservableObject {
             }
         }
 
-        let newSnapshot = AppStateSnapshot(
+        var newSnapshot = AppStateSnapshot(
             manual: manualState,
             agentSessions: sessionSummaries,
             fallbackAgents: fallbackAgents,
@@ -500,8 +524,18 @@ public final class CompositionRoot: ObservableObject {
             runningModeCoverage: runningModeCoverage,
             wantsHold: !engine.activeSources.isEmpty,
             effectiveDisplayPolicy: engine.effectiveDisplayPolicy,
-            selectedDisplayPolicy: settings.defaultDisplayPolicy
+            selectedDisplayPolicy: settings.defaultDisplayPolicy,
+            hasEverDetectedAgent: everDetectedAgent
         )
+        // The latch, closed here rather than at each of the four places evidence
+        // arrives: `hasLiveAgentEvidence` is defined on the snapshot, so this
+        // reads the assembled state instead of re-deriving the predicate — and
+        // every path that can produce agent evidence ends in a republish.
+        if !everDetectedAgent, newSnapshot.hasLiveAgentEvidence {
+            everDetectedAgent = true
+            settings.hasEverDetectedAgent = true
+            newSnapshot.hasEverDetectedAgent = true
+        }
         if newSnapshot != snapshot {
             snapshot = newSnapshot
         }

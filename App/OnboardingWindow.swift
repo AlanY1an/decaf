@@ -146,6 +146,26 @@ private struct OnboardingView: View {
                 systemImage: "cursorarrow.click"
             )
             .font(.callout.bold())
+
+            // The one moment the user is actually hunting for the icon. On a
+            // crowded bar — and on a notched Mac especially — a new item can
+            // land somewhere unreachable, and the author's own first launch
+            // ended with him unable to find it. Two facts fix that: where to
+            // look, and the ⌘-drag nobody is ever told about. The second line
+            // is the escape hatch, and it is the reason relaunching the app now
+            // opens Settings instead of showing an alert.
+            VStack(alignment: .leading, spacing: 4) {
+                Label(
+                    "The icon is the small cup up in the menu bar, near the clock. Hold \u{2318} and drag any menu bar icon to move it — that is how you rescue one that landed somewhere awkward.",
+                    systemImage: "arrow.left.arrow.right"
+                )
+                Label(
+                    "Can't find it? Open Caffeinate again and its Settings window comes to you.",
+                    systemImage: "gearshape"
+                )
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 

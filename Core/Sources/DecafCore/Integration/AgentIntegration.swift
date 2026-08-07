@@ -35,6 +35,18 @@ public enum BrokenReason: String, Codable, Equatable, Sendable {
     /// normal idempotent `install()`; we never rewrite the file behind the
     /// user's back.
     case entriesOutdated
+    /// Entries left behind by this app under its FORMER name: their command
+    /// points into `~/Library/Application Support/Caffeinate`, the directory the
+    /// 2026-08-07 Caffeinate → Decaf rename retired.
+    ///
+    /// Kept apart from `entriesOutdated` because the two differ in the one way
+    /// that matters to detection: an outdated entry set still delivers the
+    /// events it lists, while every one of these fails to exec and delivers
+    /// nothing. Worse, it does so **silently** — Claude Code does not report a
+    /// hook that fails to exec, so without this reason the app would show a
+    /// healthy install while running on file activity alone. Repair rewrites
+    /// the commands in place; Uninstall Hooks removes them.
+    case entriesFromRetiredName
     /// The bridge binary is not at its expected App Support location.
     case bridgeMissing
     /// Codex only: hooks.json changed but `[hooks.state]` hash did not follow.

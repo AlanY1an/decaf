@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import DecafCore
+@testable import AgentDetection
 import HookWire
 
 // MARK: - Test doubles
@@ -1024,4 +1025,263 @@ private func randomValue(depth: Int, using rng: inout SeededGenerator) -> Any {
         }
     }
 
+    // MARK: - The Caffeinate → Decaf rename (2026-08-07)
+
+    /// The one upgrade path that breaks in complete silence.
+    ///
+    /// Anyone who ran a pre-rename build has eight hook entries in their real
+    /// `~/.claude/settings.json` whose command is
+    /// `"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge"`. The
+    /// rename deleted that path. Claude Code does not report a hook that fails
+    /// to exec, so the events just stop: no error, no dialog, no log line —
+    /// detection silently drops to file activity and the user is told nothing.
+    ///
+    /// Every test here exists to make that failure loud instead.
+    @Suite struct RetiredNameMigration {
+
+        /// The author's actual file, transcribed from
+        /// `~/.claude/settings.json` on 2026-08-07, with user-owned
+        /// configuration put back around it. Note that the event set is the
+        /// CURRENT one — `PostToolUse` included — so nothing about it is
+        /// "outdated"; every slot is filled, and every command is dead.
+        static let retiredNameSettingsJSON = #"""
+        {
+          "model": "opus",
+          "statusLine": { "type": "command", "command": "~/bin/statusline.sh" },
+          "hooks": {
+            "SessionStart": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "PostToolUse": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "Stop": [
+              { "hooks": [ { "type": "command", "command": "echo user-stop", "timeout": 30 } ] },
+              { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] }
+            ],
+            "StopFailure": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "SessionEnd": [ { "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\"", "timeout": 5 } ] } ],
+            "Notification": [
+              { "matcher": "permission_prompt", "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\" permission_prompt", "timeout": 5 } ] },
+              { "matcher": "idle_prompt", "hooks": [ { "type": "command", "command": "\"$HOME/Library/Application Support/Caffeinate/bin/caff-bridge\" idle_prompt", "timeout": 5 } ] }
+            ],
+            "PreToolUse": [
+              { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/bin/audit-bash.sh" } ] }
+            ]
+          }
+        }
+        """#
+
+        /// What the file above reduces to once every entry of ours — written
+        /// under either name — has been filtered out.
+        static let userOnlySettingsJSON = #"""
+        {
+          "model": "opus",
+          "statusLine": { "type": "command", "command": "~/bin/statusline.sh" },
+          "hooks": {
+            "Stop": [
+              { "hooks": [ { "type": "command", "command": "echo user-stop", "timeout": 30 } ] }
+            ],
+            "PreToolUse": [
+              { "matcher": "Bash", "hooks": [ { "type": "command", "command": "~/bin/audit-bash.sh" } ] }
+            ]
+          }
+        }
+        """#
+
+        static let retiredCommand =
+            #""$HOME/Library/Application Support/Caffeinate/bin/caff-bridge""#
+
+        /// The trap this whole suite is built around: counting occupied slots
+        /// says the install is perfect. All eight are filled, the shapes are
+        /// exactly what we write, and not one of them can run.
+        @Test func aFullyRetiredFileMustNotReadAsAHealthyInstall() throws {
+            let settings = try jsonObject(Self.retiredNameSettingsJSON)
+
+            // The mistake, spelled out so it cannot be reintroduced: the naive
+            // check passes.
+            #expect(ClaudeSettingsEditor.retiredEntryKeys(in: settings)
+                == ClaudeSettingsEditor.expectedEntryKeys,
+                "every slot the current build installs is occupied — by a dead command")
+
+            // And the real verdict does not.
+            #expect(!ClaudeSettingsEditor.ourEntriesComplete(in: settings))
+            #expect(ClaudeSettingsEditor.installedEntryKeys(in: settings).isEmpty,
+                    "a retired entry is an EMPTY slot for merge and integrity purposes")
+
+            guard case .retiredName(let entries, let missing) =
+                ClaudeSettingsEditor.integrity(of: settings)
+            else {
+                Issue.record("expected .retiredName, got \(ClaudeSettingsEditor.integrity(of: settings))")
+                return
+            }
+            #expect(Set(entries) == ClaudeSettingsEditor.expectedEntryKeys)
+            #expect(Set(missing) == ClaudeSettingsEditor.expectedEntryKeys)
+        }
+
+        /// `.retiredName` outranks every other verdict. A file that is *both*
+        /// retired and short a slot must not be reported as merely outdated —
+        /// repairing the missing slot alone would leave seven dead commands.
+        @Test func retiredOutranksOutdatedAndDamaged() throws {
+            var settings = try jsonObject(Self.retiredNameSettingsJSON)
+            var hooks = try #require(settings["hooks"] as? [String: Any])
+            hooks.removeValue(forKey: "PostToolUse")
+            settings["hooks"] = hooks
+
+            guard case .retiredName(let entries, let missing) =
+                ClaudeSettingsEditor.integrity(of: settings)
+            else {
+                Issue.record("a retired install missing a slot is still retired first")
+                return
+            }
+            #expect(entries.count == ClaudeSettingsEditor.expectedEntryKeys.count - 1)
+            #expect(Set(missing) == ClaudeSettingsEditor.expectedEntryKeys)
+        }
+
+        /// The probe reason, and the detection consequence that hangs off it.
+        @Test func probeReportsRepairAndDetectionCallsItAbsent() throws {
+            let harness = Harness()
+            harness.writeSettings(Self.retiredNameSettingsJSON)
+            // The new App Support dir does not exist yet — this is a machine
+            // that upgraded, so there is no manifest and no bridge either.
+            let probe = harness.makeIntegration().probe()
+
+            #expect(probe == .broken(.claudeHooks, .entriesFromRetiredName))
+            #expect(harness.fs.files[harness.paths.claudeSettingsFile]
+                == Data(Self.retiredNameSettingsJSON.utf8),
+                "probe is read-only — the app asks, the user clicks")
+
+            // `.absent`, never `.outdated`: nothing at all is being delivered,
+            // so claiming the honest middle would claim a live L1 layer for a
+            // socket that no process can reach.
+            #expect(HooksInstallState(probe: probe) == .absent)
+        }
+
+        /// Repair rewrites the commands where they stand.
+        @Test func repairRewritesTheCommandsInPlaceWithoutDuplicating() throws {
+            let harness = Harness()
+            harness.writeSettings(Self.retiredNameSettingsJSON)
+            let integration = harness.makeIntegration()
+
+            _ = try integration.install()
+            #expect(integration.probe() == .installed(.claudeHooks))
+
+            let repaired = try harness.settingsObject()
+            #expect(ClaudeSettingsEditor.retiredEntryKeys(in: repaired).isEmpty)
+            #expect(ClaudeSettingsEditor.ourEntriesComplete(in: repaired))
+
+            // Rewritten, not deleted-and-re-appended: every array is the length
+            // it was, and our Stop entry is still the SECOND one, after the
+            // user's.
+            for event in ["SessionStart", "UserPromptSubmit", "PostToolUse", "StopFailure", "SessionEnd"] {
+                #expect(eventArray(repaired, event).count == 1, "\(event) gained a duplicate")
+            }
+            #expect(eventArray(repaired, "Notification").count == 2)
+            let stop = eventArray(repaired, "Stop")
+            #expect(stop.count == 2)
+            let userStop = try #require(stop.first as? [String: Any])
+            #expect((userStop["hooks"] as? [[String: Any]])?.first?["command"] as? String == "echo user-stop",
+                    "the user's own hook keeps its position")
+
+            // The argv that tells the two Notification entries apart survives.
+            let notification = eventArray(repaired, "Notification").compactMap { $0 as? [String: Any] }
+            let byMatcher = Dictionary(
+                uniqueKeysWithValues: notification.map { ($0["matcher"] as? String ?? "", $0) }
+            )
+            for matcher in ClaudeSettingsEditor.notificationMatchers {
+                let entry = try #require(byMatcher[matcher])
+                let hook = try #require((entry["hooks"] as? [[String: Any]])?.first)
+                #expect(hook["command"] as? String
+                    == ClaudeSettingsEditor.quotedBridgeCommand + " " + matcher)
+                #expect(hook["timeout"] as? Int == 5, "the fuse is carried over")
+            }
+
+            // Nothing the user owns moved.
+            #expect(repaired["model"] as? String == "opus")
+            #expect(ClaudeSettingsEditor.semanticallyEqual(
+                ["s": try #require(repaired["statusLine"])],
+                ["s": try #require(try jsonObject(Self.retiredNameSettingsJSON)["statusLine"])]
+            ))
+            #expect(eventArray(repaired, "PreToolUse").count == 1)
+
+            // Idempotent: repairing an already-repaired file writes the same bytes.
+            let afterRepair = harness.fs.files[harness.paths.claudeSettingsFile]
+            harness.clock.advance(60)
+            _ = try integration.install()
+            #expect(harness.fs.files[harness.paths.claudeSettingsFile] == afterRepair)
+        }
+
+        /// The app must be able to clean up after its former self. If uninstall
+        /// does not recognise the retired marker, those eight entries stay in
+        /// the user's settings.json forever — nothing else on the machine knows
+        /// what they are.
+        @Test func uninstallRemovesEntriesLeftByTheRetiredName() throws {
+            let harness = Harness()
+            harness.writeSettings(Self.retiredNameSettingsJSON)
+            let integration = harness.makeIntegration()
+
+            // No manifest: this machine installed under the old name, so the
+            // record lives in the retired App Support directory we no longer read.
+            try integration.uninstall()
+
+            let cleaned = try harness.settingsObject()
+            #expect(ClaudeSettingsEditor.semanticallyEqual(cleaned, try jsonObject(Self.userOnlySettingsJSON)))
+            #expect(ClaudeSettingsEditor.integrity(of: cleaned) == .absent)
+            #expect(!ClaudeSettingsEditor.containsAnyOfOurEntries(cleaned))
+        }
+
+        /// `containsAnyOfOurEntries` is the manifest-lost fallback. A retired
+        /// entry is still ours, so it must answer yes.
+        @Test func theManifestLostFallbackStillRecognisesUs() throws {
+            #expect(ClaudeSettingsEditor.containsAnyOfOurEntries(
+                try jsonObject(Self.retiredNameSettingsJSON)
+            ))
+        }
+
+        /// Migration is pure, converges, and leaves a file with nothing to
+        /// migrate strictly alone.
+        @Test func migrationConvergesAndIsANoOpWhenThereIsNothingToDo() throws {
+            let settings = try jsonObject(Self.retiredNameSettingsJSON)
+            let once = ClaudeSettingsEditor.migratingRetiredEntries(in: settings)
+            let twice = ClaudeSettingsEditor.migratingRetiredEntries(in: once)
+            #expect(ClaudeSettingsEditor.semanticallyEqual(once, twice))
+            #expect(ClaudeSettingsEditor.retiredEntryKeys(in: once).isEmpty)
+
+            // A current-name file, and a file with no hooks at all, pass through.
+            let current = try ClaudeSettingsEditor.merge(ourEntriesInto: [:])
+            #expect(ClaudeSettingsEditor.semanticallyEqual(
+                ClaudeSettingsEditor.migratingRetiredEntries(in: current), current
+            ))
+            let plain = try jsonObject(#"{"model":"opus"}"#)
+            #expect(ClaudeSettingsEditor.semanticallyEqual(
+                ClaudeSettingsEditor.migratingRetiredEntries(in: plain), plain
+            ))
+        }
+
+        /// The path is rebuilt rather than patched, because the binary was
+        /// renamed too: `caff-` only ever existed to dodge `/usr/bin/caffeinate`
+        /// (plan 06 §9), and `decaf` has no such collision. A directory-only
+        /// substitution would leave the command pointing at `caff-bridge`.
+        @Test func theBinaryNameIsRewrittenNotJustTheDirectory() throws {
+            let migrated = try #require(ClaudeSettingsEditor.migratedCommand(Self.retiredCommand))
+            #expect(migrated == ClaudeSettingsEditor.quotedBridgeCommand)
+            #expect(!migrated.contains("caff-bridge"))
+            #expect(!migrated.contains("Caffeinate"))
+
+            #expect(ClaudeSettingsEditor.migratedCommand(Self.retiredCommand + " idle_prompt")
+                == ClaudeSettingsEditor.quotedBridgeCommand + " idle_prompt")
+
+            // Not ours → left alone.
+            #expect(ClaudeSettingsEditor.migratedCommand("echo user-stop") == nil)
+            #expect(ClaudeSettingsEditor.migratedCommand(ClaudeSettingsEditor.quotedBridgeCommand) == nil)
+            // The SYSTEM command is not our retired name and must never match.
+            #expect(ClaudeSettingsEditor.migratedCommand("/usr/bin/caffeinate -i -- sleep 1") == nil)
+        }
+
+        /// The unquoted flat shape: never something we wrote, but a dead
+        /// command is still worth repairing rather than stepping over.
+        @Test func theUnquotedFlatShapeIsAlsoRewritten() throws {
+            let unquoted = "$HOME/Library/Application Support/Caffeinate/bin/caff-bridge idle_prompt"
+            let migrated = try #require(ClaudeSettingsEditor.migratedCommand(unquoted))
+            #expect(migrated == "$HOME/Library/Application Support/Decaf/bin/decaf-bridge idle_prompt")
+            #expect(ClaudeSettingsEditor.migratedCommand(migrated) == nil, "converges")
+        }
+    }
 }

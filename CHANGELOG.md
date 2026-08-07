@@ -1,18 +1,55 @@
 <!--
   Drafted 2026-08-06 from the actual git history (51 commits, 300403d..e8dd80c),
-  not from the plans. Two things still need an author decision before this file
+  not from the plans. One thing still needs an author decision before this file
   can be published:
 
     1. The release date on the 0.1.0 heading. Replace the word "Unreleased"
        with an ISO date on tag day (AUTHOR DECISION 7 — launch date).
-    2. OWNER-TBD / REPO-TBD in the link references at the bottom
-       (AUTHOR DECISIONS 1 and 3 — GitHub owner and repo name casing).
-       Same placeholders, same meaning, as in README.md.
 
-  The test counts (568 in 89 suites for Core, 76 in 12 suites for the app
-  bundle) come from `swift test --package-path Core` and `xcodebuild … test`,
-  and they move with almost every commit — Core read 556/88 a few hours before
-  this draft. Re-run both and update the numbers on tag day.
+  The GitHub owner and repo name are no longer open: the link references at the
+  bottom point at AlanY1an/decaf, frozen on 2026-08-07 with the
+  Caffeinate → Decaf rename.
+
+  THREE THINGS TO DO ON THIS MAC, ONCE, IN THIS ORDER. Not changelog entries —
+  the former name never shipped, so you are the only person who will ever do
+  this. Verified against the machine on 2026-08-07; the order matters, and
+  doing step 3 first is what breaks detection silently.
+
+  1. QUIT THE PRE-RENAME BUILD THAT IS STILL RUNNING. As of 2026-08-07 12:28 a
+     Debug Caffeinate.app out of DerivedData (started 11:39) was still alive,
+     still holding a real PreventUserIdleSystemSleep assertion named
+     "Caffeinate" in `pmset -g assertions`, still bound to
+     `.../Caffeinate/agent.sock`, and still being fed by your hooks — the old
+     `caff-bridge` binary has not gone anywhere, so every hook still fires and
+     still lands in the OLD app. That is why nothing looks broken yet. Quit it
+     (and delete its DerivedData) before running the renamed build, or two
+     copies will hold assertions against each other.
+
+  2. REPAIR THE HOOKS from the new build: Settings → Agents → "Repair Hooks…".
+     Your eight entries in ~/.claude/settings.json still point at the retired
+     `.../Caffeinate/bin/caff-bridge`. Once step 1 removes the process that was
+     answering them, those commands deliver into nothing — and Claude Code does
+     not report a hook that fails, so detection would fall back to file activity
+     without a word. The probe now names this (`entriesFromRetiredName`) and
+     repair rewrites the commands in place, keeping your own hooks untouched.
+
+  3. ONLY THEN, remove the retired directory:
+
+       rm -rf ~/Library/Application\ Support/Caffeinate
+
+     Deliberately not automated. It holds `backups/` — the installer's copies of
+     YOUR ~/.claude/settings.json — and deleting a user's backups on their
+     behalf is not a thing an app gets to do. The rest of it is inert once
+     step 2 is done: `sessions.json` is live state rebuilt within one turn,
+     `agent.sock` is a socket with nothing on it, and `integrations.json` is a
+     manifest the app no longer needs (it repairs from the markers in
+     settings.json instead). Look in `backups/` first, then remove it.
+
+  The test counts (553 in 78 suites for Core, 93 in 15 suites for the app
+  bundle — both re-run 2026-08-07 after the rename) come from
+  `swift test --package-path Core` and `xcodebuild … test`, and they move with
+  almost every commit — Core read 556/88 and then 568/89 on 2026-08-06.
+  Re-run both and update the numbers on tag day.
 
   A verification pass on 2026-08-06 re-traced every claim here to the source and
   corrected three: the low-battery gate does NOT spare an already-running manual
@@ -33,7 +70,7 @@
 
 # Changelog
 
-All notable changes to Caffeinate will be documented in this file.
+All notable changes to Decaf will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -116,17 +153,17 @@ Requires macOS 14 or later.
   a log line cannot structurally carry a transcript excerpt.
 - **No network access of any kind.** No telemetry, no crash reporter, no
   analytics, no update check; there is no `URLSession` in the app or the core.
-- **`caff-bridge`**, the hook helper the installed entries invoke, talking to
-  the app over a unix socket in Application Support, plus `caff-smoke` for
+- **`decaf-bridge`**, the hook helper the installed entries invoke, talking to
+  the app over a unix socket in Application Support, plus `decaf-smoke` for
   exercising assertions by hand.
 - **Build, release and test tooling.** `Scripts/bootstrap.sh` (XcodeGen),
   `run.sh`, `bench-bridge.sh`, `check-bridge.sh`, `set-appicon.sh`, and
   `release.sh` for the archive → sign → DMG → notarize → staple pipeline. CI
   runs two jobs: build and test the `Core` package, and generate the Xcode
-  project, build the app unsigned, and check the embedded `caff-bridge`. CI
+  project, build the app unsigned, and check the embedded `decaf-bridge`. CI
   never signs, never notarizes and never publishes.
-- **568 tests in 89 suites** over the power engine, the session state machine,
-  the transcript parser and the hooks installer, plus **76 tests in 12 suites**
+- **553 tests in 78 suites** over the power engine, the session state machine,
+  the transcript parser and the hooks installer, plus **93 tests in 15 suites**
   over the app's menu and icon formatting. `Core` is a plain Swift package with
   no AppKit dependency, and the app bundle is a logic-test target with no test
   host, which is what makes both testable without launching anything.
@@ -153,6 +190,6 @@ scheduled time windows; automatic updates (Sparkle), so a DMG installed at
 0.1.0 has no update channel; clamshell / lid-closed keep-awake; and any
 Mac App Store build, which the sandbox makes permanently impossible.
 
-<!-- Fill OWNER-TBD and REPO-TBD together with the same placeholders in README.md. -->
-[Unreleased]: https://github.com/OWNER-TBD/REPO-TBD/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/OWNER-TBD/REPO-TBD/releases/tag/v0.1.0
+<!-- Owner and repo frozen 2026-08-07; keep in step with the same links in README.md. -->
+[Unreleased]: https://github.com/AlanY1an/decaf/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.1.0

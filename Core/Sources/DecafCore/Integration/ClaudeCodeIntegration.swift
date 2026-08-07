@@ -183,6 +183,12 @@ public final class ClaudeCodeIntegration: AgentIntegration, @unchecked Sendable 
             // previous build's event set. The Agents pane offers Repair — we do
             // not silently rewrite a file the user owns.
             return .broken(mode, .entriesOutdated)
+        case .retiredName:
+            // Entries from before the Caffeinate → Decaf rename. Every one of
+            // them invokes a path that is gone, and a hook that fails to exec
+            // is silent, so this must never be reported as an install however
+            // complete the slot coverage looks. Repair migrates them.
+            return .broken(mode, .entriesFromRetiredName)
         case .damaged:
             return .broken(mode, .entriesMissing)
         case .absent:
@@ -238,7 +244,13 @@ public final class ClaudeCodeIntegration: AgentIntegration, @unchecked Sendable 
         // Parse first: an invalid settings.json aborts the whole install with
         // every file untouched (plan 03 §3.1 write discipline).
         let existingSettings = try editor.readJSONObject(atPath: paths.claudeSettingsFile)
-        let merged = try ClaudeSettingsEditor.merge(ourEntriesInto: existingSettings ?? [:])
+        // Migrate before merging. Entries written under the retired name occupy
+        // the slots we are about to fill; rewriting their command in place
+        // repairs them without appending a second, duplicate set beside the
+        // dead one. Merge then sees the migrated entries as already present and
+        // stays idempotent. A no-op when there is nothing from the old name.
+        let migrated = ClaudeSettingsEditor.migratingRetiredEntries(in: existingSettings ?? [:])
+        let merged = try ClaudeSettingsEditor.merge(ourEntriesInto: migrated)
 
         // 1. Bridge: bundle Helpers → fixed App Support landing spot.
         guard fileSystem.fileExists(atPath: configuration.bundledBridgePath) else {

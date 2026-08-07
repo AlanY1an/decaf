@@ -49,6 +49,11 @@ extension HooksInstallState {
     ///   transport: it reads like a partial install and is in fact a total one,
     ///   which is exactly why this is decided here over the probe's own reason
     ///   rather than inferred from "are our entries present".
+    /// - `.entriesFromRetiredName` — the same shape as `.bridgeMissing` and for
+    ///   the same reason: the entries are there, complete, well-formed, and
+    ///   every one of them execs a path the Caffeinate → Decaf rename deleted.
+    ///   `.absent`, not `.outdated` — treating it as the honest middle would
+    ///   claim a live L1 layer for a socket nothing can reach.
     /// - `.trustHashMismatch` / `.notifyConflict` — Codex (V1.x); the hooks are
     ///   not trusted / the slot is taken, so they do not fire.
     ///
@@ -62,6 +67,7 @@ extension HooksInstallState {
             self = .outdated
         case .broken(_, .entriesMissing),
              .broken(_, .bridgeMissing),
+             .broken(_, .entriesFromRetiredName),
              .broken(_, .trustHashMismatch),
              .broken(_, .notifyConflict):
             self = .absent

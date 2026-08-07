@@ -44,6 +44,23 @@ public protocol AppCommands: AnyObject {
     /// persisted as the default for the next hold.
     func setDisplayPolicy(_ policy: DisplayPolicy)
 
+    /// Turns agent auto keep-awake on or off, and persists the choice.
+    ///
+    /// On (the default) is the product: the Mac stays awake while an agent is
+    /// working. Off makes this a plain keep-awake utility — agents are ignored
+    /// and only the manual controls hold anything.
+    ///
+    /// Switching OFF is immediate and unconditional: every agent-derived hold is
+    /// released on the spot, with no release grace window. The grace window
+    /// exists to absorb the gap between two turns of an agent the user still
+    /// wants held; a user who just said they do not want this at all is not in
+    /// that gap, and making them wait three minutes for a switch they flipped
+    /// would teach them the switch does not work.
+    ///
+    /// Manual holds are untouched in both directions — this switch has no
+    /// opinion about a hold the user started by hand.
+    func setAgentAutoKeepAwake(_ enabled: Bool)
+
     /// Blanks the display immediately (`pmset displaysleepnow`).
     ///
     /// Refused — logged, no process launched — while

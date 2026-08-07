@@ -109,6 +109,15 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// Never used to hide anything from Settings › Agents. Adapting the menu is
     /// only defensible while the feature stays discoverable somewhere fixed.
     public var hasEverDetectedAgent: Bool
+    /// Whether agent detection is allowed to keep this Mac awake — the user's
+    /// choice, mirrored from `SettingsStore.agentAutoKeepAwake` so the UI stays
+    /// a pure function of this snapshot.
+    ///
+    /// The same rule `selectedDisplayPolicy` follows: this is the CHOICE, and
+    /// the menu's check mark reads it. Unlike that pair there is no "effective"
+    /// counterpart, because switching this off has no delayed half — the holds
+    /// go immediately (see `CompositionRoot.setAgentAutoKeepAwake`).
+    public var agentAutoKeepAwake: Bool
 
     /// Whether "Turn Off Display Now" may run. Holding the display assertion
     /// and blanking the display fight each other (the screen would wake right
@@ -121,6 +130,33 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// nil when the action is available; otherwise the user-facing reason.
     public var turnOffDisplayUnavailableReason: String? {
         canTurnOffDisplayNow ? nil : DisplayActionCopy.turnOffDisplayUnavailableReason
+    }
+
+    /// The agent sessions any surface may present as keeping this Mac awake.
+    ///
+    /// Two filters in one place, because both answer the same question and
+    /// disagreeing about it is how a surface starts lying:
+    ///
+    /// - `phase.holdsAssertion` — a session that is neither working nor in its
+    ///   release window is not holding anything.
+    /// - `agentAutoKeepAwake` — with the switch off, NO agent is holding
+    ///   anything, whatever the detection layer can still see. A row reading
+    ///   "api — working for 41 min" beside a Mac that is free to sleep is the
+    ///   mirror image of the silent hold this app's top rule forbids: it claims
+    ///   a hold that does not exist.
+    ///
+    /// In production the composition root has already emptied `agentSessions`
+    /// by the time the switch is off, so this is belt and braces — and it is
+    /// what makes the icon, the status line and the menu rows agree by
+    /// construction rather than by three matching edits.
+    public var holdingAgentSessions: [AgentSessionSummary] {
+        guard agentAutoKeepAwake else { return [] }
+        return agentSessions.filter { $0.phase.holdsAssertion }
+    }
+
+    /// The fallback holds any surface may present, under the same rule.
+    public var holdingFallbackAgents: [AgentKind] {
+        agentAutoKeepAwake ? fallbackAgents : []
     }
 
     /// Whether this snapshot, on its own, is evidence that an agent exists on
@@ -137,6 +173,12 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// precision entry for every agent kind it knows how to look for, installed
     /// or not; reading the map's mere non-emptiness would make every Mac look
     /// agent-equipped.
+    ///
+    /// Reads the RAW fields, not `holdingAgentSessions` — "is there an agent on
+    /// this Mac" and "is an agent holding right now" are different questions,
+    /// and switching auto keep-awake off answers only the second. If this
+    /// consulted the switch, turning it off would eventually take its own row
+    /// out of the menu, leaving no way back.
     public var hasLiveAgentEvidence: Bool {
         !agentSessions.isEmpty
             || !fallbackAgents.isEmpty
@@ -152,7 +194,8 @@ public struct AppStateSnapshot: Equatable, Sendable {
         wantsHold: Bool = false,
         effectiveDisplayPolicy: DisplayPolicy = .allowSleep,
         selectedDisplayPolicy: DisplayPolicy = .allowSleep,
-        hasEverDetectedAgent: Bool = false
+        hasEverDetectedAgent: Bool = false,
+        agentAutoKeepAwake: Bool = true
     ) {
         self.manual = manual
         self.agentSessions = agentSessions
@@ -163,5 +206,6 @@ public struct AppStateSnapshot: Equatable, Sendable {
         self.effectiveDisplayPolicy = effectiveDisplayPolicy
         self.selectedDisplayPolicy = selectedDisplayPolicy
         self.hasEverDetectedAgent = hasEverDetectedAgent
+        self.agentAutoKeepAwake = agentAutoKeepAwake
     }
 }

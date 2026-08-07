@@ -26,6 +26,10 @@ public enum SettingsKey {
     public static let defaultDisplayPolicy = "defaultDisplayPolicy"
     /// Latch: has an AI coding agent ever been seen on this Mac. Default false.
     public static let hasEverDetectedAgent = "hasEverDetectedAgent"
+    /// Whether agent detection drives the hold at all. Default TRUE — note that
+    /// this is the one key whose absence must not read as `false`, so its
+    /// accessor cannot use `UserDefaults.bool(forKey:)`.
+    public static let agentAutoKeepAwake = "agentAutoKeepAwake"
 }
 
 /// Typed access to Caffeinate's persisted settings.
@@ -39,6 +43,9 @@ public final class SettingsStore {
         /// The behaviour most people never touch: keep working, let the screen
         /// sleep normally.
         public static let displayPolicy: DisplayPolicy = .allowSleep
+        /// On. The product's whole premise is that this works without being
+        /// asked for; the switch exists for the people who do not want it.
+        public static let agentAutoKeepAwake = true
     }
 
     private let defaults: UserDefaults
@@ -137,6 +144,33 @@ public final class SettingsStore {
     public var hasEverDetectedAgent: Bool {
         get { defaults.bool(forKey: SettingsKey.hasEverDetectedAgent) }
         set { defaults.set(newValue, forKey: SettingsKey.hasEverDetectedAgent) }
+    }
+
+    /// Whether agent detection is allowed to keep this Mac awake.
+    ///
+    /// The product runs on one rule — the Mac stays awake while an agent is
+    /// working, and sleeps whenever the agent is waiting on the user — and this
+    /// is that rule's on/off switch, not a choice between two rules. There is
+    /// nothing to configure about HOW agents are handled; there is only whether
+    /// they are handled at all.
+    ///
+    /// Off means the app is a plain `caffeinate` replacement: manual keep-awake,
+    /// durations and "Until" behave exactly as before, and coding agents are
+    /// ignored. That is a real user — "some people don't use AI" — and it is
+    /// also the escape hatch for anyone who wants the automatic behaviour gone
+    /// without quitting the app.
+    ///
+    /// **Default true, and that is why this accessor is three lines instead of
+    /// one.** `UserDefaults.bool(forKey:)` returns `false` for a key that was
+    /// never written, which would ship the feature switched off to every
+    /// existing install and every fresh one. `object(forKey:) as? Bool` tells
+    /// "never set" apart from "set to false".
+    public var agentAutoKeepAwake: Bool {
+        get {
+            defaults.object(forKey: SettingsKey.agentAutoKeepAwake) as? Bool
+                ?? Defaults.agentAutoKeepAwake
+        }
+        set { defaults.set(newValue, forKey: SettingsKey.agentAutoKeepAwake) }
     }
 
     /// Whether first-run onboarding has been completed.

@@ -38,7 +38,11 @@ public enum MenuBarIconState: Equatable, Hashable, Sendable {
 public func iconState(for s: AppStateSnapshot) -> MenuBarIconState {
     if s.safetyPause != nil && s.wantsHold { return .pausedBySafety }
 
-    let active = s.agentSessions.filter { $0.phase.holdsAssertion }
+    // `holdingAgentSessions` / `holdingFallbackAgents`, not the raw arrays: with
+    // auto keep-awake switched off nothing agent-derived is holding, and an
+    // icon drawing a full cup for a Mac that is free to sleep is the same class
+    // of lie as an empty cup over a live assertion.
+    let active = s.holdingAgentSessions
     if !active.isEmpty { return .agentHold(sessionCount: active.count) }
 
     // The zero-config default (no hooks installed): the hold is real — an
@@ -48,7 +52,7 @@ public func iconState(for s: AppStateSnapshot) -> MenuBarIconState {
     // badge stays the single dot because "one agent is busy" is the whole of
     // what we know. Drawing the empty cup here was the bug: the icon said
     // "asleep when you close the lid" while the assertion was held.
-    if !s.fallbackAgents.isEmpty { return .agentHold(sessionCount: 1) }
+    if !s.holdingFallbackAgents.isEmpty { return .agentHold(sessionCount: 1) }
 
     if s.manual != nil { return .manualHold }
 
@@ -111,7 +115,7 @@ public enum MenuCopy {
             }
         }
 
-        let active = s.agentSessions.filter { $0.phase.holdsAssertion }
+        let active = s.holdingAgentSessions
         if !active.isEmpty {
             let graceEnds = active.compactMap { session -> Date? in
                 if case .graceIdle(let until) = session.phase { return until }
@@ -135,11 +139,12 @@ public enum MenuCopy {
         // (approximate)"), which is shown in exactly this mode; saying it twice
         // in the status line would make the headline about our plumbing instead
         // of about the user's Mac.
-        if let agent = s.fallbackAgents.first {
+        let fallbacks = s.holdingFallbackAgents
+        if let agent = fallbacks.first {
             let name = agent.displayName
-            return s.fallbackAgents.count == 1
+            return fallbacks.count == 1
                 ? "\(name) working"
-                : "\(name) working · \(s.fallbackAgents.count) agents"
+                : "\(name) working · \(fallbacks.count) agents"
         }
 
         if let manual = s.manual {
@@ -179,10 +184,8 @@ public enum MenuCopy {
     /// the max — the menu then said "Codex working" with no qualification while
     /// the only thing holding was an approximate window.
     public static func summaryPrecision(for s: AppStateSnapshot) -> DetectionPrecision? {
-        var activeAgents = Set(
-            s.agentSessions.filter { $0.phase.holdsAssertion }.map { $0.agent }
-        )
-        activeAgents.formUnion(s.fallbackAgents)
+        var activeAgents = Set(s.holdingAgentSessions.map { $0.agent })
+        activeAgents.formUnion(s.holdingFallbackAgents)
 
         let candidates: [DetectionPrecision]
         if activeAgents.isEmpty {

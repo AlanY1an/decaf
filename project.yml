@@ -61,3 +61,51 @@ targets:
             codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
               "$HELPERS_DIR/caff-bridge"
           fi
+    scheme:
+      # So `xcodebuild -scheme Caffeinate test` runs the app-layer tests. The app
+      # is still the scheme's build target; the test bundle only joins its test
+      # action.
+      testTargets:
+        - CaffeinateAppTests
+
+  # The app target's unit tests. Every audit flagged that App/ had none, while
+  # the layer does own real logic: the strings the menu prints and the image the
+  # menu bar shows.
+  #
+  # Deliberately a LOGIC test bundle with no TEST_HOST. A hosted bundle would
+  # launch Caffeinate.app to inject into, and `applicationDidFinishLaunching`
+  # runs the whole product: the single-instance socket bind, the hooks probe
+  # against the developer's REAL ~/.claude, the login-item registration and the
+  # onboarding window. None of that is needed to test a pure function, and a
+  # test suite that reads and could write a user's live agent config is not a
+  # trade worth making.
+  #
+  # The price of that choice is this `sources` list: the two App files under
+  # test are compiled into the bundle directly. It is why MenuTextFormatter
+  # lives in its own file rather than beside MenuContentView — a SwiftUI scene
+  # would drag AppEnvironment and a live CompositionRoot in with it. Adding a
+  # file here is the deliberate act of declaring it free of app-launch
+  # side effects.
+  CaffeinateAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - AppTests
+      - path: App/MenuTextFormatter.swift
+        group: App
+      - path: App/IconRenderer.swift
+        group: App
+    dependencies:
+      - package: CaffeinateCore
+        product: CaffeinateCore
+      - package: CaffeinateCore
+        product: HookWire
+    settings:
+      base:
+        # Derived from the app's placeholder bundle ID; when that is frozen
+        # (author decision 2, docs/launch/README-REVIEW.md §2) this moves with
+        # it. Nothing ships it — a logic test bundle is never distributed.
+        PRODUCT_BUNDLE_IDENTIFIER: dev.caffeinate.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        # No TEST_HOST / BUNDLE_LOADER on purpose — see the note above.

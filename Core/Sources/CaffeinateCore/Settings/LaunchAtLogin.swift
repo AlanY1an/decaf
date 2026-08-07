@@ -6,11 +6,13 @@
 // quietly, and it is not allowed to be skipped because a window was dismissed
 // with the red button instead of the Done button.
 //
-// The whole decision lives here, over an injected registrar, for two reasons:
-// `SMAppService` cannot be driven from a test, and the app target has no test
-// bundle — so every rule below (the no-op guard, the parked-for-approval case,
-// the failure mirror, and apply-exactly-once) is covered from CaffeinateCoreTests
-// while the app keeps only the ServiceManagement adapter.
+// The whole decision lives here, over an injected registrar, because
+// `SMAppService` cannot be driven from a test and would drag a real login-item
+// registration into any suite that touched it. Every rule below (the no-op
+// guard, the parked-for-approval case, the failure mirror, and
+// apply-exactly-once) is therefore covered from CaffeinateCoreTests, and the
+// app keeps only the ServiceManagement adapter — which is also why that adapter
+// is one of the App files the app test bundle does NOT compile.
 
 import Foundation
 

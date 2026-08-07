@@ -1,10 +1,16 @@
-// The top of the menu, row by row, across the state matrix.
+// The menu, row by row: the top group across the state matrix, and the two
+// manual submenus.
 //
 // `MenuLayout.topRows` is the group above the first divider — the only part of
 // the menu whose SHAPE changes with state — so these tests assert the exact
-// ordered list a snapshot produces, not that "something changed". Everything
-// below that divider (the manual controls, the display group, the footer) is a
-// fixed list and is covered by MenuRowTests / MenuStatusLineTests.
+// ordered list a snapshot produces, not that "something changed".
+//
+// `MenuLayout.keepForRows` / `untilRows` are the two submenus below it. They do
+// not vary with state, and they are pinned here anyway, because their contents
+// are a product decision: "Keep For…" and "Until…" both end in `Custom…` as of
+// 2026-08-07, and a row that took a ruling to add should take a failing test to
+// remove. The display group and the footer remain covered by MenuRowTests /
+// MenuStatusLineTests.
 //
 // Two behaviours are on trial here.
 //
@@ -448,5 +454,190 @@ private let switchOff = MenuTopRow.agentAutoToggle(
         #expect(!MenuLayout.showsAgentControls(
             for: AppStateSnapshot(precision: noAgentPrecision, wantsHold: true)
         ))
+    }
+}
+
+// MARK: - The two manual submenus
+
+/// The rows of "Keep For…" and "Until…", spelled out.
+///
+/// Both lists end in `Custom…` as of 2026-08-07 — the second overturn of R7
+/// driven by real use, after R7-A restored the "Until…" submenu itself. R7's
+/// surviving half is what the first test below pins: the seven presets are
+/// still fixed and still in that order, and `Custom…` is an item beside them,
+/// not an editor for them.
+@Suite struct ManualSubmenuRows {
+
+    private let calendar: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        return calendar
+    }()
+
+    private func at(hour: Int, minute: Int = 0, day: Int = 10) -> Date {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 3
+        components.day = day
+        components.hour = hour
+        components.minute = minute
+        return calendar.date(from: components)!
+    }
+
+    // MARK: "Keep For…"
+
+    /// The whole submenu, in order. Seven presets, then the door.
+    @Test func keepForIsTheSevenPresetsThenCustom() {
+        let minute: TimeInterval = 60
+        let hour: TimeInterval = 3600
+        let expected: [MenuKeepForRow] = [
+            .preset(title: "Indefinitely", mode: .infinite),
+            .preset(title: "5 Minutes", mode: .duration(5 * minute)),
+            .preset(title: "15 Minutes", mode: .duration(15 * minute)),
+            .preset(title: "30 Minutes", mode: .duration(30 * minute)),
+            .preset(title: "1 Hour", mode: .duration(hour)),
+            .preset(title: "2 Hours", mode: .duration(2 * hour)),
+            .preset(title: "5 Hours", mode: .duration(5 * hour)),
+            .custom(title: "Custom…"),
+        ]
+        #expect(MenuLayout.keepForRows() == expected)
+    }
+
+    /// `Custom…` is LAST, and exactly one of it. The presets are the fast path;
+    /// an escape hatch above them would tax every ordinary use to serve the
+    /// occasional one.
+    @Test func keepForEndsWithExactlyOneCustomRow() {
+        let rows = MenuLayout.keepForRows()
+        #expect(rows.last == .custom(title: MenuTextFormatter.customItemTitle))
+        #expect(rows.filter { $0 == .custom(title: MenuTextFormatter.customItemTitle) }.count == 1)
+    }
+
+    /// The submenu did not quietly become a preset editor. Everything above the
+    /// last row is still one of the fixed seven, in `ManualPreset`'s own order —
+    /// which is also the order the General settings popup renders.
+    @Test func everyKeepForRowAboveCustomIsStillAFixedPreset() {
+        let presetRows = MenuLayout.keepForRows().dropLast()
+        #expect(presetRows.count == ManualPreset.allCases.count)
+        #expect(presetRows.map { row -> ManualMode? in
+            if case .preset(_, let mode) = row { return mode }
+            return nil
+        } == ManualPreset.allCases.map { $0.mode })
+    }
+
+    // MARK: "Until…"
+
+    /// The whole submenu at 14:37, in order: the next six whole hours, then the
+    /// door. The hours are `UntilOptions` (tested in Core); what is on trial
+    /// here is that this list is those hours PLUS one row, in that order.
+    @Test func untilIsTheSixUpcomingHoursThenCustom() {
+        let rows = MenuLayout.untilRows(now: at(hour: 14, minute: 37), calendar: calendar)
+        var expected: [MenuUntilRow] = (15...20).map { todayHour($0) }
+        expected.append(.custom(title: "Custom…"))
+        #expect(rows == expected)
+    }
+
+    /// Across midnight the hours are labelled "Tomorrow" and `Custom…` still
+    /// sits after them — the row is not part of the generated list and cannot
+    /// be pushed around by it.
+    @Test func untilKeepsCustomLastAcrossMidnight() {
+        let rows = MenuLayout.untilRows(now: at(hour: 22, minute: 40), calendar: calendar)
+        var expected: [MenuUntilRow] = [todayHour(23)]
+        for hour in 0...4 {
+            expected.append(tomorrowHour(hour))
+        }
+        expected.append(.custom(title: "Custom…"))
+        #expect(rows == expected)
+    }
+
+    private func todayHour(_ hour: Int) -> MenuUntilRow {
+        let deadline = at(hour: hour)
+        return .hour(title: "Until \(MenuCopy.timeString(deadline))", deadline: deadline)
+    }
+
+    private func tomorrowHour(_ hour: Int) -> MenuUntilRow {
+        let deadline = at(hour: hour, day: 11)
+        return .hour(
+            title: "Until \(MenuCopy.timeString(deadline)) Tomorrow", deadline: deadline
+        )
+    }
+
+    /// Seven rows whatever the hour, because six hours plus one door is not a
+    /// number that varies.
+    @Test func untilIsAlwaysSixHoursPlusTheDoor() {
+        for hour in 0..<24 {
+            let rows = MenuLayout.untilRows(now: at(hour: hour, minute: 5), calendar: calendar)
+            #expect(rows.count == UntilOptions.hourlyCount + 1, "at \(hour):05")
+            #expect(rows.last == .custom(title: MenuTextFormatter.customItemTitle), "at \(hour):05")
+        }
+    }
+
+    // MARK: Both
+
+    /// One word, both submenus. The row makes the same promise in both places
+    /// and must not be spelled two ways.
+    @Test func bothSubmenusUseTheSameWordForTheSameDoor() {
+        #expect(MenuTextFormatter.customItemTitle == "Custom…")
+        #expect(MenuLayout.keepForRows().last == .custom(title: "Custom…"))
+        #expect(MenuLayout.untilRows(now: at(hour: 9), calendar: calendar).last
+            == .custom(title: "Custom…"))
+    }
+}
+
+// MARK: - The panel's words
+
+@Suite struct CustomHoldPanelCopy {
+
+    /// One panel serving two questions has to say which one it is asking, in
+    /// the title bar, or it reads as having arrived from nowhere.
+    @Test func eachModeNamesItselfInTheTitleBar() {
+        #expect(CustomHoldCopy.windowTitle(.duration) == "Keep Awake For")
+        #expect(CustomHoldCopy.windowTitle(.endTime) == "Keep Awake Until")
+        #expect(Set(CustomHoldKind.allCases.map(CustomHoldCopy.windowTitle)).count == 2)
+    }
+
+    /// The one ambiguity in the duration grammar is stated where it is typed,
+    /// not left to be discovered by getting a hold sixty times too short.
+    @Test func theDurationHintSaysWhatAPlainNumberMeans() {
+        #expect(CustomHoldCopy.hint(.duration).contains("minutes"))
+        #expect(CustomHoldCopy.durationPrompt.contains("90"))
+    }
+
+    /// The end-time mode's one surprise — a past time means tomorrow — is on
+    /// screen before it happens, as well as in the resolved line after.
+    @Test func theEndTimeHintWarnsAboutTheTomorrowFold() {
+        #expect(CustomHoldCopy.hint(.endTime).lowercased().contains("tomorrow"))
+    }
+
+    /// The confirm button names the outcome. "OK" would leave a user one
+    /// keystroke from a keep-awake without having read the word.
+    @Test func theConfirmButtonSaysWhatItDoes() {
+        #expect(CustomHoldCopy.confirmTitle == "Keep Awake")
+        #expect(CustomHoldCopy.cancelTitle == "Cancel")
+    }
+
+    /// The resolved line is absolute, like every other expiry string in this
+    /// app, and it also says how long that is — the pair is what turns "I typed
+    /// 2 PM at 3 PM" from a surprise into a choice.
+    @Test func theResolvedLineNamesTheInstantAndTheLength() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let deadline = now.addingTimeInterval(90 * 60)
+        let line = CustomHoldCopy.resolvedLine(
+            UntilOption(deadline: deadline, isTomorrow: false), now: now
+        )
+        #expect(line.contains(MenuCopy.timeString(deadline)))
+        #expect(line.contains("1 hr 30 min"))
+        #expect(!line.contains("tomorrow"))
+    }
+
+    /// …and when the fold has happened, the line says so in the same breath as
+    /// the length, so a 23-hour hold cannot be committed unremarked.
+    @Test func aFoldedDeadlineIsCalledTomorrowInTheResolvedLine() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let deadline = now.addingTimeInterval(23 * 3600)
+        let line = CustomHoldCopy.resolvedLine(
+            UntilOption(deadline: deadline, isTomorrow: true), now: now
+        )
+        #expect(line.contains("tomorrow"))
+        #expect(line.contains("23 hr"))
     }
 }

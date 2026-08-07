@@ -32,7 +32,7 @@ let package = Package(
         ),
         .target(
             name: "DecafCore",
-            dependencies: ["HookWire"]
+            dependencies: ["HookWire", "UsageMetering"]
         ),
         // Strict-JSON helpers shared by transcript readers (AgentDetection's
         // wait-signal parser and UsageMetering's usage parser). `package`
@@ -56,7 +56,7 @@ let package = Package(
         // in its own target on top of both rather than inside DecafCore.
         .target(
             name: "DecafComposition",
-            dependencies: ["DecafCore", "AgentDetection", "HookWire"]
+            dependencies: ["DecafCore", "AgentDetection", "HookWire", "UsageMetering"]
         ),
         .executableTarget(
             name: "decaf-bridge",

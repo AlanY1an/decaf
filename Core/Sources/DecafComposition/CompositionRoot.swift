@@ -28,6 +28,7 @@ import os
 import DecafCore
 import AgentDetection
 import HookWire
+import UsageMetering
 
 @MainActor
 public final class CompositionRoot: ObservableObject {
@@ -66,6 +67,9 @@ public final class CompositionRoot: ObservableObject {
     public let manualHold: ManualHoldController
     public let socketServer: HookSocketServer
     public let coordinator: DetectionCoordinator
+    /// Token ledger + official quota (plan 09). Fed from the coordinator's
+    /// transcript line sink and from Statusline frames routed in `route(_:)`.
+    public let usageMeter: UsageMeter
     /// "Turn the screen off now" adapter (pmset in production, a fake in tests).
     public let displaySleeper: any DisplaySleeping
 
@@ -98,6 +102,9 @@ public final class CompositionRoot: ObservableObject {
     /// detection output (see `apply(output:sessions:)`) and therefore not read
     /// from UserDefaults each time.
     private var agentAutoKeepAwake: Bool
+    /// Latest usage overview, refreshed on detection outputs, Statusline
+    /// frames, and the periodic pump; folded into the snapshot.
+    private var usageOverview: UsageOverview?
 
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
@@ -124,6 +131,10 @@ public final class CompositionRoot: ObservableObject {
         // root and the asserter.
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
+        // Usage metering (plan 09 M3). The default store follows the
+        // SessionsStore precedent (real App Support); tests inject nil.
+        usageStore: UsageStore? = UsageStore(),
+        usageTimeZone: TimeZone = .current,
         // The app's only notification channel (plan 04's zero-notification rule
         // narrowed, REVIEW-DECISIONS 2026-08-06). Defaults to nil — silent —
         // because the concrete `UNUserNotificationCenter` adapter needs an
@@ -143,6 +154,8 @@ public final class CompositionRoot: ObservableObject {
         self.engine = PowerStateEngine(asserter: asserter, tuning: tuning)
         self.manualHold = ManualHoldController(engine: engine)
         self.socketServer = HookSocketServer(socketPath: socketPath)
+        let usageMeter = UsageMeter(store: usageStore, timeZone: usageTimeZone)
+        self.usageMeter = usageMeter
         self.coordinator = DetectionCoordinator(
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
@@ -150,7 +163,13 @@ public final class CompositionRoot: ObservableObject {
             store: sessionsStore,
             watcher: watcher,
             activitySampler: activitySampler,
-            userNotifier: userNotifier
+            userNotifier: userNotifier,
+            // Shared reader: the coordinator's tail-read loop feeds the ledger
+            // (plan 09 M3a). Fire-and-forget; ordering within a file holds
+            // because the loop forwards lines in file order.
+            transcriptLineSink: { line, date in
+                Task { await usageMeter.ingestLine(line, at: date) }
+            }
         )
     }
 
@@ -198,10 +217,20 @@ public final class CompositionRoot: ObservableObject {
             await coordinator.setSocketHealthy(server.isListening)
             await coordinator.start()
         })
-        // Socket frames -> registry.
-        pumpTasks.append(Task {
+        // Socket frames -> registry (hook frames) or quota state (Statusline).
+        pumpTasks.append(Task { [weak self] in
             for await event in server.events {
-                await coordinator.ingest(event)
+                guard let self else { return }
+                await self.route(event)
+            }
+        })
+        // Usage refresh pump: the ledger moves with every transcript line, but
+        // the UI only needs a fresh overview about once a minute (plus the
+        // event-driven refreshes in `route` and `apply`).
+        pumpTasks.append(Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                await self?.refreshUsageOverview()
             }
         })
         // Detection outputs -> engine requests + snapshot.
@@ -227,6 +256,37 @@ public final class CompositionRoot: ObservableObject {
 
         republish()
         return .started
+    }
+
+    // MARK: - Socket frame routing (plan 09 M3a)
+
+    /// Statusline frames feed the quota state and MUST NOT reach the session
+    /// state machine — they are not hook events, and `SessionRegistry` would
+    /// otherwise be asked to normalize a name it has no business seeing.
+    /// Everything else keeps the existing path. Internal so tests drive it
+    /// with real frames.
+    func route(_ event: WireEvent) async {
+        if event.event == WireEvent.statuslineEventName {
+            if let quota = event.quota {
+                await usageMeter.ingestQuota(
+                    fiveHourPercent: quota.fiveHourUsedPercent,
+                    fiveHourResetsAt: quota.fiveHourResetsAt,
+                    sevenDayPercent: quota.sevenDayUsedPercent,
+                    sevenDayResetsAt: quota.sevenDayResetsAt
+                )
+            }
+            await refreshUsageOverview()
+            return
+        }
+        await coordinator.ingest(event)
+    }
+
+    /// Pulls a fresh overview and republishes when it changed.
+    func refreshUsageOverview() async {
+        let overview = await usageMeter.overview()
+        guard overview != usageOverview else { return }
+        usageOverview = overview
+        republish()
     }
 
     /// Routes `reopen-ui` frames to `onReopenUIRequest` and answers on the main
@@ -483,6 +543,9 @@ public final class CompositionRoot: ObservableObject {
         fallbackAgents = fallbacks.sorted { $0.rawValue < $1.rawValue }
         precision = output.precision
         republish()
+        // Detection outputs coincide with transcript activity, so this is the
+        // cheap moment to fold fresh usage numbers into the snapshot too.
+        Task { [weak self] in await self?.refreshUsageOverview() }
     }
 
     // MARK: - Snapshot assembly (R11 seam 2)
@@ -519,7 +582,8 @@ public final class CompositionRoot: ObservableObject {
             effectiveDisplayPolicy: engine.effectiveDisplayPolicy,
             selectedDisplayPolicy: settings.defaultDisplayPolicy,
             hasEverDetectedAgent: everDetectedAgent,
-            agentAutoKeepAwake: agentAutoKeepAwake
+            agentAutoKeepAwake: agentAutoKeepAwake,
+            usage: usageOverview
         )
         // The latch, closed here rather than at each of the places evidence
         // arrives: `hasLiveAgentEvidence` is defined on the snapshot, so this

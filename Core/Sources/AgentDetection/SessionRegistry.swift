@@ -28,7 +28,7 @@
 // state, it is a `max` applied to the state's own deadline. See "Wait signals"
 // below for the exact rules.
 
-import CaffeinateCore
+import DecafCore
 import Foundation
 import HookWire
 

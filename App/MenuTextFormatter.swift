@@ -8,7 +8,7 @@
 // in the view" (plan 04 step 3 acceptance) is only worth anything if the pure
 // functions are actually reachable from a test.
 //
-// Most of what is here forwards to CaffeinateCore, which owns the copy and the
+// Most of what is here forwards to DecafCore, which owns the copy and the
 // rule tables. What stays is the assembly the app layer genuinely owns: the
 // preset list, the session-row sentences, the duration arithmetic behind them,
 // and the row-folding limit.
@@ -19,7 +19,7 @@
 // countdown (plan 04 §3 / review decision R7).
 
 import Foundation
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 // MARK: - Manual presets (plan 04 §3)
@@ -78,14 +78,14 @@ enum MenuTextFormatter {
     static let maxSessionRows = 5
 
     /// Locale-aware short time, e.g. "6:32 PM". One formatter for the whole app,
-    /// in CaffeinateCore.
+    /// in DecafCore.
     static func timeString(_ date: Date) -> String {
         MenuCopy.timeString(date)
     }
 
     // MARK: Status line (plan 04 §3 table; priority mirrors the icon)
 
-    /// The status line. The rule table and its copy live in CaffeinateCore's
+    /// The status line. The rule table and its copy live in DecafCore's
     /// `MenuCopy`, where they are unit-tested — including the case this menu got
     /// wrong for a long time: a file-activity (no hooks) hold is a hold, and
     /// must never render as "Idle — not preventing sleep".
@@ -116,7 +116,7 @@ enum MenuTextFormatter {
         return remainder == 0 ? "\(hours) hr" : "\(hours) hr \(remainder) min"
     }
 
-    // MARK: "Until HH:MM" items (dates come from CaffeinateCore.UntilOptions)
+    // MARK: "Until HH:MM" items (dates come from DecafCore.UntilOptions)
 
     /// Title of the submenu that lets the time be picked here rather than in
     /// Settings. Ellipsis, like "Keep For…": this app spells a submenu that
@@ -149,7 +149,7 @@ enum MenuTextFormatter {
 
     // MARK: Detection precision summary (R12: highest precision among active agents)
 
-    /// Both of these live in `MenuCopy` (CaffeinateCore) so the rule table has a
+    /// Both of these live in `MenuCopy` (DecafCore) so the rule table has a
     /// single owner and the app layer keeps only the assembly.
     static func summaryPrecision(for s: AppStateSnapshot) -> DetectionPrecision? {
         MenuCopy.summaryPrecision(for: s)

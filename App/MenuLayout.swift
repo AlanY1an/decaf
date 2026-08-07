@@ -34,7 +34,7 @@
 // an adaptation on top of it.
 
 import Foundation
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 // MARK: - Rows

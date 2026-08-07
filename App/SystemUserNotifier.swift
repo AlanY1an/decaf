@@ -3,12 +3,12 @@
 // It lives in the app target, not in the Core package, for one hard reason:
 // `UNUserNotificationCenter.current()` raises when the running process has no
 // application bundle, and the package is also linked into `swift test` and into
-// `caff-smoke`. The package therefore ships the protocol and a fake, defaults to
+// `decaf-smoke`. The package therefore ships the protocol and a fake, defaults to
 // silence, and only `AppEnvironment` — which by definition runs inside the app
 // bundle — supplies this class.
 //
 // Authorization is requested LAZILY, at the first post and never at launch.
-// Caffeinate posts one kind of notification (a stuck session's hold being
+// Decaf posts one kind of notification (a stuck session's hold being
 // released, see REVIEW-DECISIONS 2026-08-06) and most installs will never post
 // one at all, so asking at launch would make every user decide about something
 // that has not happened. The ask arrives attached to the event that justifies
@@ -23,7 +23,7 @@
 import Foundation
 import UserNotifications
 
-import CaffeinateCore
+import DecafCore
 
 final class SystemUserNotifier: UserNotifying, @unchecked Sendable {
 

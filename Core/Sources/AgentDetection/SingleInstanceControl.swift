@@ -59,7 +59,7 @@ public enum SingleInstanceControl {
     /// not our protocol.
     static let maxReplyBytes = 4096
 
-    private static let logger = Logger(subsystem: "dev.caffeinate.app", category: "SingleInstanceControl")
+    private static let logger = Logger(subsystem: "io.github.alany1an.decaf", category: "SingleInstanceControl")
 
     /// Asks whoever owns `socketPath` to surface its UI, and waits at most
     /// `timeout` for the answer. Never blocks longer than that, never throws.

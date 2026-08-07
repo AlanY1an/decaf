@@ -23,7 +23,7 @@
 // 2. The old badge ("Hooks not installed") and the old "Detection mode" row
 //    stated one fact twice, in two rows of equal weight. They collapse into the
 //    hero's single status line, which is what that fact actually is: one
-//    sentence about what Caffeinate is currently able to see. The Safety
+//    sentence about what Decaf is currently able to see. The Safety
 //    footer had the same bug ("Always-On Protections" over "These three can't
 //    be turned off") and gets the same edit.
 //
@@ -47,7 +47,7 @@
 // Every change applies immediately (no Apply button, plan 04 step 6).
 
 import SwiftUI
-import CaffeinateCore
+import DecafCore
 
 struct SettingsView: View {
     @ObservedObject var settings: UISettings
@@ -116,7 +116,7 @@ struct GeneralSettingsTab: View {
                 // label already says "Launch at login" is scaffolding.
                 Wordmark()
             } footer: {
-                SectionFooter("Caffeinate lives in the menu bar and keeps no Dock icon of its own.")
+                SectionFooter("Decaf lives in the menu bar and keeps no Dock icon of its own.")
             }
 
             Section {
@@ -155,12 +155,12 @@ struct GeneralSettingsTab: View {
             // carry the qualifier itself, because "Display" alone next to
             // "Sleeps normally" reads like the system-wide Energy setting the
             // user already has in System Settings. "While keeping awake" is the
-            // phrase that makes it Caffeinate's business and not macOS's.
+            // phrase that makes it Decaf's business and not macOS's.
             Section {
                 // Values come from `DisplayPolicy.settingsTitle`, not from
                 // literals here: the menu's check-markable item reads
                 // `menuTitle`, and the two labels for one setting have to be
-                // maintained side by side in CaffeinateCore or they drift.
+                // maintained side by side in DecafCore or they drift.
                 Picker("Display while keeping awake", selection: $settings.defaultDisplayPolicy) {
                     ForEach(DisplayPolicy.allCases, id: \.self) { policy in
                         Text(policy.settingsTitle).tag(policy)
@@ -175,7 +175,7 @@ struct GeneralSettingsTab: View {
                 // hand": the menu's toggle reaches every live hold, agent ones
                 // included, which is the case the feature exists for.
                 //
-                // The literal lives in CaffeinateCore next to the menu's
+                // The literal lives in DecafCore next to the menu's
                 // tooltips and its one-line note. Three surfaces explain this
                 // one behaviour; kept apart they drift, and a reassurance that
                 // is worded differently in two places stops reassuring.
@@ -195,7 +195,7 @@ struct GeneralSettingsTab: View {
     /// Register/unregister the login item. The rule — including the no-op guard
     /// that keeps the `.onAppear` resync from re-issuing a registration, and the
     /// mirror that puts the toggle back where the system actually is after a
-    /// failure or a parked approval — is `LaunchAtLogin.apply` in CaffeinateCore,
+    /// failure or a parked approval — is `LaunchAtLogin.apply` in DecafCore,
     /// shared with onboarding and tested there.
     private func apply(launchAtLogin enabled: Bool) {
         let outcome = LaunchAtLogin.apply(enabled: enabled, using: registrar)
@@ -224,7 +224,7 @@ struct GeneralSettingsTab: View {
 private struct Wordmark: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text("Caffeinate")
+            Text("Decaf")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.primary)
             if let version = Self.appVersion {
@@ -333,7 +333,7 @@ struct AgentsSettingsTab: View {
                     .disabled(!integrations.claudeStatus.hooksInstalled)
                 } label: {
                     Text("Remove all integrations")
-                    Text("Detection falls back to file activity. Only the entries Caffeinate added are removed.")
+                    Text("Detection falls back to file activity. Only the entries Decaf added are removed.")
                 }
             }
         }
@@ -352,13 +352,13 @@ struct AgentsSettingsTab: View {
         // The button title ends in an ellipsis, so it owes the user a chance to
         // back out (macOS HIG); removal is not otherwise undoable in one click.
         .confirmationDialog(
-            "Remove all Caffeinate integrations?",
+            "Remove all Decaf integrations?",
             isPresented: $showingRemoveConfirmation
         ) {
             Button("Remove", role: .destructive) { integrations.removeAllIntegrations() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Only the hook entries Caffeinate added are removed \u{2014} the rest of each agent's configuration is left untouched. You can install them again at any time.")
+            Text("Only the hook entries Decaf added are removed \u{2014} the rest of each agent's configuration is left untouched. You can install them again at any time.")
         }
         .onAppear { integrations.refresh() }
     }
@@ -385,13 +385,13 @@ struct AgentsSettingsTab: View {
             return "Checking which AI coding tools are installed."
         }
         if !status.agentDetected {
-            return "Caffeinate still works as a manual keep-awake, and will pick up Claude Code on its own once it's installed."
+            return "Decaf still works as a manual keep-awake, and will pick up Claude Code on its own once it's installed."
         }
         if status.needsRepair {
-            return "Caffeinate's entries in ~/.claude/settings.json are missing or out of date. Repairing rewrites only those."
+            return "Decaf's entries in ~/.claude/settings.json are missing or out of date. Repairing rewrites only those."
         }
         if status.hooksInstalled {
-            return "Caffeinate's entries sit in ~/.claude/settings.json beside your own configuration; uninstalling removes exactly those and nothing else."
+            return "Decaf's entries sit in ~/.claude/settings.json beside your own configuration; uninstalling removes exactly those and nothing else."
         }
         return "File activity needs no setup and still holds sleep while an agent works — it just reacts later, and guesses at the end of a turn. Installing deep-merges hooks into ~/.claude/settings.json and leaves your configuration in place."
     }
@@ -558,7 +558,7 @@ struct InstallConsentSheet: View {
                         .font(.title3.weight(.semibold))
                     Text(subtitle)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("You don't have to: cancelling leaves Caffeinate on file-activity detection, which needs no configuration at all.")
+                    Text("You don't have to: cancelling leaves Decaf on file-activity detection, which needs no configuration at all.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -602,9 +602,9 @@ struct InstallConsentSheet: View {
 
     private var subtitle: String {
         if isRepair {
-            return "Caffeinate's hook entries are missing or out of date. Repairing writes the current ones back, and the rest of your configuration is preserved."
+            return "Decaf's hook entries are missing or out of date. Repairing writes the current ones back, and the rest of your configuration is preserved."
         }
-        return "Caffeinate deep-merges its hook entries into the file below. All of your existing configuration is preserved, and you can uninstall with one click at any time."
+        return "Decaf deep-merges its hook entries into the file below. All of your existing configuration is preserved, and you can uninstall with one click at any time."
     }
 
     private func changeEntry(_ change: PlannedChangeSummary) -> some View {
@@ -682,7 +682,7 @@ struct SafetySettingsTab: View {
     /// as decorative. So it switches with the setting.
     private var batteryFooter: String {
         guard settings.batteryThreshold > 0 else {
-            return "Caffeinate will hold sleep off at any battery level. Low Power Mode still releases the hold."
+            return "Decaf will hold sleep off at any battery level. Low Power Mode still releases the hold."
         }
         return "Holding resumes 3 points above the threshold, or as soon as you plug in. A hold you start by hand overrides the pause."
     }

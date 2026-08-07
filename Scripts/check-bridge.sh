@@ -1,7 +1,7 @@
 #!/bin/bash
-# check-bridge.sh — caff-bridge dependency-discipline gate (plan 06 §2/§5, review decision R4).
+# check-bridge.sh — decaf-bridge dependency-discipline gate (plan 06 §2/§5, review decision R4).
 #
-# Verifies, for a built caff-bridge binary:
+# Verifies, for a built decaf-bridge binary:
 #   1. otool -L linked libraries are ONLY system libraries (/usr/lib, /System).
 #   2. Binary size < 2 MB.
 #   3. Smoke A: a real hook event reaches a throwaway socket as a valid wire
@@ -10,13 +10,13 @@
 #      (the graceful-degradation contract, plan 02 §1.3 rule 6).
 #
 # The smoke always runs against a socket in a temp directory, via
-# CAFF_BRIDGE_SOCKET. It must never use the default path: that is the LIVE app's
-# ~/Library/Application Support/Caffeinate/agent.sock, and a smoke event sent
+# DECAF_BRIDGE_SOCKET. It must never use the default path: that is the LIVE app's
+# ~/Library/Application Support/Decaf/agent.sock, and a smoke event sent
 # there registers a phantom working session in the running app. That session's
 # ppid is this script, and once the script exits the sweep reclaims it — but
 # until then the user's Mac is held awake by a test.
 #
-# Usage: check-bridge.sh [path-to-caff-bridge]
+# Usage: check-bridge.sh [path-to-decaf-bridge]
 #   Without an argument, builds the release binary from Core/ first.
 
 set -euo pipefail
@@ -27,13 +27,13 @@ MAX_SIZE_BYTES=$((2 * 1024 * 1024))
 
 BRIDGE="${1:-}"
 if [ -z "$BRIDGE" ]; then
-    echo "==> Building caff-bridge (release)"
-    swift build -c release --package-path Core --product caff-bridge
-    BRIDGE="Core/.build/release/caff-bridge"
+    echo "==> Building decaf-bridge (release)"
+    swift build -c release --package-path Core --product decaf-bridge
+    BRIDGE="Core/.build/release/decaf-bridge"
 fi
 
 if [ ! -x "$BRIDGE" ]; then
-    echo "ERROR: caff-bridge binary not found at: $BRIDGE" >&2
+    echo "ERROR: decaf-bridge binary not found at: $BRIDGE" >&2
     exit 1
 fi
 
@@ -43,7 +43,7 @@ echo "==> Checking linked libraries (otool -L whitelist)"
 VIOLATIONS=$(otool -L "$BRIDGE" | tail -n +2 | awk '{print $1}' \
     | grep -vE '^(/usr/lib/|/System/)' || true)
 if [ -n "$VIOLATIONS" ]; then
-    echo "ERROR: caff-bridge links non-system libraries:" >&2
+    echo "ERROR: decaf-bridge links non-system libraries:" >&2
     echo "$VIOLATIONS" >&2
     exit 1
 fi
@@ -52,14 +52,14 @@ echo "    OK: system libraries only"
 echo "==> Checking binary size (< 2 MB)"
 SIZE=$(stat -f%z "$BRIDGE")
 if [ "$SIZE" -ge "$MAX_SIZE_BYTES" ]; then
-    echo "ERROR: caff-bridge is ${SIZE} bytes (limit ${MAX_SIZE_BYTES})" >&2
+    echo "ERROR: decaf-bridge is ${SIZE} bytes (limit ${MAX_SIZE_BYTES})" >&2
     exit 1
 fi
 echo "    OK: ${SIZE} bytes"
 
 # Short workdir: the socket path must stay far below sun_path's 104-byte cap
 # (same constraint as bench-bridge.sh).
-WORKDIR=$(mktemp -d /tmp/caffcheck.XXXXXX)
+WORKDIR=$(mktemp -d /tmp/decafcheck.XXXXXX)
 LISTENER_PID=""
 cleanup() {
     if [ -n "$LISTENER_PID" ]; then
@@ -73,13 +73,13 @@ trap cleanup EXIT
 # is what the bridge parses — not the WireEvent shape it emits. Sending it the
 # wire shape makes the parse fail, and because every failure exits 0 silently the
 # smoke would pass while proving nothing at all. Field names match the recorded
-# fixtures in Core/Tests/CaffeinateCoreTests/Fixtures/ and bench-bridge.sh.
+# fixtures in Core/Tests/DecafCoreTests/Fixtures/ and bench-bridge.sh.
 SAMPLE='{"session_id":"check-bridge","transcript_path":"/tmp/check/t.jsonl","cwd":"/tmp/check","prompt_id":"p-1","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"check"}'
 
 run_bridge() { # run_bridge <socket-path>; sets OUT/ERR/RC
     set +e
     OUT=$(printf '%s\n' "$SAMPLE" \
-        | CAFF_BRIDGE_SOCKET="$1" "$BRIDGE" 2>"$WORKDIR/stderr.txt")
+        | DECAF_BRIDGE_SOCKET="$1" "$BRIDGE" 2>"$WORKDIR/stderr.txt")
     RC=$?
     set -e
     ERR=$(cat "$WORKDIR/stderr.txt")
@@ -87,11 +87,11 @@ run_bridge() { # run_bridge <socket-path>; sets OUT/ERR/RC
 
 assert_silent_success() { # assert_silent_success <label>
     if [ "$RC" -ne 0 ]; then
-        echo "ERROR: caff-bridge exited $RC ($1); the contract is always exit 0" >&2
+        echo "ERROR: decaf-bridge exited $RC ($1); the contract is always exit 0" >&2
         exit 1
     fi
     if [ -n "$OUT" ] || [ -n "$ERR" ]; then
-        echo "ERROR: caff-bridge wrote to stdout/stderr ($1) — it must be silent:" >&2
+        echo "ERROR: decaf-bridge wrote to stdout/stderr ($1) — it must be silent:" >&2
         [ -n "$OUT" ] && echo "stdout: $OUT" >&2
         [ -n "$ERR" ] && echo "stderr: $ERR" >&2
         exit 1

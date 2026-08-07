@@ -14,7 +14,7 @@
 import AppKit
 import SwiftUI
 import os
-import CaffeinateCore
+import DecafCore
 
 @MainActor
 final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
@@ -22,7 +22,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let launchAtLogin: LaunchAtLoginChoice
     private let onFinished: () -> Void
     private var didFinish = false
-    private let logger = Logger(subsystem: "dev.caffeinate.app", category: "onboarding")
+    private let logger = Logger(subsystem: "io.github.alany1an.decaf", category: "onboarding")
 
     /// Indirection so the view's finish action can reach `self.finish()`
     /// (self is not available before super.init).
@@ -51,7 +51,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         )
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)
-        window.title = "Welcome to Caffeinate"
+        window.title = "Welcome to Decaf"
         window.styleMask = [.titled, .closable]
         window.setContentSize(NSSize(width: 520, height: 420))
         window.collectionBehavior = [.fullScreenNone]
@@ -130,7 +130,7 @@ private struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("The caffeinate command, now with a brain.")
                 .font(.title2.bold())
-            Text("Caffeinate keeps your Mac awake while AI coding agents work — and lets it sleep the moment they are idle. Manual keep-awake is one click away.")
+            Text("Decaf keeps your Mac awake while AI coding agents work — and lets it sleep the moment they are idle. Manual keep-awake is one click away.")
 
             VStack(alignment: .leading, spacing: 8) {
                 iconLegendRow(.idle, "Idle — not preventing sleep")
@@ -160,7 +160,7 @@ private struct OnboardingView: View {
                     systemImage: "arrow.left.arrow.right"
                 )
                 Label(
-                    "Can't find it? Open Caffeinate again and its Settings window comes to you.",
+                    "Can't find it? Open Decaf again and its Settings window comes to you.",
                     systemImage: "gearshape"
                 )
             }
@@ -209,7 +209,7 @@ private struct OnboardingView: View {
                 .padding(12)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             } else {
-                Text("No AI coding tools were detected. Caffeinate still works fully as a manual keep-awake utility, and will pick up agents automatically once you install one.")
+                Text("No AI coding tools were detected. Decaf still works fully as a manual keep-awake utility, and will pick up agents automatically once you install one.")
                     .foregroundStyle(.secondary)
             }
 
@@ -232,7 +232,7 @@ private struct OnboardingView: View {
     private var stepFinish: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("You're all set.").font(.title2.bold())
-            Toggle("Launch Caffeinate at login", isOn: $launchAtLoginEnabled)
+            Toggle("Launch Decaf at login", isOn: $launchAtLoginEnabled)
                 .onChange(of: launchAtLoginEnabled) { _, enabled in
                     report(launchAtLogin.set(enabled))
                 }

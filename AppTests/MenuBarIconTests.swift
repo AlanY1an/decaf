@@ -1,7 +1,7 @@
 // The menu bar icon: which of the four states a snapshot maps to, and what the
 // renderer promises about the image it hands back.
 //
-// The mapping is `iconState(for:)` in CaffeinateCore — IconRenderer holds no
+// The mapping is `iconState(for:)` in DecafCore — IconRenderer holds no
 // opinion of its own and calls it — but the priority it encodes is the app's
 // most visible single claim: one glance at the icon has to answer "will this
 // Mac sleep". Every ordering below is a case where two states are true at once
@@ -14,7 +14,7 @@
 import AppKit
 import Foundation
 import Testing
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 @Suite struct IconStatePriority {
@@ -99,20 +99,20 @@ import HookWire
 @Suite struct IconAccessibilityLabels {
 
     @Test func everyStateHasALabel() {
-        #expect(MenuCopy.accessibilityLabel(for: .idle) == "Caffeinate, idle")
+        #expect(MenuCopy.accessibilityLabel(for: .idle) == "Decaf, idle")
         #expect(MenuCopy.accessibilityLabel(for: .agentHold(sessionCount: 1))
-            == "Caffeinate, agent working")
+            == "Decaf, agent working")
         #expect(MenuCopy.accessibilityLabel(for: .agentHold(sessionCount: 3))
-            == "Caffeinate, agents working, 3 sessions")
+            == "Decaf, agents working, 3 sessions")
         #expect(MenuCopy.accessibilityLabel(for: .pausedBySafety)
-            == "Caffeinate, paused by a safety protection")
+            == "Decaf, paused by a safety protection")
     }
 
     /// Not "manual hold active": this state also carries holds whose source the
     /// UI cannot name. "Keeping awake" is true of both.
     @Test func theManualLabelCoversTheUnattributableHoldToo() {
         #expect(MenuCopy.accessibilityLabel(for: .manualHold)
-            == "Caffeinate, keeping the Mac awake")
+            == "Decaf, keeping the Mac awake")
     }
 
     /// A session row that holds is announced as work, which is the only
@@ -125,7 +125,7 @@ import HookWire
                 phase: .working, startedAt: Date()
             )
         ]
-        #expect(MenuTextFormatter.accessibilityLabel(for: s) == "Caffeinate, agent working")
+        #expect(MenuTextFormatter.accessibilityLabel(for: s) == "Decaf, agent working")
     }
 }
 
@@ -182,7 +182,7 @@ import HookWire
         }
     }
 
-    /// Snapshot → image in one step is what `CaffeinateApp` actually calls.
+    /// Snapshot → image in one step is what `DecafApp` actually calls.
     @Test func theSnapshotConvenienceGoesThroughTheSameMapping() {
         let s = AppStateSnapshot(manual: ManualState(mode: .infinite), wantsHold: true)
         #expect(IconRenderer.shared.image(for: s) === IconRenderer.shared.image(for: .manualHold))

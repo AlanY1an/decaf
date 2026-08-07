@@ -48,13 +48,13 @@ public enum SecondLaunchDecision {
     /// order they should try them — Activity Monitor is named in full because
     /// "force quit" means nothing to someone who has never had to.
     public static let notRespondingMessage = SecondLaunchMessage(
-        title: "Caffeinate is already running, but it is not responding.",
+        title: "Decaf is already running, but it is not responding.",
         body: """
         The copy that is running did not answer, so it cannot open its window \
         for you.
 
-        Force-quit it — press Option-Command-Escape, or find Caffeinate in \
-        Activity Monitor — and then open Caffeinate again.
+        Force-quit it — press Option-Command-Escape, or find Decaf in \
+        Activity Monitor — and then open Decaf again.
         """,
         buttonTitle: "OK"
     )

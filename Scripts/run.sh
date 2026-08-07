@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build the app, replace any running instance, and launch the fresh build.
 #
-# xcodebuild only updates the bundle on disk — a Caffeinate already sitting in
+# xcodebuild only updates the bundle on disk — a Decaf already sitting in
 # the menu bar keeps running the old code, which makes UI changes look like
 # they did not land. Always use this instead of launching by hand.
 #
@@ -26,7 +26,7 @@ xcodegen generate >/dev/null
 
 echo "Building…"
 set +e
-xcodebuild -project Caffeinate.xcodeproj -scheme Caffeinate -configuration Debug \
+xcodebuild -project Decaf.xcodeproj -scheme Decaf -configuration Debug \
     CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO build 2>&1 |
     grep -E "error:|warning: .*\.swift|BUILD (SUCCEEDED|FAILED)"
 BUILD_STATUS=${PIPESTATUS[0]}
@@ -38,20 +38,20 @@ set -e
 if [ "$BUILD_STATUS" -ne 0 ]; then
     echo "Build failed (xcodebuild exit $BUILD_STATUS). Not launching." >&2
     echo "For the full log, re-run without the output filter:" >&2
-    echo "  xcodebuild -project Caffeinate.xcodeproj -scheme Caffeinate -configuration Debug build" >&2
+    echo "  xcodebuild -project Decaf.xcodeproj -scheme Decaf -configuration Debug build" >&2
     exit "$BUILD_STATUS"
 fi
 
-APP=$(xcodebuild -project Caffeinate.xcodeproj -scheme Caffeinate -configuration Debug \
+APP=$(xcodebuild -project Decaf.xcodeproj -scheme Decaf -configuration Debug \
     -showBuildSettings 2>/dev/null |
-    awk '/ BUILT_PRODUCTS_DIR =/{print $3}')/Caffeinate.app
+    awk '/ BUILT_PRODUCTS_DIR =/{print $3}')/Decaf.app
 [ -d "$APP" ] || { echo "No product at $APP" >&2; exit 1; }
 
-if pgrep -f "Caffeinate.app/Contents/MacOS/Caffeinate" >/dev/null; then
+if pgrep -f "Decaf.app/Contents/MacOS/Decaf" >/dev/null; then
     echo "Quitting the running instance…"
-    osascript -e 'quit app "Caffeinate"' 2>/dev/null || true
+    osascript -e 'quit app "Decaf"' 2>/dev/null || true
     sleep 2
-    pkill -f "Caffeinate.app/Contents/MacOS/Caffeinate" 2>/dev/null || true
+    pkill -f "Decaf.app/Contents/MacOS/Decaf" 2>/dev/null || true
     sleep 1
 fi
 

@@ -2,7 +2,7 @@
 // the app target's own side of the seam.
 //
 // Why these exist here and not only in Core. `MenuCopy` is unit-tested in
-// CaffeinateCore, but nothing had ever proven that the app actually reaches it:
+// DecafCore, but nothing had ever proven that the app actually reaches it:
 // `MenuTextFormatter` is what `MenuContentView` calls, and until this bundle
 // existed a forwarding function could have been rewritten inline, gone stale,
 // or quietly dropped a clause and every Core test would still have been green.
@@ -17,7 +17,7 @@
 
 import Foundation
 import Testing
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 @Suite struct MenuStatusLineMatrix {

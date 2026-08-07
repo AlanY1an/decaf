@@ -17,7 +17,7 @@
 // deadline all funnel into `reconcile(now:)`, which recomputes everything from
 // the wall clock. The stream only emits when the output value changed.
 
-import CaffeinateCore
+import DecafCore
 import Foundation
 import HookWire
 #if canImport(AppKit)

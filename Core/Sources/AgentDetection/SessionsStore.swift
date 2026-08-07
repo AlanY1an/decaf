@@ -1,7 +1,7 @@
 // SessionsStore — sessions.json persistence with bootTime guard (plan 02 §1.2).
 //
 // Registry changes are debounce-written (≤1 write/second) to
-// ~/Library/Application Support/Caffeinate/sessions.json as
+// ~/Library/Application Support/Decaf/sessions.json as
 // `{ bootTime, sessions: [AgentSession] }`.
 //
 // On app launch the file is read back; if its `bootTime` (sysctl kern.boottime)
@@ -33,7 +33,7 @@ public final class SessionsStore {
 
     private let bootTimeProvider: () -> TimeInterval
     private let debounceInterval: TimeInterval
-    private let queue = DispatchQueue(label: "dev.caffeinate.app.sessions-store", qos: .utility)
+    private let queue = DispatchQueue(label: "io.github.alany1an.decaf.sessions-store", qos: .utility)
     private var pendingSessions: [AgentSession]?
     private var flushScheduled = false
 
@@ -47,14 +47,14 @@ public final class SessionsStore {
         self.bootTimeProvider = bootTimeProvider
     }
 
-    /// ~/Library/Application Support/Caffeinate/sessions.json
+    /// ~/Library/Application Support/Decaf/sessions.json
     public static func defaultFileURL() -> URL {
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory, in: .userDomainMask
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support")
         return base
-            .appendingPathComponent("Caffeinate", isDirectory: true)
+            .appendingPathComponent("Decaf", isDirectory: true)
             .appendingPathComponent("sessions.json", isDirectory: false)
     }
 

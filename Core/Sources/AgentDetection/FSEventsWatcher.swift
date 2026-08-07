@@ -221,7 +221,7 @@ public final class FSEventsWatcher {
     public init(
         roots: [Root] = FSEventsWatcher.defaultRoots(),
         latency: TimeInterval = DetectionDefaults.fseventsLatency,
-        queue: DispatchQueue = DispatchQueue(label: "dev.caffeinate.app.fsevents", qos: .utility),
+        queue: DispatchQueue = DispatchQueue(label: "io.github.alany1an.decaf.fsevents", qos: .utility),
         fileManager: FileManager = .default,
         // Seam, defaulted to the real CoreServices stream. Tests substitute a
         // fake to drive the lifecycle (and assert its queue confinement)

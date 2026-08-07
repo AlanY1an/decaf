@@ -1,4 +1,4 @@
-// WireEvent — the single-line JSON frame sent from caff-bridge to the app socket server.
+// WireEvent — the single-line JSON frame sent from decaf-bridge to the app socket server.
 // The wire protocol's single source of truth is plan 02 §1.4 (review decision R5).
 //
 // Shape (protocol version `v` starts at 1):

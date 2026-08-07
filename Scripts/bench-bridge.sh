@@ -1,7 +1,7 @@
 #!/bin/bash
-# bench-bridge.sh — caff-bridge wall-clock budget benchmark (plan 02 §1.3/§5).
+# bench-bridge.sh — decaf-bridge wall-clock budget benchmark (plan 02 §1.3/§5).
 #
-# Loops N invocations of caff-bridge against a LIVE UNIX-socket listener with a
+# Loops N invocations of decaf-bridge against a LIVE UNIX-socket listener with a
 # realistic UserPromptSubmit payload on stdin, times each run with
 # /usr/bin/time, and prints p50/p99. Fails when p99 breaches the <100 ms hard
 # budget. This is the local acceptance gate the assembly pipeline uses — the
@@ -10,7 +10,7 @@
 # Along the way it also enforces the silence contract on every iteration:
 # exit code 0, empty stdout, empty stderr (plan 02 §1.3 rule 6).
 #
-# Usage: bench-bridge.sh [path-to-caff-bridge] [iterations]
+# Usage: bench-bridge.sh [path-to-decaf-bridge] [iterations]
 #   Without a path, builds the release binary from Core/ first.
 #   Iterations default to 200.
 
@@ -23,13 +23,13 @@ BUDGET_MS=100
 
 BRIDGE="${1:-}"
 if [ -z "$BRIDGE" ]; then
-    echo "==> Building caff-bridge (release)"
+    echo "==> Building decaf-bridge (release)"
     swift build -c release --package-path Core --scratch-path Core/.build-bench \
-        --product caff-bridge
-    BRIDGE="Core/.build-bench/release/caff-bridge"
+        --product decaf-bridge
+    BRIDGE="Core/.build-bench/release/decaf-bridge"
 fi
 if [ ! -x "$BRIDGE" ]; then
-    echo "ERROR: caff-bridge binary not found at: $BRIDGE" >&2
+    echo "ERROR: decaf-bridge binary not found at: $BRIDGE" >&2
     exit 1
 fi
 if ! command -v python3 >/dev/null; then
@@ -38,7 +38,7 @@ if ! command -v python3 >/dev/null; then
 fi
 
 # Short workdir: the socket path must stay far below sun_path's 104-byte cap.
-WORKDIR=$(mktemp -d /tmp/caffbench.XXXXXX)
+WORKDIR=$(mktemp -d /tmp/decafbench.XXXXXX)
 SOCK="$WORKDIR/agent.sock"
 LISTENER_PID=""
 cleanup() {
@@ -79,9 +79,9 @@ if [ ! -S "$SOCK" ]; then
 fi
 
 # Realistic UserPromptSubmit stdin (field names match the recorded fixtures in
-# Core/Tests/CaffeinateCoreTests/Fixtures/).
+# Core/Tests/DecafCoreTests/Fixtures/).
 PAYLOAD='{"session_id":"bench-0000","transcript_path":"/tmp/bench/t.jsonl","cwd":"/tmp/bench","prompt_id":"p-1","permission_mode":"default","hook_event_name":"UserPromptSubmit","prompt":"bench"}'
-export CAFF_BRIDGE_SOCKET="$SOCK"
+export DECAF_BRIDGE_SOCKET="$SOCK"
 
 echo "==> Warm-up (3 unmeasured runs)"
 for _ in 1 2 3; do
@@ -97,17 +97,17 @@ TIMES="$WORKDIR/times.txt"
 for i in $(seq 1 "$ITERATIONS"); do
     if ! printf '%s' "$PAYLOAD" | /usr/bin/time -p "$BRIDGE" \
             > "$WORKDIR/out.txt" 2> "$WORKDIR/timing.txt"; then
-        echo "ERROR: caff-bridge exited non-zero on iteration $i" >&2
+        echo "ERROR: decaf-bridge exited non-zero on iteration $i" >&2
         exit 1
     fi
     if [ -s "$WORKDIR/out.txt" ]; then
-        echo "ERROR: caff-bridge wrote to stdout on iteration $i (must be silent)" >&2
+        echo "ERROR: decaf-bridge wrote to stdout on iteration $i (must be silent)" >&2
         exit 1
     fi
     # stderr must contain exactly /usr/bin/time's own three lines — anything
     # else came from the bridge, which the contract forbids.
     if grep -vqE '^(real|user|sys)[[:space:]]' "$WORKDIR/timing.txt"; then
-        echo "ERROR: caff-bridge wrote to stderr on iteration $i (must be silent):" >&2
+        echo "ERROR: decaf-bridge wrote to stderr on iteration $i (must be silent):" >&2
         grep -vE '^(real|user|sys)[[:space:]]' "$WORKDIR/timing.txt" >&2
         exit 1
     fi
@@ -140,7 +140,7 @@ display_ms() {
 }
 
 echo
-echo "caff-bridge wall clock over $ITERATIONS runs (live socket, 10 ms resolution):"
+echo "decaf-bridge wall clock over $ITERATIONS runs (live socket, 10 ms resolution):"
 echo "    p50: $(display_ms "$P50_MS") ms"
 echo "    p99: $(display_ms "$P99_MS") ms"
 

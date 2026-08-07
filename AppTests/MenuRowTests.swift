@@ -1,10 +1,10 @@
 // The rows under the status line, and the presets the menu shares with
 // Settings — the arithmetic and wording the app target genuinely owns rather
-// than forwards to CaffeinateCore.
+// than forwards to DecafCore.
 
 import Foundation
 import Testing
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 @Suite struct SessionRowWording {

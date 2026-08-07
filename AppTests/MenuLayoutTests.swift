@@ -28,7 +28,7 @@
 
 import Foundation
 import Testing
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 // MARK: - Fixtures

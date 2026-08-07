@@ -4,7 +4,7 @@
 // shapes only. Consumed by the composition root (plan 01 PR-6): holdSources are
 // folded into HoldRequest entries there (fallbackActivity → .agentFallback).
 
-import CaffeinateCore
+import DecafCore
 import Foundation
 import HookWire
 

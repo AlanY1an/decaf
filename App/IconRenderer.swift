@@ -6,11 +6,11 @@
 //
 // This file is drawing only. `MenuBarIconState`, the snapshot → state mapping
 // (priority pausedBySafety > agentHold > manualHold > idle) and the
-// accessibility strings live in CaffeinateCore's MenuPresentation, where they
+// accessibility strings live in DecafCore's MenuPresentation, where they
 // are unit-tested; nothing here decides anything.
 
 import AppKit
-import CaffeinateCore
+import DecafCore
 
 // MARK: - Renderer
 

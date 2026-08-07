@@ -6,7 +6,7 @@
 # Deliberately absent, do not add without a decision:
 #   - any `on: push: tags:` trigger, or any release/publish job. There is no
 #     path from a git tag to an artifact leaving this repository.
-#   - the caff-bridge <100 ms latency budget. Hosted runners are too jittery to
+#   - the decaf-bridge <100 ms latency budget. Hosted runners are too jittery to
 #     assert a wall-clock budget on; that gate is local, in Scripts/bench-bridge.sh.
 name: CI
 
@@ -67,7 +67,7 @@ jobs:
           restore-keys: |
             spm-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-
 
-      # Builds the library targets AND the caff-bridge / caff-smoke executables,
+      # Builds the library targets AND the decaf-bridge / decaf-smoke executables,
       # which `swift test` on its own would not.
       - name: Build
         run: swift build --package-path Core
@@ -98,7 +98,7 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      # Caffeinate.xcodeproj is generated and gitignored; project.yml is the only
+      # Decaf.xcodeproj is generated and gitignored; project.yml is the only
       # source of truth (plan 06 §3). This step is what proves the manifest is
       # still valid — a contributor cannot break it without CI noticing.
       - name: Generate Xcode project
@@ -106,13 +106,13 @@ jobs:
 
       # No signing on CI: CODE_SIGNING_ALLOWED=NO. The Release configuration is
       # the one that ships, and it is also the only one that exercises the
-      # "Embed caff-bridge" post-build script the way release.sh will.
+      # "Embed decaf-bridge" post-build script the way release.sh will.
       - name: Build app (Release, unsigned)
         run: |
           set -euo pipefail
           xcodebuild \
-            -project Caffeinate.xcodeproj \
-            -scheme Caffeinate \
+            -project Decaf.xcodeproj \
+            -scheme Decaf \
             -configuration Release \
             -destination 'generic/platform=macOS' \
             -derivedDataPath build/ci-derived-data \
@@ -120,14 +120,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Verify caff-bridge is embedded
+      - name: Verify decaf-bridge is embedded
         run: |
           set -euo pipefail
-          APP="build/ci-derived-data/Build/Products/Release/Caffeinate.app"
-          BRIDGE="$APP/Contents/Helpers/caff-bridge"
+          APP="build/ci-derived-data/Build/Products/Release/Decaf.app"
+          BRIDGE="$APP/Contents/Helpers/decaf-bridge"
           if [ ! -x "$BRIDGE" ]; then
             echo "::error::$BRIDGE is missing from the built bundle."
-            echo "The 'Embed caff-bridge' post-build script in project.yml did not run."
+            echo "The 'Embed decaf-bridge' post-build script in project.yml did not run."
             find "$APP" -type f | head -50
             exit 1
           fi
@@ -137,27 +137,27 @@ jobs:
       # separately built copy: otool -L whitelist, <2 MB size, silent-exit smoke
       # (plan 06 §2/§5, review decision R4).
       - name: check-bridge (dependency discipline)
-        run: ./Scripts/check-bridge.sh "build/ci-derived-data/Build/Products/Release/Caffeinate.app/Contents/Helpers/caff-bridge"
+        run: ./Scripts/check-bridge.sh "build/ci-derived-data/Build/Products/Release/Decaf.app/Contents/Helpers/decaf-bridge"
 
       # The app layer's own tests (plan 06 §4.1). Safe on a headless runner
       # BECAUSE the bundle is a logic test bundle with no TEST_HOST: nothing
-      # launches Caffeinate.app, so there is no LSUIElement app waiting on a
+      # launches Decaf.app, so there is no LSUIElement app waiting on a
       # window server, and no hooks probe reading a real ~/.claude. If this ever
       # starts hanging, the first thing to check is whether a TEST_HOST crept
       # into project.yml — that would be the bug, not this step.
       #
       # `-only-testing` keeps the step honest about what it runs; the app build
       # above is what proves the app compiles.
-      - name: Test app layer (CaffeinateAppTests)
+      - name: Test app layer (DecafAppTests)
         run: |
           set -euo pipefail
           xcodebuild \
-            -project Caffeinate.xcodeproj \
-            -scheme Caffeinate \
+            -project Decaf.xcodeproj \
+            -scheme Decaf \
             -configuration Release \
             -destination 'platform=macOS' \
             -derivedDataPath build/ci-derived-data \
-            -only-testing:CaffeinateAppTests \
+            -only-testing:DecafAppTests \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             test
@@ -169,6 +169,6 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          if [ -d AppTests ] && ! grep -q '^  CaffeinateAppTests:' project.yml; then
-            echo "::warning file=project.yml::AppTests/ contains test sources but project.yml declares no CaffeinateAppTests target, so those tests run nowhere. Core's tests still run in the 'core' job."
+          if [ -d AppTests ] && ! grep -q '^  DecafAppTests:' project.yml; then
+            echo "::warning file=project.yml::AppTests/ contains test sources but project.yml declares no DecafAppTests target, so those tests run nowhere. Core's tests still run in the 'core' job."
           fi

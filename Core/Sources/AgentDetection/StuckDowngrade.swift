@@ -18,7 +18,7 @@
 //    here too). `cwd` is a path the user chose and the menu already displays.
 
 import Foundation
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 /// One `.working` session that the stuck predicate found self-contradictory.
@@ -88,7 +88,7 @@ extension StuckDowngrade {
             identifier: "stuck-session.\(sessionID)",
             title: "Stopped keeping this Mac awake",
             body: "\(subject) has been silent for \(StuckDowngrade.durationPhrase(silentFor)) "
-                + "— no tool calls, no transcript writes, no CPU. Caffeinate released its hold, "
+                + "— no tool calls, no transcript writes, no CPU. Decaf released its hold, "
                 + "so this Mac can sleep again. It resumes on its own if the session comes back."
         )
     }

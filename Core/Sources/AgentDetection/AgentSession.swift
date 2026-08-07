@@ -62,7 +62,7 @@ public struct AgentSession: Equatable, Codable, Sendable {
     /// Registration instant; drives the UI's "working for 12 min" label
     /// (review decision R12).
     public let startedAt: Date
-    /// The agent process pid reported by caff-bridge (used for liveness sweeps).
+    /// The agent process pid reported by decaf-bridge (used for liveness sweeps).
     public var ppid: pid_t
     /// Session working directory; the UI derives the project name from it.
     public var cwd: String?

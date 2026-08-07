@@ -1,14 +1,14 @@
 // AppEnvironment — the single composition point of the UI layer (plan 04 §1).
 //
 // Assembly note (plan 01 PR-6, review decision R11): the UI is wired to the
-// real CompositionRoot (CaffeinateComposition):
+// real CompositionRoot (DecafComposition):
 //   - AppStateStore mirrors the root's published AppStateSnapshot.
 //   - AppCommands is the root itself (engine + ManualHoldController underneath).
 //   - AgentIntegrationsProviding is adapted onto plan 03's ClaudeCodeIntegration,
 //     with probe results fed back into the detection coordinator.
 //   - The single-instance check is the socket bind (R11): CompositionRoot.start()
 //     reports .anotherInstanceRunning when a live listener answers.
-// All views depend only on the protocols/types here plus CaffeinateCore contracts.
+// All views depend only on the protocols/types here plus DecafCore contracts.
 
 import AppKit
 import Combine
@@ -16,17 +16,17 @@ import Foundation
 import ServiceManagement
 import SwiftUI
 import AgentDetection
-import CaffeinateCore
-import CaffeinateComposition
+import DecafCore
+import DecafComposition
 import HookWire
 
 // MARK: - Launch at login (the one ServiceManagement call site)
 
-/// `SMAppService.mainApp` behind CaffeinateCore's protocol. The whole reason
+/// `SMAppService.mainApp` behind DecafCore's protocol. The whole reason
 /// this adapter is three lines: every rule about registering the login item —
 /// the no-op guard, `.requiresApproval`, mirroring failure back into the
 /// toggle, applying the onboarding choice exactly once — is unit-tested in
-/// CaffeinateCore, and nothing that matters is left in here.
+/// DecafCore, and nothing that matters is left in here.
 final class SMAppServiceRegistrar: LaunchAtLoginRegistering {
     static let shared = SMAppServiceRegistrar()
 
@@ -46,7 +46,7 @@ final class SMAppServiceRegistrar: LaunchAtLoginRegistering {
 
 // MARK: - AppStateStore (plan 04 §1 contract shape)
 
-/// CaffeinateCore → UI: the single data channel. The UI is a pure function of
+/// DecafCore → UI: the single data channel. The UI is a pure function of
 /// `snapshot`. Fed by the composition root's published snapshot.
 @MainActor
 final class AppStateStore: ObservableObject {
@@ -62,10 +62,10 @@ final class AppStateStore: ObservableObject {
     }
 }
 
-// MARK: - Settings (SwiftUI-observable wrapper over CaffeinateCore.SettingsStore)
+// MARK: - Settings (SwiftUI-observable wrapper over DecafCore.SettingsStore)
 
 /// Observable write-through wrapper so views can bind to preferences.
-/// `SettingsStore` (CaffeinateCore) stays the single source of truth for keys
+/// `SettingsStore` (DecafCore) stays the single source of truth for keys
 /// and defaults (plan 04 §5); this class adds ObservableObject only.
 @MainActor
 final class UISettings: ObservableObject {
@@ -464,7 +464,7 @@ final class AppEnvironment {
         let store = AppStateStore(snapshot: root.snapshot)
 
         let bundledBridgePath = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/caff-bridge").path
+            .appendingPathComponent("Contents/Helpers/decaf-bridge").path
         let bridgeVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
             ?? "0.0.0-dev"
         let claudeIntegration = ClaudeCodeIntegration(

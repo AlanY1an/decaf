@@ -11,12 +11,12 @@
 // The panel is a THIN VIEW. It owns one input, a preview line and two buttons;
 // every judgement it appears to make — whether a typed duration is readable, in
 // range, what instant it means, which words to say when it is not — is
-// `CaffeinateCore.CustomHoldInput`, unit-tested next to the rest of the "when
+// `DecafCore.CustomHoldInput`, unit-tested next to the rest of the "when
 // does this hold end" math (plan 04 step 3 acceptance).
 //
 // Two properties this file is responsible for, both of which are easy to lose:
 //
-// - **It comes to the front and takes the keyboard.** Caffeinate is
+// - **It comes to the front and takes the keyboard.** Decaf is
 //   `LSUIElement`: it has no Dock icon and is not a foreground app, so a window
 //   ordered front from a menu can appear behind whatever the user was doing and
 //   never become key. `OnboardingWindow` already solved this — `NSApp.activate`
@@ -32,7 +32,7 @@
 
 import AppKit
 import SwiftUI
-import CaffeinateCore
+import DecafCore
 
 // MARK: - Presenter
 

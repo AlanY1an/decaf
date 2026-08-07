@@ -7,7 +7,7 @@
 //   Do-Not-Disturb style), never a countdown (plan 04 §3 / review decision R7).
 //
 // This file is assembly only. Every user-visible string comes from
-// MenuTextFormatter (pure, unit-tested next door) or from CaffeinateCore's copy
+// MenuTextFormatter (pure, unit-tested next door) or from DecafCore's copy
 // owners, never inline here (plan 04 step 3 acceptance) — and the one group
 // whose SHAPE varies with state, the rows above the first divider, is decided
 // by MenuLayout (also pure, also next door) so the App test bundle can assert
@@ -15,7 +15,7 @@
 
 import AppKit
 import SwiftUI
-import CaffeinateCore
+import DecafCore
 import HookWire
 
 // MARK: - MenuContentView (plan 04 §3 structure, top to bottom)
@@ -209,7 +209,7 @@ struct MenuContentView: View {
         // cards: one quiet line explaining the two rows above it.
         //
         // Not left to the tooltips alone. "Turn Off Display Now" sits one line
-        // from "Quit Caffeinate" and reads like an off switch — the fear it
+        // from "Quit Decaf" and reads like an off switch — the fear it
         // raises is that darkening the screen also stops the agent that is
         // mid-run, which is the exact opposite of what this app does. A
         // reassurance that only appears after a two-second hover is a
@@ -227,7 +227,7 @@ struct MenuContentView: View {
         }
         .keyboardShortcut(",")
 
-        Button("Quit Caffeinate") {
+        Button("Quit Decaf") {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q")

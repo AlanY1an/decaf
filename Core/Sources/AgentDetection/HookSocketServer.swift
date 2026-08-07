@@ -1,7 +1,7 @@
 // HookSocketServer — L1 UNIX-domain-socket listener (plan 02 §1.4, step 4).
 //
-// Receives single-line WireEvent JSON frames from caff-bridge over
-// ~/Library/Application Support/Caffeinate/agent.sock and feeds them into an
+// Receives single-line WireEvent JSON frames from decaf-bridge over
+// ~/Library/Application Support/Decaf/agent.sock and feeds them into an
 // AsyncStream consumed by DetectionCoordinator. Design decisions (plan 02 §1.4):
 // - BSD sockets + DispatchSource, not Network.framework (UDS support there has
 //   historical quirks; a few dozen lines of POSIX are more controllable and
@@ -39,7 +39,7 @@ public enum HookSocketServerError: Error, Equatable, Sendable {
     /// The socket path exceeds sun_path's 104-byte limit (plan 02 risk R7):
     /// the caller must disable L1 and surface the degradation.
     case socketPathTooLong(path: String)
-    /// bind failed and a live listener answered the path: another Caffeinate
+    /// bind failed and a live listener answered the path: another Decaf
     /// instance is running (plan 02 §1.4 single-instance lock; the app shell
     /// owns the user-facing behavior per review decision R11).
     case anotherInstanceRunning(path: String)
@@ -60,7 +60,7 @@ public final class HookSocketServer: @unchecked Sendable {
     public static let controlReplyReapAfter: TimeInterval = 10
 
     /// Answers a control frame. Installed by the composition root; nil in the
-    /// bare pipe (caff-smoke, the plain-delivery tests), where control frames
+    /// bare pipe (decaf-smoke, the plain-delivery tests), where control frames
     /// are declined immediately rather than left to time out.
     ///
     /// The handler is handed the request and a completion it must call exactly
@@ -69,10 +69,10 @@ public final class HookSocketServer: @unchecked Sendable {
     /// case the caller is trying to detect.
     public var controlHandler: (@Sendable (ControlRequest, @escaping @Sendable (Bool) -> Void) -> Void)?
 
-    /// ~/Library/Application Support/Caffeinate/agent.sock (plan 02 §1.4).
+    /// ~/Library/Application Support/Decaf/agent.sock (plan 02 §1.4).
     public static var defaultSocketPath: String {
         (NSHomeDirectory() as NSString)
-            .appendingPathComponent("Library/Application Support/Caffeinate/agent.sock")
+            .appendingPathComponent("Library/Application Support/Decaf/agent.sock")
     }
 
     /// Decoded frames, in arrival order. Single consumer: DetectionCoordinator.
@@ -81,8 +81,8 @@ public final class HookSocketServer: @unchecked Sendable {
     public let socketPath: String
 
     private let continuation: AsyncStream<WireEvent>.Continuation
-    private let queue = DispatchQueue(label: "dev.caffeinate.app.hook-socket-server")
-    private let logger = Logger(subsystem: "dev.caffeinate.app", category: "HookSocketServer")
+    private let queue = DispatchQueue(label: "io.github.alany1an.decaf.hook-socket-server")
+    private let logger = Logger(subsystem: "io.github.alany1an.decaf", category: "HookSocketServer")
     private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private var connections: [Int32: Connection] = [:]

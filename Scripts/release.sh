@@ -34,36 +34,33 @@ cd "$(dirname "$0")/.."
 REPO_ROOT="$PWD"
 
 # --------------------------------------------------------------------------
-# PENDING AUTHOR DECISIONS — placeholders, deliberately unresolved.
-# See docs/launch/README-REVIEW.md §2 and plan 06 "开放问题".
+# FROZEN IDENTITY (author decision, 2026-08-07, with the Caffeinate → Decaf
+# rename). These were the last pending decisions; they are now settled.
 # --------------------------------------------------------------------------
 
-# Decision 2 (bundle ID). project.yml currently ships this placeholder; it is not
-# a legitimate reverse-DNS name unless the author owns caffeinate.dev. Shipping a
-# public build under it would bake it into the notarization record, the prefs
-# domain and ~/Library/Application Support — all of which are painful to change
-# after the first public release. So: hard stop until it is frozen.
+# The bundle ID that must never ship again. The old placeholder was not a
+# legitimate reverse-DNS name — nobody owns caffeinate.dev — and a public build
+# under it would bake it into the notarization record, the prefs domain and
+# ~/Library/Application Support. It is frozen to io.github.alany1an.decaf in
+# project.yml; this stays as a tripwire so a revert cannot ship silently.
 PLACEHOLDER_BUNDLE_ID="dev.caffeinate.app"
 
-# Decisions 1 and 3 (GitHub owner, repo name casing). Only needed to render the
-# download URL in the cask and appcast snippets, so these degrade to a visible
-# placeholder in the output rather than blocking the build.
-# No angle brackets: these strings land inside XML attribute values, where '<' is
-# not legal — a placeholder must not cost the emitted appcast its well-formedness.
-GITHUB_OWNER="${CAFF_GITHUB_OWNER:-OWNER-UNDECIDED}"
-REPO_NAME="${CAFF_REPO_NAME:-REPO-NAME-UNDECIDED}"
+# GitHub owner and repo name, frozen. Only used to render the download URL in
+# the cask and appcast snippets. Still overridable for a fork or a rehearsal.
+GITHUB_OWNER="${DECAF_GITHUB_OWNER:-AlanY1an}"
+REPO_NAME="${DECAF_REPO_NAME:-decaf}"
 
 # Overridable, but these are the intended defaults.
-#   CAFF_SIGN_IDENTITY  full identity string, e.g.
+#   DECAF_SIGN_IDENTITY  full identity string, e.g.
 #                       "Developer ID Application: Jane Doe (AB12CD34EF)"
 #                       Unset → the script finds the sole Developer ID in the keychain.
-#   CAFF_NOTARY_PROFILE the `xcrun notarytool store-credentials` profile name.
-SIGN_IDENTITY="${CAFF_SIGN_IDENTITY:-}"
-NOTARY_PROFILE="${CAFF_NOTARY_PROFILE:-AC_NOTARY}"
+#   DECAF_NOTARY_PROFILE the `xcrun notarytool store-credentials` profile name.
+SIGN_IDENTITY="${DECAF_SIGN_IDENTITY:-}"
+NOTARY_PROFILE="${DECAF_NOTARY_PROFILE:-AC_NOTARY}"
 
-APP_NAME="Caffeinate"
-SCHEME="Caffeinate"
-PROJECT="Caffeinate.xcodeproj"
+APP_NAME="Decaf"
+SCHEME="Decaf"
+PROJECT="Decaf.xcodeproj"
 MIN_MACOS="14.0"   # Core/Package.swift .macOS(.v14)
 
 # --------------------------------------------------------------------------
@@ -179,7 +176,7 @@ BUILD_NUMBER="$(awk -F: '/^[[:space:]]*CURRENT_PROJECT_VERSION:/ {
     }' project.yml)"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 
-# --- 1c. Bundle ID must be frozen (author decision 2) ---------------------
+# --- 1c. Bundle ID must not have regressed to the old placeholder ---------
 BUNDLE_ID="$(awk -F: '/^[[:space:]]*PRODUCT_BUNDLE_IDENTIFIER:/ {
         sub(/#.*/, "", $2); gsub(/[[:space:]"'\'']/, "", $2); print $2; exit
     }' project.yml)"
@@ -187,15 +184,14 @@ BUNDLE_ID="$(awk -F: '/^[[:space:]]*PRODUCT_BUNDLE_IDENTIFIER:/ {
 if [ -z "$BUNDLE_ID" ]; then
     blocker "Could not read PRODUCT_BUNDLE_IDENTIFIER from project.yml."
 elif [ "$BUNDLE_ID" = "$PLACEHOLDER_BUNDLE_ID" ]; then
-    blocker "BUNDLE ID IS STILL THE PLACEHOLDER '$PLACEHOLDER_BUNDLE_ID'.
-       This is pending author decision 2 (docs/launch/README-REVIEW.md §2).
-       It is the single most irreversible string in the project: it fixes the
-       preferences domain, the login-item registration identity, the owner of
-       ~/Library/Application Support/Caffeinate/, and the notarization record.
+    blocker "BUNDLE ID HAS REVERTED TO THE RETIRED PLACEHOLDER '$PLACEHOLDER_BUNDLE_ID'.
+       The frozen value is io.github.alany1an.decaf. This is the single most
+       irreversible string in the project: it fixes the preferences domain, the
+       login-item registration identity, the owner of
+       ~/Library/Application Support/Decaf/, and the notarization record.
        Changing it after the first public release silently breaks every existing
-       install. Freeze it in project.yml (PRODUCT_BUNDLE_IDENTIFIER and
-       bundleIdPrefix) before any build leaves this machine.
-       This script will not choose one for you."
+       install. Restore it in project.yml (PRODUCT_BUNDLE_IDENTIFIER and
+       bundleIdPrefix) before any build leaves this machine."
 else
     ok "bundle ID $BUNDLE_ID (frozen)"
 fi
@@ -207,9 +203,9 @@ DEVELOPER_ID_LINES="$(printf '%s\n' "$IDENTITY_LIST" | grep '"Developer ID Appli
 
 if [ -n "$SIGN_IDENTITY" ]; then
     if printf '%s\n' "$DEVELOPER_ID_LINES" | grep -qF "$SIGN_IDENTITY"; then
-        ok "signing identity (from CAFF_SIGN_IDENTITY): $SIGN_IDENTITY"
+        ok "signing identity (from DECAF_SIGN_IDENTITY): $SIGN_IDENTITY"
     else
-        blocker "CAFF_SIGN_IDENTITY is set to:
+        blocker "DECAF_SIGN_IDENTITY is set to:
            $SIGN_IDENTITY
        but no such Developer ID Application identity is in the keychain.
        Available codesigning identities:
@@ -222,7 +218,7 @@ elif [ -z "$DEVELOPER_ID_LINES" ]; then
        — enrollment can take 24 hours to two weeks), then Xcode →
        Settings → Accounts → Manage Certificates → + → Developer ID Application.
        Without it there is no signature, so no notarization, so a clean Mac shows
-       'Caffeinate is damaged and can't be opened'.
+       'Decaf is damaged and can't be opened'.
        Identities currently available for codesigning:
 $(printf '%s\n' "${IDENTITY_LIST:-  (none)}" | sed 's/^/         /')
        Re-run with --dry-run to exercise everything up to and including the DMG."
@@ -233,7 +229,7 @@ else
 $(printf '%s\n' "$DEVELOPER_ID_LINES" | sed 's/^/         /')
        Pick one explicitly so the release is not signed by whichever the keychain
        happened to return first:
-           CAFF_SIGN_IDENTITY='Developer ID Application: … (TEAMID)' Scripts/release.sh"
+           DECAF_SIGN_IDENTITY='Developer ID Application: … (TEAMID)' Scripts/release.sh"
     else
         SIGN_IDENTITY="$(printf '%s\n' "$DEVELOPER_ID_LINES" \
             | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p')"
@@ -279,7 +275,7 @@ if [ "$NOTARY_OK" -eq 0 ]; then
                --apple-id '<your-apple-id>' \\
                --team-id '${TEAM_ID:-<TEAMID>}' \\
                --password '<app-specific-password>'
-       Use a different profile name by exporting CAFF_NOTARY_PROFILE.
+       Use a different profile name by exporting DECAF_NOTARY_PROFILE.
        (If you are offline, this check cannot distinguish 'no credentials' from
        'no network' — verify with: xcrun notarytool history --keychain-profile '$NOTARY_PROFILE')"
 fi
@@ -385,8 +381,8 @@ fi
 step "App test bundle"
 if [ "$SKIP_TESTS" -eq 1 ]; then
     skip "--skip-tests given"
-elif ! grep -q '^  CaffeinateAppTests:' project.yml; then
-    skip "no CaffeinateAppTests target in project.yml"
+elif ! grep -q '^  DecafAppTests:' project.yml; then
+    skip "no DecafAppTests target in project.yml"
 else
     # A logic bundle with no TEST_HOST, so nothing launches the app and this is
     # safe to run unattended. Same configuration as the archive below.
@@ -400,29 +396,29 @@ else
         -configuration Release \
         -destination 'platform=macOS' \
         -derivedDataPath "$REPO_ROOT/build/release-test-dd" \
-        -only-testing:CaffeinateAppTests \
+        -only-testing:DecafAppTests \
         CODE_SIGNING_ALLOWED=NO \
         CODE_SIGNING_REQUIRED=NO \
         2>&1 | grep -E "error:|Test run with|TEST (SUCCEEDED|FAILED)" | tail -3
     APP_TEST_STATUS=${PIPESTATUS[0]}
     set -e
-    [ "$APP_TEST_STATUS" -eq 0 ] || die "CaffeinateAppTests failed (xcodebuild exit $APP_TEST_STATUS).
+    [ "$APP_TEST_STATUS" -eq 0 ] || die "DecafAppTests failed (xcodebuild exit $APP_TEST_STATUS).
    Re-run without the output filter to see which test:
        xcodebuild test -project $PROJECT -scheme $SCHEME -configuration Release \\
-           -destination 'platform=macOS' -only-testing:CaffeinateAppTests"
-    ok "CaffeinateAppTests passed"
+           -destination 'platform=macOS' -only-testing:DecafAppTests"
+    ok "DecafAppTests passed"
 fi
 
 # ==========================================================================
 # 4. Bridge dependency discipline
 # ==========================================================================
-# caff-bridge ships inside the bundle and is signed with it; a bridge that picked
+# decaf-bridge ships inside the bundle and is signed with it; a bridge that picked
 # up a non-system dependency would fail notarization at step 8 rather than here
 # (plan 06 §2, review decision R4).
 
 step "check-bridge (linked-library whitelist, size, smoke)"
 ./Scripts/check-bridge.sh >/dev/null
-ok "caff-bridge links system libraries only, is under budget, and is silent"
+ok "decaf-bridge links system libraries only, is under budget, and is silent"
 
 # ==========================================================================
 # 5. Archive
@@ -466,10 +462,10 @@ ok "archived $ARCHIVED_APP"
 
 # The embedded bridge is the classic notarization rejection: it is copied in by a
 # post-build script, so it is easy for it to end up unsigned or missing.
-EMBEDDED_BRIDGE="$ARCHIVED_APP/Contents/Helpers/caff-bridge"
-[ -x "$EMBEDDED_BRIDGE" ] || die "embedded helper missing: Contents/Helpers/caff-bridge
-   The 'Embed caff-bridge' post-build script in project.yml did not run or failed."
-ok "embedded Contents/Helpers/caff-bridge present"
+EMBEDDED_BRIDGE="$ARCHIVED_APP/Contents/Helpers/decaf-bridge"
+[ -x "$EMBEDDED_BRIDGE" ] || die "embedded helper missing: Contents/Helpers/decaf-bridge
+   The 'Embed decaf-bridge' post-build script in project.yml did not run or failed."
+ok "embedded Contents/Helpers/decaf-bridge present"
 
 # ==========================================================================
 # 6. Verify signatures before spending time on notarization
@@ -585,7 +581,7 @@ else
         die "notarization was not Accepted (submission ${SUBMISSION_ID:-unknown}).
    Full submit output: $SUBMIT_LOG
    The usual cause is an unsigned or non-hardened nested binary — check
-   Contents/Helpers/caff-bridge first (plan 06 risk table)."
+   Contents/Helpers/decaf-bridge first (plan 06 risk table)."
     fi
     ok "notarization Accepted (submission $SUBMISSION_ID)"
 fi
@@ -687,21 +683,14 @@ printf '%s%s%s\n' "$C_BOLD" "---------------------------------------------------
 
 # Homebrew cask fields (plan 06 §8). Printed, not written: the tap is a separate
 # repository and this script must not touch anything outside build/.
-printf '\nCask fields for %s/homebrew-*/Casks/caffeinate.rb:\n' "$GITHUB_OWNER"
+printf '\nCask fields for %s/homebrew-decaf/Casks/decaf.rb:\n' "$GITHUB_OWNER"
 printf '  version "%s"\n' "$VERSION"
 printf '  sha256 "%s"\n' "$DMG_SHA256"
-
-if printf '%s%s' "$GITHUB_OWNER" "$REPO_NAME" | grep -q 'UNDECIDED'; then
-    printf '\n%sNOTE%s the download URL above contains a placeholder — the GitHub owner\n' \
-        "$C_YELLOW" "$C_OFF"
-    printf '     and/or repo name are pending author decisions 1 and 3.\n'
-    printf '     Re-run with CAFF_GITHUB_OWNER=… CAFF_REPO_NAME=… once they are frozen.\n'
-fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
     printf '\n%s%sDRY RUN COMPLETE.%s The DMG above is unsigned and un-notarized: it exists to\n' \
         "$C_BOLD" "$C_YELLOW" "$C_OFF"
-    printf 'prove the pipeline runs, and it would show "Caffeinate is damaged" on any Mac\n'
+    printf 'prove the pipeline runs, and it would show "Decaf is damaged" on any Mac\n'
     printf 'other than this one. Do not distribute it. Nothing was published.\n'
 else
     printf '\n%sNext steps are MANUAL and are not performed by this script%s (plan 06 §10):\n' \

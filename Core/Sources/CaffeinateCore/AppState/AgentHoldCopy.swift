@@ -76,6 +76,53 @@ public enum AgentHoldCopy {
             : "\(name) open, not working · \(agentCount) agents"
     }
 
+    // MARK: - The menu's mode toggle
+
+    /// The menu item that switches the hold mode, in the shape `Keep Display On`
+    /// established: one checkable line that writes the persisted default.
+    ///
+    /// Why a Toggle and not the two-value picker Settings uses. In Settings the
+    /// popup is right — it shows both behaviours side by side and neither is
+    /// "off". In the menu a two-item radio submenu costs a hover plus a scan to
+    /// read a binary, and `MenuBarExtra(.menu)` renders a checked Toggle as
+    /// exactly the affordance a user already knows. One checkable line says it.
+    ///
+    /// Why the title is longer than its neighbours. This string is the whole
+    /// explanation. Someone opening this menu has not read the Settings footer
+    /// and may never, so "While an agent is running" — perfectly clear once you
+    /// know the app distinguishes running from working — would land as a
+    /// tautology: of course it keeps the Mac awake while the agent runs, that
+    /// is the app. The word that carries the meaning is **idle**, and it names
+    /// the case the checkmark actually adds: the agent is open and doing
+    /// nothing. "Even" makes it read as an addition to the default rather than
+    /// a replacement for it.
+    ///
+    /// It is not left to the tooltip, for R17's reason: a tooltip needs a
+    /// two-second hover, and most people never hover.
+    public static let menuToggleTitle = "Keep Awake Even When an Agent Is Idle"
+
+    /// The toggle's `.help()` — what the two positions do, and how well this
+    /// particular Mac can deliver the checked one.
+    ///
+    /// The coverage clause is the same one Settings shows, from the same
+    /// function, because it is the same admission: with neither hooks nor a
+    /// process scan, "even when idle" cannot be delivered — file writes see
+    /// activity, never presence — and a control that quietly does less than its
+    /// label is the class of small lie this project keeps removing.
+    ///
+    /// The tooltip is the right place for THAT clause even though it is the
+    /// wrong place for the title above. The title has to teach the control to
+    /// someone who has not decided anything yet; the caveat only matters to
+    /// someone who has already turned it on, whose next stop is Settings ›
+    /// Agents, where the same sentence sits in the open under the picker.
+    ///
+    /// - Parameter coverage: `AppStateSnapshot.summaryRunningModeCoverage`.
+    public static func menuToggleHelp(coverage: RunningModeCoverage?) -> String {
+        AgentHoldMode.whileRunning.explanation
+            + " Unchecked, the hold ends when the agent finishes and the Mac sleeps normally."
+            + " " + coverageClause(coverage)
+    }
+
     // MARK: - Settings › Agents
 
     /// The Settings row label. Reads as the first half of a sentence the popup

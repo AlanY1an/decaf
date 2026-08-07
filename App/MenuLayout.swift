@@ -14,6 +14,13 @@
 // `caffeinate` replacement, and a row that can do nothing for you is not a
 // neutral extra line — it is a claim that you are missing something.
 //
+// The group's last row is the app's only agent control: one checkable item that
+// turns agent auto keep-awake on or off. It is a SWITCH, not a choice between
+// behaviours — the product has exactly one rule and this says whether that rule
+// applies. Nothing here selects, ranks or configures how agents are handled,
+// and if a future row ever wants to, that is a new product decision and not a
+// detail of this file.
+//
 // That must never become "hiding something the user needs to find": Settings ›
 // Agents keeps the integration row in every state, including its "not
 // detected" wording, so the feature stays discoverable and the menu is purely
@@ -42,6 +49,11 @@ enum MenuTopRow: Equatable {
     case precisionDetail(String)
     /// The button under it, which opens Settings › Agents.
     case precisionAction(String)
+    /// The one agent control: a checkable item that turns agent auto
+    /// keep-awake on or off. Checked = on. Its tooltip is a constant
+    /// (`AgentAutoKeepAwakeCopy.menuHelp`) and is attached by the view, so it
+    /// is not carried here.
+    case agentAutoToggle(title: String, isOn: Bool)
 }
 
 // MARK: - MenuLayout
@@ -102,7 +114,11 @@ enum MenuLayout {
     ) -> [MenuTopRow] {
         var rows: [MenuTopRow] = [.status(MenuTextFormatter.statusLine(for: s, now: now))]
 
-        let active = s.agentSessions.filter { $0.phase.holdsAssertion }
+        // `holdingAgentSessions`, not `agentSessions`: with auto keep-awake
+        // switched off nothing agent-derived is holding, so there is nothing to
+        // list. The status line (computed above from the same predicate) has
+        // already fallen back to the manual/idle sentence, which is the truth.
+        let active = s.holdingAgentSessions
         for session in active.prefix(MenuTextFormatter.maxSessionRows) {
             rows.append(.session(MenuTextFormatter.sessionLine(for: session, now: now)))
         }
@@ -124,9 +140,39 @@ enum MenuLayout {
         // some agent is at better than `.unavailable`, which is itself one of
         // `hasLiveAgentEvidence`'s witnesses — and it is here so the rule
         // survives a future row that is not self-gating.
-        if showsAgentControls(for: s), let note = MenuTextFormatter.precisionNote(for: s) {
+        // Also gated on the switch: the pair complains about how well we can
+        // see an agent and offers to install hooks to see it better, which is
+        // an offer to improve a detection layer that is currently driving
+        // nothing. A user who has just switched the feature off is owed silence
+        // on the subject, not a sales pitch.
+        if showsAgentControls(for: s),
+           s.agentAutoKeepAwake,
+           let note = MenuTextFormatter.precisionNote(for: s) {
             rows.append(.precisionDetail(note.detail))
             rows.append(.precisionAction(note.actionTitle))
+        }
+
+        // The switch itself, last in the group and hard against the divider
+        // that separates it from the manual controls. It is a control, not a
+        // status line, so it does not belong among the disabled text above; and
+        // it is about agents in general, not about this hold, so it must not
+        // read as part of "Keep Awake" / "Keep For…" / "Until…" below.
+        //
+        // NOT gated on `agentAutoKeepAwake` — this is the only row that must
+        // survive its own switch being off. It is both the way back and, for
+        // someone who flipped it by accident, the only evidence that anything
+        // was flipped: the agent rows vanishing is a silence, and a silence
+        // explains nothing.
+        //
+        // It IS gated on `showsAgentControls`, which is R18-B unchanged: a Mac
+        // that has never had a coding agent gets no agent machinery, and a
+        // switch that governs a feature you cannot use is the clearest possible
+        // case of a row that only tells you what you are missing.
+        if showsAgentControls(for: s) {
+            rows.append(.agentAutoToggle(
+                title: AgentAutoKeepAwakeCopy.title,
+                isOn: s.agentAutoKeepAwake
+            ))
         }
 
         return rows

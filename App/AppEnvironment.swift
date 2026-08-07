@@ -114,6 +114,17 @@ final class UISettings: ObservableObject {
             onChange?()
         }
     }
+    /// Whether agent detection is allowed to keep the Mac awake. The same
+    /// switch the menu carries; both write here, and `onChange` →
+    /// `CompositionRoot.applyTuning` is what makes flipping it in Settings
+    /// release the agent holds as promptly as flipping it in the menu does.
+    @Published var agentAutoKeepAwake: Bool {
+        didSet {
+            guard !isSyncingFromBacking else { return }
+            backing.agentAutoKeepAwake = agentAutoKeepAwake
+            onChange?()
+        }
+    }
     @Published var hasCompletedOnboarding: Bool {
         didSet {
             backing.hasCompletedOnboarding = hasCompletedOnboarding
@@ -128,25 +139,32 @@ final class UISettings: ObservableObject {
         self.defaultDisplayPolicy = backing.defaultDisplayPolicy
         self.batteryThreshold = backing.batteryThreshold
         self.gracePeriodMinutes = backing.gracePeriodMinutes
+        self.agentAutoKeepAwake = backing.agentAutoKeepAwake
         self.hasCompletedOnboarding = backing.hasCompletedOnboarding
     }
 
-    /// Re-read preferences that another surface can legitimately change while
-    /// this object is alive. Only the display policy qualifies today: the menu's
-    /// override goes through `AppCommands.setDisplayPolicy` — the one writer
-    /// that can also retune the live hold — and that call persists the new
-    /// default behind this mirror's back.
+    /// Re-read the preferences another surface can legitimately change while
+    /// this object is alive: the two the MENU also owns. Both of them go
+    /// through `AppCommands` — the only writer that can also retune the live
+    /// holds — and those calls persist behind this mirror's back.
     ///
     /// Called on settings-page appear (the same way the launch-at-login toggle
     /// re-reads SMAppService) AND on every snapshot the composition root
     /// publishes, so a settings window left open while the user flips the menu
     /// toggle updates instead of showing a stale value.
     func refreshFromBacking() {
-        let stored = backing.defaultDisplayPolicy
-        guard stored != defaultDisplayPolicy else { return }
         isSyncingFromBacking = true
-        defaultDisplayPolicy = stored
-        isSyncingFromBacking = false
+        defer { isSyncingFromBacking = false }
+        // Each guarded on its own: assigning an unchanged @Published value
+        // still publishes, and this runs on every snapshot.
+        let storedPolicy = backing.defaultDisplayPolicy
+        if storedPolicy != defaultDisplayPolicy {
+            defaultDisplayPolicy = storedPolicy
+        }
+        let storedAuto = backing.agentAutoKeepAwake
+        if storedAuto != agentAutoKeepAwake {
+            agentAutoKeepAwake = storedAuto
+        }
     }
 }
 

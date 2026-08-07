@@ -64,6 +64,18 @@ struct MenuContentView: View {
                     NSApp.activate(ignoringOtherApps: true)
                     openSettings()
                 }
+
+            case .agentAutoToggle(let title, let isOn):
+                // The one agent control. `isOn` comes from the snapshot's
+                // stored choice, like "Keep Display On" — a control shows the
+                // choice — and the click goes through `AppCommands` so that
+                // switching off releases the agent holds in the same step
+                // rather than at the next detection sweep.
+                Toggle(title, isOn: Binding(
+                    get: { isOn },
+                    set: { commands.setAgentAutoKeepAwake($0) }
+                ))
+                .help(AgentAutoKeepAwakeCopy.menuHelp)
             }
         }
 

@@ -275,6 +275,21 @@ struct AgentsSettingsTab: View {
                 SectionFooter(integrationFooter)
             }
 
+            // The same switch that is in the menu, in the same words — one
+            // control, one name. It is here because a user who turned it off
+            // from the menu needs somewhere fixed to find it again, and because
+            // the menu row is absent entirely on a Mac that has never had an
+            // agent (R18-B); this page is the surface that never adapts.
+            //
+            // Above the grace period, not below it: the grace period is a
+            // detail of the behaviour this switch governs, and a detail cannot
+            // precede the thing it belongs to.
+            Section {
+                Toggle(AgentAutoKeepAwakeCopy.title, isOn: $settings.agentAutoKeepAwake)
+            } footer: {
+                SectionFooter(AgentAutoKeepAwakeCopy.settingsFooter)
+            }
+
             // No "Timing" header either: it labelled exactly one row whose own
             // label already says "Release grace period". The gap between cards
             // is the beat that header was pretending to provide.
@@ -284,6 +299,11 @@ struct AgentsSettingsTab: View {
                         Text(minutes == 1 ? "1 minute" : "\(minutes) minutes").tag(minutes)
                     }
                 }
+                // Nothing is counting down while agents are ignored, so the
+                // picker has nothing to govern. Disabled rather than hidden: a
+                // row that vanishes takes its explanation with it, and this one
+                // greys out directly under the switch that greyed it.
+                .disabled(!settings.agentAutoKeepAwake)
             } footer: {
                 // Second sentence because this picker used to be the one
                 // setting in the window that did NOT apply immediately — the

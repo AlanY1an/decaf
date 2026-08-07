@@ -124,6 +124,17 @@ public final class SessionRegistry {
         case idle
         case stopped
         case ended
+        /// A permission dialog is on screen: the turn is PAUSED, not over
+        /// (plan 02 §1.1c).
+        ///
+        /// It arms the same kind of release window `.stopped` does — the agent
+        /// is waiting on the user, so the Mac is allowed to sleep — but it is
+        /// its own signal because the two disagree about the next tool call.
+        /// `.stopped` means the turn ended and a trailing `PostToolUse` is
+        /// cleanup; this means the turn is suspended mid-flight and a
+        /// `PostToolUse` is the only evidence upstream will ever give that the
+        /// user clicked "allow".
+        case awaitingPermission
         /// A liveness measurement, not a state transition (plan 02 §1.1a).
         ///
         /// `PostToolUse` fires once per tool call, which is the only signal
@@ -154,6 +165,15 @@ public final class SessionRegistry {
     /// until the next launch, which for a menu-bar app that is never quit means
     /// it does nothing at all.
     public private(set) var gracePeriod: TimeInterval
+
+    /// Grace window a permission prompt opens (plan 02 §1.1c). See
+    /// `DetectionDefaults.permissionGracePeriod` for why it is its own number
+    /// and why it is not the user's "Release grace period" preference.
+    ///
+    /// Injectable for tests only; clamped to the same 0–600 s the engine
+    /// accepts for any grace window, so no route can produce one longer than
+    /// the state machine's own ceiling.
+    public let permissionGracePeriod: TimeInterval
 
     /// Plan 08 hard limit 2, enforced a SECOND time here.
     ///
@@ -246,6 +266,7 @@ public final class SessionRegistry {
 
     public init(
         gracePeriod: TimeInterval = DetectionDefaults.gracePeriod,
+        permissionGracePeriod: TimeInterval = DetectionDefaults.permissionGracePeriod,
         waitCap: TimeInterval = WaitSignalParser.defaultWaitCap,
         heartbeatCoalesceWindow: TimeInterval = SessionRegistry.defaultHeartbeatCoalesceWindow,
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
@@ -254,6 +275,7 @@ public final class SessionRegistry {
         activitySampler: (any ProcessActivitySampling)? = nil
     ) {
         self.gracePeriod = min(max(gracePeriod, 0), 600)
+        self.permissionGracePeriod = min(max(permissionGracePeriod, 0), 600)
         self.waitCap = max(0, waitCap)
         self.heartbeatCoalesceWindow = max(0, heartbeatCoalesceWindow)
         self.stuckThreshold = stuckThreshold
@@ -294,6 +316,14 @@ public final class SessionRegistry {
         let ceiling = clock().addingTimeInterval(clamped)
         for (id, var session) in sessionsByID {
             guard case .grace(let until) = session.state else { continue }
+            // A permission window is not this preference's business (§1.1c):
+            // it was opened with `permissionGracePeriod`, so rebasing it by a
+            // delta computed from `gracePeriod` would describe a window that
+            // never existed — and the ceiling below would shorten it to a
+            // value the user never asked to apply here. The setting means
+            // "how long after my agent finishes", and a paused turn has not
+            // finished.
+            guard session.awaitingApprovalSince == nil else { continue }
             session.state = .grace(until: min(until.addingTimeInterval(delta), ceiling))
             sessionsByID[id] = session
             changeCount &+= 1
@@ -320,9 +350,9 @@ public final class SessionRegistry {
             case "permission_prompt":
                 // A permission prompt is the agent waiting on the USER, which
                 // is precisely when this Mac is allowed to sleep — so it is an
-                // idle signal, not a reason to hold. It gets the release grace
-                // window rather than `idle_prompt`'s immediate cut, and the
-                // difference is what the two signals actually know:
+                // idle signal, not a reason to hold. It gets a release window
+                // rather than `idle_prompt`'s immediate cut, and the difference
+                // is what the two signals actually know:
                 //
                 // - `idle_prompt` is the agent reporting that the turn is over
                 //   and the user has the floor. Authoritative end of work, so
@@ -330,14 +360,14 @@ public final class SessionRegistry {
                 // - a permission prompt is a pause INSIDE a turn, and the
                 //   overwhelmingly common answer is "yes", three seconds later,
                 //   from someone already at the keyboard. Releasing on the spot
-                //   would make that ordinary case cost a wake; the grace window
-                //   covers it and then lets go, which is the same treatment
-                //   `Stop` gets and for the same reason.
+                //   would make that ordinary case cost a wake; the window
+                //   covers it and then lets go.
                 //
-                // Hence the same normalized signal as `Stop`: once "hold
-                // indefinitely" is gone, what is left of the old permission
-                // handling is exactly "arm the release window".
-                return .stopped
+                // It is NOT the same signal as `Stop`, and the reason is the
+                // half of the story that is still to come. `Stop` says the turn
+                // is over; this says the turn is suspended. Everything after
+                // the click depends on telling those apart (§1.1c).
+                return .awaitingPermission
             case "idle_prompt":
                 return .idle
             default:
@@ -435,7 +465,7 @@ public final class SessionRegistry {
         // standing refusal of its wait signals is lifted (a resumed session, or
         // simply the next loop iteration, must be able to re-arm).
         switch signal {
-        case .sessionStart, .working, .stopped, .unknown:
+        case .sessionStart, .working, .stopped, .awaitingPermission, .unknown:
             waitRefusedAt.removeValue(forKey: sessionID)
         case .idle, .ended:
             waitRefusedAt[sessionID] = now
@@ -447,15 +477,25 @@ public final class SessionRegistry {
         }
 
         switch signal {
-        case .sessionStart, .unknown:
-            // Registration / forward-compat refresh only; no transition.
+        case .sessionStart:
+            // Registration only; no transition. A session that starts (or
+            // resumes) is not parked on a dialog we have ever seen.
+            session.awaitingApprovalSince = nil
+        case .unknown:
+            // Forward-compat refresh only. An event we do not understand
+            // changes NOTHING — not the state, and not the pause marker
+            // either: guessing in either direction is worse than waiting for
+            // an event we do understand.
             break
         case .heartbeat:
             break // Unreachable (handled above).
         case .working:
             // Latest signal wins from every state (out-of-order tolerance);
-            // a prompt during grace cancels the grace window (row S6).
+            // a prompt during grace cancels the grace window (row S6). The
+            // user typing a new prompt also resolves any dialog that was on
+            // screen — whatever they did with it, they have moved on.
             session.state = .working
+            session.awaitingApprovalSince = nil
         case .idle:
             // idle_prompt is the authoritative idle signal: it cuts any
             // remaining grace window short (plan 02 §1.1) — and, since plan 08,
@@ -465,13 +505,34 @@ public final class SessionRegistry {
             session.state = .idle
             session.waitUntil = nil
             session.waitSource = nil
+            // The turn is over on the agent's own authority, so there is no
+            // paused turn left to resume: a later tool call is a tail, not an
+            // approval.
+            session.awaitingApprovalSince = nil
             cronJobIDBySession.removeValue(forKey: sessionID)
         case .stopped:
-            // Stop/StopFailure — and a permission prompt, which normalizes to
-            // the same signal — always (re)arm the grace window, including from
+            // Stop/StopFailure always (re)arm the grace window, including from
             // IDLE (app may start late and see Stop first; safe side) and from
             // GRACE (deadline refresh).
             session.state = .grace(until: now.addingTimeInterval(gracePeriod))
+            // THE TURN IS OVER. Clearing the marker here is what keeps
+            // §1.1a's rule intact: trailing tool calls and sub-agent tails
+            // arrive after `Stop` and must not resurrect a finished turn. A
+            // permission prompt earlier in the same turn does not buy them an
+            // exemption — `Stop` is the agent reporting the turn ended, which
+            // outranks anything we inferred about a dialog before it.
+            session.awaitingApprovalSince = nil
+        case .awaitingPermission:
+            // Same shape as `Stop`'s window, different length and — the whole
+            // point — a remembered reason (§1.1c). The agent is waiting on the
+            // user, so the Mac gets to sleep once the window is over; but the
+            // turn is only PAUSED, so the first completed tool call is proof
+            // the user approved and work resumed (`applyHeartbeat`).
+            //
+            // Re-arming from an existing permission pause refreshes both the
+            // deadline and the instant: a second dialog is a second question.
+            session.state = .grace(until: now.addingTimeInterval(permissionGracePeriod))
+            session.awaitingApprovalSince = now
         case .ended:
             // GONE is not a stored state: remove immediately, no grace — and a
             // wait signal earns no exemption from that either.
@@ -503,12 +564,18 @@ public final class SessionRegistry {
     ///   importantly it makes the rule below free: a `PostToolUse` frame still
     ///   in flight when `SessionEnd` lands cannot resurrect the session,
     ///   because after removal there is nothing left to refresh.
-    /// - **It does not change state.** `.grace` stays `.grace`, `.idle` stays
-    ///   `.idle`. A tool call is evidence the process is alive, not evidence
-    ///   that the user asked for anything.
+    /// - **It does not change state — with exactly one exception.** `.grace`
+    ///   stays `.grace` and `.idle` stays `.idle`, because a tool call is
+    ///   evidence the process is alive, not evidence that the user asked for
+    ///   anything. The exception is a session parked on a permission dialog
+    ///   (`awaitingApprovalSince != nil`), where a completed tool call IS
+    ///   evidence about the user: nothing can complete until the dialog is
+    ///   answered, so it says "the answer was yes and the turn resumed". See
+    ///   `resumeApprovedWork`.
     /// - **It does not move deadlines.** A grace window that a `Stop` armed
     ///   runs out on schedule even if tool calls keep arriving inside it
-    ///   (post-Stop hooks, a sub-agent finishing up).
+    ///   (post-Stop hooks, a sub-agent finishing up). `Stop` clears the
+    ///   approval marker, so the exception above cannot reach those.
     /// - **It does not move liveness backwards.** Frames can be reordered by
     ///   the socket; only a strictly newer instant counts.
     ///
@@ -528,11 +595,17 @@ public final class SessionRegistry {
         // coalesced anyway — but the rule must not depend on that.)
         let revived = undoStuckDowngrade(&session)
 
+        // The approval the app can never be told about (§1.1c). Like a
+        // revival, it outranks coalescing: it is a state change, and dropping
+        // it as "redundant" would leave the hold released while the approved
+        // tool runs — the exact defect this exists to close.
+        let resumed = resumeApprovedWork(&session)
+
         // Coalesce against the folded liveness instant, not just the stored
         // heartbeat: a heartbeat one second after `UserPromptSubmit` is as
         // redundant as one a second after another heartbeat.
         let moved = now.timeIntervalSince(session.livenessAt) > heartbeatCoalesceWindow
-        guard revived || moved else { return false }
+        guard revived || resumed || moved else { return false }
 
         // A revival records the instant EVEN WHEN the coalescing window would
         // have dropped it. Restoring `.working` without moving liveness leaves
@@ -545,12 +618,71 @@ public final class SessionRegistry {
         //
         // `max` because liveness never moves backwards: a heartbeat frame the
         // socket reordered must not rewind the record it revives.
-        if moved || revived {
+        //
+        // A resume records the instant for the same reason a revival does: it
+        // hands the stuck detector a fresh `.working` record, and a `.working`
+        // record whose liveness is `permissionGracePeriod` old is one the
+        // detector could condemn on the spot.
+        if moved || revived || resumed {
             session.lastHeartbeatAt = max(now, session.lastHeartbeatAt ?? .distantPast)
         }
         sessionsByID[sessionID] = session
         changeCount &+= 1
         return true
+    }
+
+    /// Turns a completed tool call into the approval Claude Code never reports
+    /// (plan 02 §1.1c). Returns true when it moved the session back to
+    /// `.working`.
+    ///
+    /// **Why a `PostToolUse` proves approval.** Upstream emits nothing when the
+    /// user clicks "allow": `PreToolUse` already fired, *before* the dialog and
+    /// regardless of the answer, and the next event is `PostToolUse`, which
+    /// fires only when a tool COMPLETES. A tool cannot complete while its
+    /// dialog is unanswered — so on a session we last saw parked on one, a
+    /// completion is proof that the pause is over and the agent is working.
+    /// That is what the one rule asks for: an agent that is working keeps the
+    /// Mac awake.
+    ///
+    /// **Why it may act on `.idle` too.** Only a permission pause can leave the
+    /// marker set (every other state event clears it), so an `.idle` session
+    /// carrying one is precisely a permission window that expired while the
+    /// user was still deciding. Refusing to resume there would leave the
+    /// approved-tool case unprotected for everything past
+    /// `permissionGracePeriod` — the long tool calls, which is the whole
+    /// population that needed this.
+    ///
+    /// **What it cannot reach.** `Stop`, `idle_prompt`, `UserPromptSubmit`,
+    /// `SessionStart` and `SessionEnd` all clear the marker, so a trailing tool
+    /// call after a finished turn still finds nothing to resume — §1.1a's rule
+    /// is untouched.
+    ///
+    /// **The one way it can be wrong.** Claude Code can run tools in parallel,
+    /// so a sibling tool completing while the dialog is still up would resume
+    /// `.working` with the user's answer still outstanding. The agent really
+    /// does have work in flight at that instant, so the hold is right when it
+    /// is taken; it is only the *tail* — after the sibling finishes and while
+    /// the dialog still stands — that over-holds. That lands on exactly the
+    /// shape the architecture already handles: a `.working` record whose end
+    /// was never reported, bounded by the four-witness stuck detector (§1.1b).
+    /// The other direction — dropping the hold under a running tool — has no
+    /// backstop at all, which is why the trade is priced this way.
+    @discardableResult
+    private func resumeApprovedWork(_ session: inout AgentSession) -> Bool {
+        guard session.awaitingApprovalSince != nil else { return false }
+        switch session.state {
+        case .grace, .idle:
+            session.awaitingApprovalSince = nil
+            session.state = .working
+            return true
+        case .working, .stuck:
+            // Not reachable through `apply` (the marker is only ever set
+            // together with `.grace`, and `undoStuckDowngrade` has already run
+            // above), but a hand-built or restored record could carry it.
+            // There is nothing to resume: the state is already at least as
+            // strong as what a resume would produce.
+            return false
+        }
     }
 
     // MARK: - Stuck sessions (plan 02 §1.1b)

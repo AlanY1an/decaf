@@ -29,6 +29,33 @@ import AppKit
 public enum DetectionDefaults {
     /// Post-Stop grace window (plan 02 §1.2; UI presets 1–10 min, see 04).
     public static let gracePeriod: TimeInterval = 180
+    /// Grace window opened by a permission prompt specifically (plan 02 §1.1c).
+    ///
+    /// It is a different question from `gracePeriod` and therefore a different
+    /// number. `gracePeriod` bets on a lost `idle_prompt` after a turn that has
+    /// already ENDED; this one has to bridge a turn that is still in flight,
+    /// across a silence upstream gives us no way to see into: the user's answer
+    /// (seconds, if they are at the keyboard) plus the whole runtime of the
+    /// tool they just approved (seconds to many minutes).
+    ///
+    /// 300 s is where the two costs cross. Under-shooting drops the hold with
+    /// an approved tool still running — the cardinal failure, and the one this
+    /// value exists to prevent; 5 minutes covers the answer latency plus the
+    /// large majority of approved tool calls (the ones that need approval are
+    /// long Bash commands, builds and deploys, and most of those finish inside
+    /// five minutes) with no drop at all. Over-shooting keeps a Mac awake while
+    /// nobody is there to answer, which the one rule forbids, so this cannot
+    /// grow to cover the long tail: a 20-minute build would need a 20-minute
+    /// window, and an abandoned dialog would then cost 20 minutes of a Mac not
+    /// sleeping, every time. The long tail is covered by the resume rule
+    /// instead (`SessionRegistry.applyHeartbeat`), which is bounded by nothing
+    /// because it is evidence rather than a bet.
+    ///
+    /// NOT user-configurable and NOT derived from `gracePeriod`: the
+    /// "Release grace period" preference means "how long should the Mac stay
+    /// awake after my agent finishes", and this window is not that. It is a
+    /// technical bridge across a hole in the upstream event stream.
+    public static let permissionGracePeriod: TimeInterval = 300
     /// Socket-listener failure tolerated before L1 degrades (plan 02 §1.6).
     public static let socketDegradeGrace: TimeInterval = 15
     /// Reconcile tick / PPID-sweep interval — also the zombie-hold upper bound.

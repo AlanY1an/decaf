@@ -15,6 +15,13 @@ public enum SessionState: Equatable, Codable, Sendable {
     /// `Stop` / `StopFailure` — and by a permission prompt, which is the agent
     /// handing control back to the user just as surely as the end of a turn is
     /// (see `SessionRegistry.signal(for:)`).
+    ///
+    /// The two are the same STATE but not the same SITUATION, and the
+    /// difference is carried alongside in `AgentSession.awaitingApprovalSince`
+    /// rather than in the associated value: after `Stop` the turn is over and
+    /// the next tool call is cleanup that must be ignored; after a permission
+    /// prompt the turn is merely paused, and the next tool call is the only
+    /// proof the app will ever get that the user said "allow".
     case grace(until: Date)
     case idle
     /// The stuck detector found this `.working` record self-contradictory: all
@@ -121,6 +128,46 @@ public struct AgentSession: Equatable, Codable, Sendable {
     /// written by an older build still decodes.
     public var stuckDowngradedAt: Date?
 
+    /// When a permission prompt paused this session, and `nil` once anything
+    /// resolved the pause. Non-nil means "this session is parked on a
+    /// permission dialog as far as we know" (plan 02 §1.1c).
+    ///
+    /// **Why the grace window has to remember why it opened.** `Stop` and
+    /// `permission_prompt` both arm `.grace`, and they want opposite treatment
+    /// of the very next `PostToolUse`:
+    ///
+    /// - after `Stop` the turn is finished, and a trailing tool call is a
+    ///   sub-agent tail or post-Stop cleanup. It must not resurrect the turn
+    ///   (plan 02 §1.1a) — that rule is unchanged and load-bearing.
+    /// - after a permission prompt the turn is paused mid-flight. Claude Code
+    ///   emits nothing when the user clicks "allow", so a completed tool call
+    ///   is the FIRST and ONLY evidence that the answer was yes and the agent
+    ///   is working again. Ignoring it is what dropped the hold out from under
+    ///   a running tool.
+    ///
+    /// Reason-blind grace cannot tell those apart; this field is the reason.
+    /// It also carries WHEN, which is what a diagnostic would want and what
+    /// makes the field self-describing in `sessions.json`.
+    ///
+    /// **Set** by `permission_prompt` only. **Cleared** by every state event
+    /// that resolves the pause — `UserPromptSubmit` (the user typed something
+    /// else), `idle_prompt` (the turn is over), `Stop` / `StopFailure` (the
+    /// turn is over), `SessionStart`, `SessionEnd` (removal) — and by the
+    /// heartbeat that acts on it. Deliberately NOT cleared by an unknown
+    /// event, which by contract changes nothing.
+    ///
+    /// **Deliberately unbounded in time.** A permission dialog does not expire
+    /// upstream: it stands until the user answers it, whether that is three
+    /// seconds or the next morning. A tool completing eight hours after the
+    /// prompt therefore still means exactly what it means on the first
+    /// second — the user finally approved, and the agent is working now. The
+    /// backstop is the one that already exists for any `.working` record whose
+    /// end was never reported: the four-witness stuck detector (§1.1b).
+    ///
+    /// Persisted, so a relaunch does not forget a dialog that is still on
+    /// screen. Optional, so an older `sessions.json` still decodes.
+    public var awaitingApprovalSince: Date?
+
     /// Deadline of a live wait signal read from this session's transcript
     /// (plan 08). `nil` means "no declared wait".
     ///
@@ -146,6 +193,7 @@ public struct AgentSession: Equatable, Codable, Sendable {
         lastEventAt: Date,
         lastHeartbeatAt: Date? = nil,
         stuckDowngradedAt: Date? = nil,
+        awaitingApprovalSince: Date? = nil,
         waitUntil: Date? = nil,
         waitSource: WaitSignal.Kind? = nil
     ) {
@@ -158,6 +206,7 @@ public struct AgentSession: Equatable, Codable, Sendable {
         self.lastEventAt = lastEventAt
         self.lastHeartbeatAt = lastHeartbeatAt
         self.stuckDowngradedAt = stuckDowngradedAt
+        self.awaitingApprovalSince = awaitingApprovalSince
         self.waitUntil = waitUntil
         self.waitSource = waitSource
     }

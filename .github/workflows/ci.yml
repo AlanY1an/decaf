@@ -1,25 +1,174 @@
-# CI — build + test only, never signing (plan 06 §5).
-# Note: plan 06 §5 specifies a second app-build job (xcodegen + xcodebuild) and a
-# pinned Xcode version; that lands with the dedicated CI step (06-4). This skeleton
-# keeps the fast core loop green from day one.
+# CI — build and test only. This workflow never signs, never notarizes, never
+# uploads and never publishes (plan 06 §5, and the non-goal in §"范围与非目标":
+# the Developer ID key and notary credentials do not go into GitHub secrets;
+# releases are cut by hand with Scripts/release.sh on the maintainer's machine).
+#
+# Deliberately absent, do not add without a decision:
+#   - any `on: push: tags:` trigger, or any release/publish job. There is no
+#     path from a git tag to an artifact leaving this repository.
+#   - the caff-bridge <100 ms latency budget. Hosted runners are too jittery to
+#     assert a wall-clock budget on; that gate is local, in Scripts/bench-bridge.sh.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+
+# Read-only by construction: even if a job were compromised it could not create a
+# release, push a tag, or write a package.
+permissions:
+  contents: read
+
+# A new push to a branch makes the previous run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so a runner-image refresh cannot turn CI red for reasons unrelated to
+  # the change under test (plan 06 risk table). Bumping this is an explicit PR.
+  # 26.6 is the macos-26 image default as of 2026-07 and matches the toolchain
+  # the project is developed against.
+  XCODE_VERSION: "26.6"
 
 jobs:
   core:
-    runs-on: macos-14
+    name: Core — build + test
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: |
+          set -euo pipefail
+          APP="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::Xcode ${XCODE_VERSION} is not installed on this runner image."
+            echo "Installed Xcodes:"
+            ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (none)"
+            echo "Update XCODE_VERSION in .github/workflows/ci.yml to one of the above."
+            exit 1
+          fi
+          sudo xcode-select -s "$APP"
+          xcodebuild -version
+          swift --version
+
+      # Core has zero external package dependencies, so there is no
+      # Package.resolved to key on (plan 06 §5 assumed one). Key on the manifest
+      # plus the Xcode version instead — a .build directory produced by a
+      # different toolchain must never be restored on top of a new one.
       - name: Cache SPM build
         uses: actions/cache@v4
         with:
           path: Core/.build
-          key: spm-${{ runner.os }}-${{ hashFiles('Core/Package.swift') }}
+          key: spm-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-${{ hashFiles('Core/Package.swift') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode${{ env.XCODE_VERSION }}-
+
+      # Builds the library targets AND the caff-bridge / caff-smoke executables,
+      # which `swift test` on its own would not.
       - name: Build
         run: swift build --package-path Core
+
       - name: Test
         run: swift test --package-path Core
+
+  app:
+    name: App — project generation, build, bridge discipline
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: |
+          set -euo pipefail
+          APP="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ ! -d "$APP" ]; then
+            echo "::error::Xcode ${XCODE_VERSION} is not installed on this runner image."
+            echo "Installed Xcodes:"
+            ls -d /Applications/Xcode*.app 2>/dev/null || echo "  (none)"
+            echo "Update XCODE_VERSION in .github/workflows/ci.yml to one of the above."
+            exit 1
+          fi
+          sudo xcode-select -s "$APP"
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Caffeinate.xcodeproj is generated and gitignored; project.yml is the only
+      # source of truth (plan 06 §3). This step is what proves the manifest is
+      # still valid — a contributor cannot break it without CI noticing.
+      - name: Generate Xcode project
+        run: ./Scripts/bootstrap.sh
+
+      # No signing on CI: CODE_SIGNING_ALLOWED=NO. The Release configuration is
+      # the one that ships, and it is also the only one that exercises the
+      # "Embed caff-bridge" post-build script the way release.sh will.
+      - name: Build app (Release, unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Caffeinate.xcodeproj \
+            -scheme Caffeinate \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/ci-derived-data \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Verify caff-bridge is embedded
+        run: |
+          set -euo pipefail
+          APP="build/ci-derived-data/Build/Products/Release/Caffeinate.app"
+          BRIDGE="$APP/Contents/Helpers/caff-bridge"
+          if [ ! -x "$BRIDGE" ]; then
+            echo "::error::$BRIDGE is missing from the built bundle."
+            echo "The 'Embed caff-bridge' post-build script in project.yml did not run."
+            find "$APP" -type f | head -50
+            exit 1
+          fi
+          echo "$BRIDGE is present"
+
+      # Runs against the binary that actually ships inside the bundle, not a
+      # separately built copy: otool -L whitelist, <2 MB size, silent-exit smoke
+      # (plan 06 §2/§5, review decision R4).
+      - name: check-bridge (dependency discipline)
+        run: ./Scripts/check-bridge.sh "build/ci-derived-data/Build/Products/Release/Caffeinate.app/Contents/Helpers/caff-bridge"
+
+      # The app layer's own tests (plan 06 §4.1). Safe on a headless runner
+      # BECAUSE the bundle is a logic test bundle with no TEST_HOST: nothing
+      # launches Caffeinate.app, so there is no LSUIElement app waiting on a
+      # window server, and no hooks probe reading a real ~/.claude. If this ever
+      # starts hanging, the first thing to check is whether a TEST_HOST crept
+      # into project.yml — that would be the bug, not this step.
+      #
+      # `-only-testing` keeps the step honest about what it runs; the app build
+      # above is what proves the app compiles.
+      - name: Test app layer (CaffeinateAppTests)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Caffeinate.xcodeproj \
+            -scheme Caffeinate \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/ci-derived-data \
+            -only-testing:CaffeinateAppTests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            test
+
+      # Guard against the reverse drift: a test file added to AppTests/ while the
+      # target's explicit `sources` list in project.yml is left alone compiles
+      # nowhere and runs nowhere.
+      - name: Notice — AppTests target must exist
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -d AppTests ] && ! grep -q '^  CaffeinateAppTests:' project.yml; then
+            echo "::warning file=project.yml::AppTests/ contains test sources but project.yml declares no CaffeinateAppTests target, so those tests run nowhere. Core's tests still run in the 'core' job."
+          fi

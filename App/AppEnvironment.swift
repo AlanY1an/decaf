@@ -383,6 +383,16 @@ final class ClaudeIntegrationsProvider: AgentIntegrationsProviding {
         // L1 layer, dropping the session-precise hold sources with it. The
         // mapping is `HooksInstallState(probe:)` in Core, where it is tested.
         root.setHooksInstallState(HooksInstallState(probe: result), for: .claudeCode)
+        // The one thing the detection layer cannot see for itself: the agent's
+        // BINARY is on this Mac. On a machine where Claude Code is installed but
+        // has never been run there is no `~/.claude` to watch, no process to
+        // match and no hooks — every precision entry reads `.unavailable` — and
+        // the menu would leave out the hold-mode control until the user's first
+        // session. `status.agentDetected` is exactly the probe's answer to
+        // "is it installed", so it is what closes the latch.
+        if status.agentDetected {
+            root.noteAgentDetected(.claudeCode)
+        }
         return status
     }
 

@@ -93,6 +93,8 @@ targets:
       - AppTests
       - path: App/MenuTextFormatter.swift
         group: App
+      - path: App/MenuLayout.swift
+        group: App
       - path: App/IconRenderer.swift
         group: App
     dependencies:

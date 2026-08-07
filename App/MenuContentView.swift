@@ -8,7 +8,10 @@
 //
 // This file is assembly only. Every user-visible string comes from
 // MenuTextFormatter (pure, unit-tested next door) or from CaffeinateCore's copy
-// owners, never inline here (plan 04 step 3 acceptance).
+// owners, never inline here (plan 04 step 3 acceptance) — and the one group
+// whose SHAPE varies with state, the rows above the first divider, is decided
+// by MenuLayout (also pure, also next door) so the App test bundle can assert
+// the exact rows a state produces instead of trusting a view body.
 
 import AppKit
 import SwiftUI
@@ -31,7 +34,6 @@ struct MenuContentView: View {
         // even if the menu is left open (plan 04 §3 / risk 2).
         let snapshot = store.snapshot
         let now = Date()
-        let activeSessions = snapshot.agentSessions.filter { $0.phase.holdsAssertion }
         // Both "Until" surfaces resolve against this one `now`, so the label a
         // user reads and the deadline the click commits are the same instant.
         let defaultUntil = UntilOptions.nextOccurrence(
@@ -39,29 +41,47 @@ struct MenuContentView: View {
         )
         let upcomingHours = UntilOptions.upcomingWholeHours(now: now)
 
-        // Status line (disabled text).
-        Text(MenuTextFormatter.statusLine(for: snapshot, now: now))
+        // The top group — status line, session rows, the detection-precision
+        // pair, and the agent hold-mode toggle. WHICH of those exist, in what
+        // order, is decided by `MenuLayout.topRows` (pure, unit-tested next
+        // door) rather than by this body; that is also where the rule lives
+        // that a Mac which has never seen a coding agent gets no agent rows at
+        // all, so the menu reads as the plain keep-awake utility it also is.
+        ForEach(Array(MenuLayout.topRows(
+            for: snapshot, selectedHoldMode: settings.agentHoldMode, now: now
+        ).enumerated()), id: \.offset) { _, row in
+            switch row {
+            case .status(let text),
+                 .session(let text),
+                 .overflow(let text),
+                 .precisionDetail(let text):
+                // `Text` in a `.menu` renders as a disabled item (plan 04 §2).
+                Text(text)
 
-        // Agent session rows (disabled text, max 5 + fold).
-        ForEach(Array(activeSessions.prefix(MenuTextFormatter.maxSessionRows))) { session in
-            Text(MenuTextFormatter.sessionLine(for: session, now: now))
-        }
-        if activeSessions.count > MenuTextFormatter.maxSessionRows {
-            Text(MenuTextFormatter.overflowLine(
-                hiddenCount: activeSessions.count - MenuTextFormatter.maxSessionRows
-            ))
-        }
+            case .precisionAction(let title):
+                Button(title) {
+                    tabRouter.selectedTab = .agents
+                    NSApp.activate(ignoringOtherApps: true)
+                    openSettings()
+                }
 
-        // Detection precision hint — shown whenever the layer that is holding
-        // is not fully precise: the FSEvents fallback, and an outdated hooks
-        // install, which each get their own sentence and their own button
-        // (plan 04 §3).
-        if let note = MenuTextFormatter.precisionNote(for: snapshot) {
-            Text(note.detail)
-            Button(note.actionTitle) {
-                tabRouter.selectedTab = .agents
-                NSApp.activate(ignoringOtherApps: true)
-                openSettings()
+            case .agentHoldToggle(let title, _, let help):
+                // Exactly the shape "Keep Display On" uses below: one checkable
+                // line that writes the persisted default. The write goes through
+                // `UISettings`, whose didSet carries it into
+                // `CompositionRoot.applyTuning()` — which re-evaluates the
+                // sessions ALREADY registered, so checking this adopts the agent
+                // idling at its prompt right now rather than the next one.
+                //
+                // The check mark is bound to the stored choice, not to the row's
+                // captured `isOn`: same reason the display toggle reads
+                // `selectedDisplayPolicy`. A control shows the choice; the status
+                // line above shows the reality.
+                Toggle(title, isOn: Binding(
+                    get: { settings.agentHoldMode.holdsIdleAgents },
+                    set: { settings.agentHoldMode = $0 ? .whileRunning : .whileWorking }
+                ))
+                .help(help)
             }
         }
 

@@ -33,10 +33,10 @@
                                         placeholder is retired — Scripts/
                                         release.sh keeps a tripwire against it.)
 
-  What that leaves genuinely unfilled: the LICENSE copyright holder (DECISION
-  5 — LICENSE says "Decaf contributors"), whether a `README.zh-CN.md` ships
-  alongside this file (DECISION 6 — this draft is English-only, per the launch
-  review), and the launch date (DECISION 7 — no date appears in this file).
+  What that leaves genuinely unfilled: the launch date (DECISION 7 — no date
+  appears in this file). Decisions 5 and 6 are settled: the LICENSE copyright
+  holder is AlanY1an, and this file stays English-only with no
+  `README.zh-CN.md` alongside it (both 2026-08-07, REVIEW-DECISIONS.md).
 
   Note on the subtitle: "The `caffeinate` command as a smart menu bar app" is
   deliberate and stays. It names the SYSTEM COMMAND people search for, not the

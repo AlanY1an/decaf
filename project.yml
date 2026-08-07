@@ -48,7 +48,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.utilities
-        NSHumanReadableCopyright: "© Decaf contributors. MIT License."
+        NSHumanReadableCopyright: "© 2026 AlanY1an. MIT License."
     postBuildScripts:                  # decaf-bridge is a Core package executable product;
       - name: Embed decaf-bridge        # build and embed it into Contents/Helpers (plan 06 §3)
         basedOnDependencyAnalysis: false  # must run every build to keep the embedded bridge fresh

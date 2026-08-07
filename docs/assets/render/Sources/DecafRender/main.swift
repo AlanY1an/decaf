@@ -15,9 +15,14 @@ import DecafCore
 
 // MARK: - Output
 
-let outputDirectory = CommandLine.arguments.count > 1
-    ? CommandLine.arguments[1]
-    : FileManager.default.currentDirectoryPath
+let arguments = CommandLine.arguments.dropFirst()
+/// `--measure` prints the sizing numbers `SettingsView` is built on and writes
+/// no images. It is how the window height in SettingsView.swift is derived, and
+/// re-running it is how the next person checks that number instead of trusting
+/// the comment next to it.
+let measureOnly = arguments.contains("--measure")
+let outputDirectory = arguments.first(where: { !$0.hasPrefix("--") })
+    ?? FileManager.default.currentDirectoryPath
 
 // MARK: - Offscreen renderer
 
@@ -216,6 +221,61 @@ enum Renderer {
     }
 }
 
+// MARK: - Measurement
+
+/// The numbers `SettingsView.windowHeight` is derived from.
+///
+/// Everything here is measured, never estimated. A grouped `Form` resolves its
+/// platform metrics from the window it is hosted in, so each page is measured
+/// inside a real offscreen window — the same one the renders use — rather than
+/// from a bare `NSHostingView`, which reports a different figure.
+enum Measure {
+    /// What a view asks for at `width` when nothing pins its height.
+    @MainActor
+    static func naturalHeight<V: View>(_ view: V, width: CGFloat) -> CGFloat {
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: width, height: 2000),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.appearance = NSAppearance(named: .aqua)
+        window.isReleasedWhenClosed = false
+        let hosting = NSHostingView(rootView: view)
+        hosting.frame = CGRect(x: 0, y: 0, width: width, height: 2000)
+        window.contentView = hosting
+        window.makeKey()
+        Renderer.settle(0.6)
+        hosting.layoutSubtreeIfNeeded()
+        return ceil(hosting.fittingSize.height)
+    }
+
+    /// The assembled settings window with `tab` selected and nothing pinning
+    /// its height: tab strip, TabView insets and the page, all at once.
+    ///
+    /// This, and not the page on its own, is the number the window has to
+    /// clear. A page inside a TabView is laid out narrower than the window, so
+    /// measuring `AgentsSettingsTab` alone at 620pt reports a page that wraps
+    /// less than the real one and comes out short. That is exactly how the
+    /// window ended up 25pt too small.
+    @MainActor
+    static func tabHeight(
+        _ tab: SettingsTab,
+        settings: UISettings,
+        status: ClaudeCodeStatus,
+        width: CGFloat
+    ) -> CGFloat {
+        let router = SettingsTabRouter()
+        router.selectedTab = tab
+        return naturalHeight(
+            SettingsTabs(
+                settings: settings,
+                integrations: AgentIntegrationsModel(provider: StagedIntegrationsProvider(status)),
+                tabRouter: router
+            ),
+            width: width
+        )
+    }
+}
+
 // MARK: - Staged inputs
 
 /// A UserDefaults suite that exists only for this process, so every render shows
@@ -300,6 +360,65 @@ MainActor.assumeIsolated {
     // each tab's REAL content view is rendered on its own, at the width the
     // window gives it and at the height the page itself asks for.
     let settingsWidth: CGFloat = 620
+
+    if measureOnly {
+        // Agents is measured in all three hero states: the hero's status line
+        // is the one row on the page whose height varies with state, and the
+        // window has to clear the tallest of them.
+        let cases: [(String, SettingsTab, ClaudeCodeStatus)] = [
+            ("general", .general, hooksInstalled),
+            ("agents (hooks installed)", .agents, hooksInstalled),
+            ("agents (file activity)", .agents, fileActivity),
+            ("agents (needs repair)", .agents, needsRepair),
+            ("safety", .safety, hooksInstalled),
+        ]
+        func row(_ label: String, _ value: CGFloat) {
+            print("  \(label.padding(toLength: 26, withPad: " ", startingAt: 0))\(Int(value)) pt")
+        }
+        print("SettingsTabs natural height at \(Int(settingsWidth))pt wide")
+        print("(tab strip and TabView insets included — this is what the window must clear):")
+        var tallest: CGFloat = 0
+        for (label, tab, status) in cases {
+            let height = Measure.tabHeight(tab, settings: settings, status: status, width: settingsWidth)
+            row(label, height)
+            tallest = max(tallest, height)
+        }
+        row("tallest", tallest)
+        row("shipping windowHeight", SettingsView.windowHeight)
+        print(SettingsView.windowHeight >= tallest
+              ? "  OK — the window clears every page."
+              : "  CLIPPED — the window is \(Int(tallest - SettingsView.windowHeight))pt short.")
+
+        // The numbers say it fits; these say what it looks like. The assembled
+        // SettingsView at its real frame, one image per tab, so the bottom of
+        // the last card can be looked at instead of taken on trust.
+        //
+        // Not committed and not in the README: the tab strip is AppKit vibrancy
+        // and captures as a blank band offscreen (see CAPTURE.md §3), so these
+        // are a measurement instrument, not a picture of the product. Write
+        // them somewhere scratch.
+        print("Assembled window, \(Int(settingsWidth))x\(Int(SettingsView.windowHeight))pt:")
+        for tab in [SettingsTab.general, .agents, .safety] {
+            let router = SettingsTabRouter()
+            router.selectedTab = tab
+            let name = tab == .general ? "general" : (tab == .agents ? "agents" : "safety")
+            Renderer.render(
+                SettingsView(
+                    settings: settings,
+                    integrations: AgentIntegrationsModel(
+                        provider: StagedIntegrationsProvider(hooksInstalled)
+                    ),
+                    tabRouter: router
+                ),
+                size: CGSize(width: settingsWidth, height: SettingsView.windowHeight),
+                dark: false,
+                to: "measure-window-\(name).png"
+            )
+        }
+        renderDefaults.removePersistentDomain(forName: renderSuiteName)
+        print("done")
+        exit(0)
+    }
 
     for (dark, suffix) in [(false, "light"), (true, "dark")] {
         print("--- \(suffix) ---")

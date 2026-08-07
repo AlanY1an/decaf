@@ -57,22 +57,55 @@ struct SettingsView: View {
     /// Wide enough for a grouped form's label column plus its trailing control
     /// without wrapping the footers to four lines; System Settings panes sit in
     /// the same neighborhood.
-    private static let windowWidth: CGFloat = 620
+    static let windowWidth: CGFloat = 620
+
     /// Fixed, not a floor: grouped forms scroll internally, so a stable window
-    /// beats one that jumps every time you switch tabs. Measured — not guessed —
-    /// by rendering every state unconstrained and scanning for the last inked
-    /// row in each. Re-measured when General grew its display row: General is
-    /// now the tallest page at 385pt, ahead of Safety at 350 and the Agents
-    /// error state at 316. 445 clears General with a normal bottom margin and
-    /// room for a footer that wraps one line further in another locale.
+    /// beats one that jumps every time you switch tabs. A tabbed window is
+    /// sized by its tallest page, so the surplus lands as air on the shorter
+    /// two — the price of a window that does not jump when you switch tabs.
     ///
-    /// It lands near the 470 this window carried two passes ago, so it is worth
-    /// saying why that is not a walk-back: 470 was wrong then because it was
-    /// measured against copy that had since been cut, leaving General with
-    /// roughly 350pt of nothing in it. General now genuinely fills this. A
-    /// tabbed window is sized by its tallest page, so the cost lands as air on
-    /// Agents — the price of a window that does not jump when you switch tabs.
-    private static let windowHeight: CGFloat = 445
+    /// HOW THIS NUMBER WAS MEASURED, and how to redo it. Do not edit it by eye,
+    /// and do not trust this paragraph over the command:
+    ///
+    ///     cd docs/assets/render && ./build.sh
+    ///     ./.build/release/DecafRender --measure "$SOMEWHERE"
+    ///
+    /// That hosts `SettingsTabs` — this file's own TabView, with no frame on
+    /// it — in an offscreen window at `windowWidth`, selects each tab in turn,
+    /// and reads `fittingSize.height`. Each figure therefore already includes
+    /// the tab strip and the insets the TabView puts around the page: there is
+    /// no "about 30pt of tab strip" subtraction left to get wrong. It prints
+    /// the numbers, says whether this window clears them, and renders the
+    /// assembled window at its shipping frame into `$SOMEWHERE` so the answer
+    /// can be looked at rather than believed. `SettingsSizing` records the
+    /// result; `SettingsWindowSizingTests` re-measures it on every test run.
+    ///
+    /// Why the previous value (445) was too small, since the same mistake is
+    /// easy to repeat. It was reasoned about rather than measured: three
+    /// page-only heights, minus an estimated tab strip. The page-only heights
+    /// were then left to rot — the comment still cited "Agents 316", a figure
+    /// from before the `Auto Keep Awake for Agents` section existed, while the
+    /// page had grown to 412. And even against today's real numbers the sum
+    /// only just worked: 445 less a ~30pt strip leaves 415pt for a 412pt page,
+    /// and `fittingSize` under-reports a grouped Form's last card by a few
+    /// points (the renderer adds 8pt of slack for exactly this). So the Agents
+    /// page opened with the bottom edge of "Remove all integrations" shaved off.
+    /// Measure the assembled window, not the parts, and leave real margin.
+    static let windowHeight: CGFloat = SettingsSizing.windowHeight
+
+    var body: some View {
+        SettingsTabs(settings: settings, integrations: integrations, tabRouter: tabRouter)
+            .frame(width: Self.windowWidth, height: Self.windowHeight)
+    }
+}
+
+/// The three tabs with no frame around them, so their assembled natural height
+/// can be measured. `SettingsView` is this plus the window frame; nothing else
+/// should build a `TabView` of these pages.
+struct SettingsTabs: View {
+    @ObservedObject var settings: UISettings
+    @ObservedObject var integrations: AgentIntegrationsModel
+    @ObservedObject var tabRouter: SettingsTabRouter
 
     var body: some View {
         TabView(selection: $tabRouter.selectedTab) {
@@ -86,8 +119,35 @@ struct SettingsView: View {
                 .tabItem { Label("Safety", systemImage: "bolt.shield") }
                 .tag(SettingsTab.safety)
         }
-        .frame(width: Self.windowWidth, height: Self.windowHeight)
     }
+}
+
+/// The measured facts the settings window is sized from, in one place so the
+/// renderer, the tests and the window itself cannot disagree about them.
+///
+/// These are records of a measurement, not preferences. Re-measure with
+/// `DecafRender --measure` (see `SettingsView.windowHeight`); AppTests'
+/// `SettingsWindowSizingTests` fails when the pages outgrow them.
+enum SettingsSizing {
+    /// Natural height of each tab, tab strip and TabView insets included,
+    /// measured on 2026-08-07. Agents is measured in all three hero states; the
+    /// hero's status line is the one row whose height varies with state, and
+    /// all three came out the same.
+    static let measuredTabHeights: [SettingsTab: CGFloat] = [
+        .general: 409,
+        .agents: 442,
+        .safety: 387,
+    ]
+
+    /// The tallest page, plus a margin.
+    ///
+    /// The margin is not padding for its own sake. Two known reasons the true
+    /// requirement runs above the measurement: `fittingSize` under-reports a
+    /// grouped Form's last card by a few points, and a footer that wraps one
+    /// line further in another locale costs about 15pt. 16 covers both.
+    static let slack: CGFloat = 16
+
+    static let windowHeight: CGFloat = (measuredTabHeights.values.max() ?? 0) + slack
 }
 
 // MARK: - General

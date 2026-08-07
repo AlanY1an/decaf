@@ -53,7 +53,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         let window = NSWindow(contentViewController: hosting)
         window.title = "Welcome to Decaf"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 520, height: 420))
+        window.setContentSize(NSSize(width: OnboardingSizing.width,
+                                     height: OnboardingSizing.height))
         window.collectionBehavior = [.fullScreenNone]
         window.center()
         super.init(window: window)
@@ -121,7 +122,7 @@ private struct OnboardingView: View {
             Divider()
             controls.padding(16)
         }
-        .frame(width: 520, height: 420)
+        .frame(width: OnboardingSizing.width, height: OnboardingSizing.height)
     }
 
     // MARK: Step 1 — what it is
@@ -154,18 +155,37 @@ private struct OnboardingView: View {
             // look, and the ⌘-drag nobody is ever told about. The second line
             // is the escape hatch, and it is the reason relaunching the app now
             // opens Settings instead of showing an alert.
+            // NOT `Label`. A Label's title truncates instead of wrapping, and no
+            // modifier fixes it — `.fixedSize(vertical:)` on the label, on the
+            // stack, and a taller window were each tried and each re-rendered
+            // byte-identically with the ⌘-drag line still ellipsised. Composing
+            // the row by hand gives the Text a real width to wrap inside, which
+            // is the only construction that actually works here.
             VStack(alignment: .leading, spacing: 4) {
-                Label(
-                    "The icon is the small cup up in the menu bar, near the clock. Hold \u{2318} and drag any menu bar icon to move it — that is how you rescue one that landed somewhere awkward.",
-                    systemImage: "arrow.left.arrow.right"
-                )
-                Label(
-                    "Can't find it? Open Decaf again and its Settings window comes to you.",
-                    systemImage: "gearshape"
-                )
+                wrappingHint("arrow.left.arrow.right",
+                             "The icon is the small cup up in the menu bar, near the clock. Hold \u{2318} and drag any menu bar icon to move it — that is how you rescue one that landed somewhere awkward.")
+                wrappingHint("gearshape",
+                             "Can't find it? Open Decaf again and its Settings window comes to you.")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+        }
+    }
+
+    /// An icon-and-text row whose text actually wraps.
+    ///
+    /// `Label` cannot do this: its title truncates to one line and stays that
+    /// way through `.fixedSize`, a taller window, or both. Laying the row out by
+    /// hand — icon in a fixed column, text taking the remaining width — gives
+    /// the `Text` a bounded width to wrap inside. `.top` alignment keeps the
+    /// icon beside the first line rather than centred against the paragraph.
+    private func wrappingHint(_ systemImage: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: systemImage)
+                .frame(width: 14, alignment: .center)
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -293,4 +313,23 @@ private struct OnboardingView: View {
         // writer, one place, whichever way the flow ends.
         finish()
     }
+}
+
+/// The onboarding window's fixed size, in one place because it is set twice —
+/// once on the NSWindow and once on the SwiftUI root — and the two silently
+/// disagreeing is how the window ends up shorter than its own content.
+///
+/// The height is measured, not guessed. Step 1 is the tallest step and its two
+/// caption lines wrap; at 420 the window was shorter than the content, so
+/// SwiftUI compressed the flexible children and both captions came back as one
+/// ellipsised line — including the ⌘-drag tip, which is the single line in the
+/// whole flow the user most needs. `.fixedSize` on those Labels does nothing on
+/// its own: a label cannot claim height a too-short window has not got. Both
+/// halves are required.
+///
+/// Re-measure with `docs/assets/render/`: `./build.sh && ./.build/release/DecafRender ..`
+/// run, and read the reported point size of `onboarding-step1-light.png`.
+enum OnboardingSizing {
+    static let width: CGFloat = 520
+    static let height: CGFloat = 440
 }

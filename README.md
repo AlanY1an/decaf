@@ -617,9 +617,9 @@ And you are shown that, in full, before any of it happens — installing hooks i
 
 ## Settings
 
-Seven, and no more. Every one of them had to answer "who does the default hurt?"
+Six, and no more. Every one of them had to answer "who does the default hurt?"
 
-- **Keep this Mac awake** — while an agent is *working* (default), or while an agent is *running*. The second is the blunt instrument every competitor ships; it is here for people on AC who want zero risk, and the menu tells you honestly when your detection layer cannot actually deliver it.
+- **Auto keep awake for agents** — on by default. Turn it off and Decaf ignores coding agents entirely: any hold an agent started is released straight away, and from then on the Mac stays awake only while you keep it awake yourself. It is also in the menu, because that is where you are when you want it.
 - **Release grace period** — how long to keep holding after a turn ends. 1/2/3/5/10 minutes, default 3.
 - **Display while keeping awake** — the screen sleeps normally (default) or stays on. There is also a **Turn Off Display Now** action: the screen goes dark, the work keeps running.
 - **Battery threshold** — stop holding below this. Off, 10 %, 20 % or 30 %; default 20 %, resuming three points above the line you picked so a battery hovering at it does not flap.

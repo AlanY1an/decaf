@@ -226,6 +226,46 @@ public struct DetectionOutput: Sendable, Equatable {
         return agents.sorted { $0.rawValue < $1.rawValue }
     }
 
+    /// The subset of `runningOnlyAgents` whose presence is known ONLY from the
+    /// process table — a matched process, with no session record behind it.
+    ///
+    /// The distinction is not bookkeeping; it is the difference between two
+    /// different claims. A `.session` source that holds only because the mode
+    /// is `.whileRunning` was told by a hook that the turn ended, so "open and
+    /// not working" is a fact. An `.agentProcess` source knows one thing and
+    /// one thing only: a process with that name exists. It cannot see a turn
+    /// start or end, so it cannot tell an agent parked at its prompt from one
+    /// three minutes into a long tool call that has not touched a file — and
+    /// that second case is precisely why someone chooses this mode. The menu
+    /// owes each of them a different sentence (`AgentHoldCopy`).
+    ///
+    /// Subtraction, not union, because "working" beats "merely open" here for
+    /// the same reason it does in `primaryHoldReason`: an agent with BOTH an
+    /// idle session and a process match is one we genuinely do know is idle,
+    /// and the more specific true sentence is the one to print.
+    ///
+    /// Note that `.agentProcess` is emitted at every precision, hooks included
+    /// (see the coordinator), so this is not simply "the no-hooks case": a
+    /// session that started before Caffeinate did lands here on a fully
+    /// hooked Mac, and it is exactly as unknowable there.
+    public var processOnlyRunningAgents: [AgentKind] {
+        var withSession: Set<AgentKind> = []
+        var processOnly: Set<AgentKind> = []
+        for source in holdSources where source.reason == .running {
+            switch source.kind {
+            case .session:
+                withSession.insert(source.agent)
+            case .agentProcess:
+                processOnly.insert(source.agent)
+            case .fallbackActivity:
+                // Never carries `.running` — a file write is activity, not
+                // presence — but the switch stays exhaustive on purpose.
+                break
+            }
+        }
+        return processOnly.subtracting(withSession).sorted { $0.rawValue < $1.rawValue }
+    }
+
     /// Agents for which `.whileRunning` was asked for but cannot be delivered:
     /// no hooks and no process scan, so a running-but-idle agent is invisible
     /// and the mode silently behaves like `.whileWorking`.

@@ -80,6 +80,9 @@ public final class CompositionRoot: ObservableObject {
     /// idle session at its prompt, or a bare matched process. Always empty in
     /// the default mode.
     private var runningIdleAgents: [AgentKind] = []
+    /// The subset of the above standing on a process match alone. The menu says
+    /// something weaker about these, because a process match cannot see a turn.
+    private var processOnlyRunningAgents: [AgentKind] = []
     private var holdMode: AgentHoldMode = SettingsStore.Defaults.agentHoldMode
     private var runningModeCoverage: [AgentKind: RunningModeCoverage] = [:]
     private var precision: [AgentKind: DetectionPrecision] = [:]
@@ -454,6 +457,7 @@ public final class CompositionRoot: ObservableObject {
         // from `fallbackAgents` because the menu says "working" for those and
         // that sentence is false here.
         runningIdleAgents = output.runningOnlyAgents
+        processOnlyRunningAgents = output.processOnlyRunningAgents
         holdMode = output.holdMode
         runningModeCoverage = output.runningModeCoverage
         precision = output.precision
@@ -489,6 +493,7 @@ public final class CompositionRoot: ObservableObject {
             agentSessions: sessionSummaries,
             fallbackAgents: fallbackAgents,
             runningIdleAgents: runningIdleAgents,
+            processOnlyRunningAgents: processOnlyRunningAgents,
             safetyPause: safetyPause,
             precision: precision,
             agentHoldMode: holdMode,

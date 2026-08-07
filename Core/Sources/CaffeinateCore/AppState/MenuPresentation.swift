@@ -2,10 +2,13 @@
 // §2 and the §3 status-line table), as pure functions.
 //
 // These two functions answer the only question the menu bar exists to answer:
-// "is this Mac being kept awake right now, and why". That answer must be
-// covered by tests, and the app target has no test bundle — so the decision
-// lives here, next to the snapshot it reads, and the app target keeps only the
-// drawing (IconRenderer) and the menu assembly (MenuContentView).
+// "is this Mac being kept awake right now, and why". The decision lives here,
+// next to the snapshot it reads, under plan 06's one-vote-veto rule that the
+// app target holds no decision logic; the app keeps only the drawing
+// (IconRenderer) and the menu assembly (MenuContentView). The app test bundle
+// exercises the same functions through `MenuTextFormatter`, which is what the
+// menu actually calls — a forwarding layer that went stale would otherwise be
+// invisible to every test in this package.
 //
 // Absolute times only, never a countdown: a `.menu` evaluates its content when
 // it opens and does not refresh while it stays open (plan 04 §3 / R7).
@@ -154,18 +157,19 @@ public enum MenuCopy {
         // idle at its prompt, or a bare process match. This is the mode's own
         // hold, and it is the one hold in the app with no work behind it.
         //
-        // "open, not working" rather than borrowing the "working" sentence
-        // above, which would be false — and the clause after the dot is the one
-        // thing a user in this mode needs and cannot infer from anything else:
-        // the hold ends when the agent goes away, not on a clock. No absolute
-        // time appears because there is no instant to name (plan 04 §3's
-        // absolute-time rule is about never printing a countdown; it does not
-        // license inventing a deadline).
+        // Not the "working" sentence above, which would state the opposite of
+        // what is true — and which of the two available sentences applies turns
+        // on how the agent's presence is known, so the wording is owned by
+        // `AgentHoldCopy` and the choice is made from the snapshot here. The
+        // clause after the dot is the one thing a user in this mode needs and
+        // cannot infer from anywhere else: the hold ends when the agent goes
+        // away, not on a clock.
         if let agent = s.runningIdleAgents.first {
-            let name = agent.displayName
-            return s.runningIdleAgents.count == 1
-                ? "\(name) open, not working · Sleep blocked until it closes"
-                : "\(name) open, not working · \(s.runningIdleAgents.count) agents"
+            return AgentHoldCopy.runningIdleStatusLine(
+                agent: agent,
+                agentCount: s.runningIdleAgents.count,
+                knownOnlyByProcess: s.processOnlyRunningAgents.contains(agent)
+            )
         }
 
         if let manual = s.manual {

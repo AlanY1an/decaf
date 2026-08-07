@@ -91,6 +91,18 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// ("the agent did something recently"), and the menu owes each of them a
     /// different sentence. Empty in `.whileWorking`, always.
     public var runningIdleAgents: [AgentKind]
+    /// The subset of `runningIdleAgents` whose presence is known ONLY from the
+    /// process table — a matched process, no session record behind it.
+    ///
+    /// A hook-tracked session parked at its prompt is one the app watched go
+    /// idle, so "open, not working" is a fact about it. A bare process match is
+    /// not: the process table sees a process, never a turn, so it cannot tell
+    /// an agent waiting at its prompt from one deep in a tool call that has not
+    /// written a file — and holding through exactly that second case is why
+    /// this mode exists. Carrying the difference lets the menu state only what
+    /// is known (see `AgentHoldCopy.runningIdleStatusLine`); collapsing it
+    /// would put a confident "not working" on screen over a guess.
+    public var processOnlyRunningAgents: [AgentKind]
     /// nil = no safety gate engaged.
     public var safetyPause: SafetyPause?
     /// Per-agent detection precision (plan 02). The menu's single-value summary
@@ -155,6 +167,7 @@ public struct AppStateSnapshot: Equatable, Sendable {
         agentSessions: [AgentSessionSummary] = [],
         fallbackAgents: [AgentKind] = [],
         runningIdleAgents: [AgentKind] = [],
+        processOnlyRunningAgents: [AgentKind] = [],
         safetyPause: SafetyPause? = nil,
         precision: [AgentKind: DetectionPrecision] = [:],
         agentHoldMode: AgentHoldMode = .whileWorking,
@@ -167,6 +180,7 @@ public struct AppStateSnapshot: Equatable, Sendable {
         self.agentSessions = agentSessions
         self.fallbackAgents = fallbackAgents
         self.runningIdleAgents = runningIdleAgents
+        self.processOnlyRunningAgents = processOnlyRunningAgents
         self.safetyPause = safetyPause
         self.precision = precision
         self.agentHoldMode = agentHoldMode

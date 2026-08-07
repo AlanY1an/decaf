@@ -1,5 +1,6 @@
-// AgentHoldCopy — what Settings › Agents says about `AgentHoldMode`, including
-// the sentence that admits when the mode cannot be delivered.
+// AgentHoldCopy — every sentence this app says about `AgentHoldMode`: the
+// menu's status line for the mode's own hold, and what Settings › Agents says
+// about the mode, including the clause that admits when it cannot be delivered.
 //
 // `AgentHoldMode` owns the two labels and the two one-line explanations, the
 // way `DisplayPolicy` owns `menuTitle` / `settingsTitle`. What lives here is
@@ -21,8 +22,61 @@
 // written in live state so it corrects itself the moment hooks are installed.
 
 import Foundation
+import HookWire
 
 public enum AgentHoldCopy {
+
+    // MARK: - The menu status line for the mode's own hold
+
+    /// The status line for a hold with no work behind it — an agent that is
+    /// merely THERE, which is the only kind of hold `.whileRunning` adds and
+    /// the only hold in this app that no turn, prompt or grace window explains
+    /// (plan 04 §3, the two `.whileRunning` rows).
+    ///
+    /// Two sentences, and which one is used is not a matter of taste:
+    ///
+    /// - **We watched it go idle.** A hook-tracked session sitting at its
+    ///   prompt reported its own Stop. "Open, not working" is then a fact, and
+    ///   the clause after the dot names the only release condition this hold
+    ///   has — the session closing. No instant appears because there is no
+    ///   instant to name; plan 04 §3's absolute-time rule forbids counting
+    ///   down, it does not license inventing a deadline.
+    /// - **We only know a process exists.** The process table sees processes,
+    ///   never turns. It cannot tell an agent waiting at its prompt from one
+    ///   three minutes into a tool call that has not touched a file — and
+    ///   holding through that second case is the whole reason to pick this
+    ///   mode. So the sentence claims presence and nothing else, and names the
+    ///   release condition in the same terms it actually knows: the process
+    ///   going away.
+    ///
+    /// What is deliberately NOT said here: how well the agent is being watched.
+    /// That is the precision row directly below this one, for the same reason
+    /// the file-activity line does not repeat it — a status line that qualifies
+    /// itself is a headline about our plumbing instead of about the user's Mac.
+    ///
+    /// - Parameters:
+    ///   - agent: the agent the sentence is about (the first of the held set).
+    ///   - agentCount: how many agents are held this way; > 1 replaces the
+    ///     release clause with a count, exactly as the "working" line does.
+    ///   - knownOnlyByProcess: true when nothing but a process match stands
+    ///     behind this agent's hold (`AppStateSnapshot.processOnlyRunningAgents`).
+    public static func runningIdleStatusLine(
+        agent: AgentKind,
+        agentCount: Int,
+        knownOnlyByProcess: Bool
+    ) -> String {
+        let name = agent.displayName
+        if knownOnlyByProcess {
+            return agentCount == 1
+                ? "\(name) is running · Sleep blocked until it quits"
+                : "\(name) is running · \(agentCount) agents"
+        }
+        return agentCount == 1
+            ? "\(name) open, not working · Sleep blocked until it closes"
+            : "\(name) open, not working · \(agentCount) agents"
+    }
+
+    // MARK: - Settings › Agents
 
     /// The Settings row label. Reads as the first half of a sentence the popup
     /// completes: "Keep this Mac awake · While an agent is running".

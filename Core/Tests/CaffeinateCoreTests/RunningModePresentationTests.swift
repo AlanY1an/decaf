@@ -32,10 +32,12 @@ import HookWire
 
     private func runningIdleSnapshot(
         agents: [AgentKind] = [.claudeCode],
-        precision: DetectionPrecision = .hooks
+        precision: DetectionPrecision = .hooks,
+        knownOnlyByProcess: [AgentKind] = []
     ) -> AppStateSnapshot {
         AppStateSnapshot(
             runningIdleAgents: agents,
+            processOnlyRunningAgents: knownOnlyByProcess,
             precision: Dictionary(uniqueKeysWithValues: agents.map { ($0, precision) }),
             agentHoldMode: .whileRunning,
             runningModeCoverage: Dictionary(uniqueKeysWithValues: agents.map { ($0, .sessions) }),
@@ -62,6 +64,70 @@ import HookWire
     @Test func severalOpenAgentsAreCounted() {
         let line = MenuCopy.statusLine(for: runningIdleSnapshot(agents: [.claudeCode, .codex]))
         #expect(line == "Claude Code open, not working · 2 agents")
+    }
+
+    // MARK: The sub-case with no session behind it
+
+    /// The mode's honest sub-case. A process match proves the agent is THERE
+    /// and proves nothing at all about what it is doing: the process table sees
+    /// processes, never turns. "Not working" would therefore be a guess printed
+    /// as a fact — and the guess is wrong in exactly the situation this mode is
+    /// chosen for, an agent several minutes into a tool call that has not
+    /// written a file.
+    @Test func aProcessOnlyHoldClaimsPresenceAndNothingElse() {
+        let snapshot = runningIdleSnapshot(
+            precision: .fileActivity, knownOnlyByProcess: [.claudeCode]
+        )
+        #expect(MenuCopy.statusLine(for: snapshot)
+            == "Claude Code is running · Sleep blocked until it quits")
+    }
+
+    @Test func aProcessOnlyHoldNeverAssertsTheAgentIsNotWorking() {
+        let line = MenuCopy.statusLine(
+            for: runningIdleSnapshot(precision: .fileActivity, knownOnlyByProcess: [.claudeCode])
+        )
+        #expect(!line.contains("not working"))
+        #expect(!line.contains("Idle — not preventing sleep"))
+    }
+
+    /// The release condition is named in the terms the evidence actually
+    /// supports: a process we can only see quit, not a session we can see
+    /// close. Still no instant — there is none to name in either sub-case.
+    @Test func theProcessOnlyLineNamesQuittingAndNoInstant() {
+        let line = MenuCopy.statusLine(
+            for: runningIdleSnapshot(precision: .fileActivity, knownOnlyByProcess: [.claudeCode])
+        )
+        #expect(line.contains("until it quits"))
+        #expect(!line.contains("after"))
+    }
+
+    @Test func severalProcessOnlyAgentsAreCountedInTheWeakerSentence() {
+        let snapshot = runningIdleSnapshot(
+            agents: [.claudeCode, .codex],
+            precision: .fileActivity,
+            knownOnlyByProcess: [.claudeCode, .codex]
+        )
+        #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code is running · 2 agents")
+    }
+
+    /// Per agent, not per menu: an agent we genuinely watched go idle keeps the
+    /// specific sentence even while another agent is only a process match.
+    @Test func theSentenceIsChosenForTheAgentItNames() {
+        let snapshot = runningIdleSnapshot(
+            agents: [.claudeCode, .codex], knownOnlyByProcess: [.codex]
+        )
+        #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code open, not working · 2 agents")
+    }
+
+    /// Whichever sentence is used, the hold is real and the cup stays full —
+    /// the sub-case changes the words, never the cardinal rule.
+    @Test func aProcessOnlyHoldIsStillDrawnAsAHold() {
+        let snapshot = runningIdleSnapshot(
+            precision: .fileActivity, knownOnlyByProcess: [.claudeCode]
+        )
+        #expect(iconState(for: snapshot) == .agentHold(sessionCount: 1))
+        #expect(MenuCopy.accessibilityLabel(for: snapshot)
+            == "Caffeinate, an agent is open, keeping the Mac awake")
     }
 
     /// "Working" is the most specific true thing that can be said, so a working
@@ -199,6 +265,85 @@ import HookWire
     }
 }
 
+// MARK: - Which evidence stands behind a presence hold
+
+/// `runningOnlyAgents` answers "is this agent held merely for being there";
+/// `processOnlyRunningAgents` answers "and how do we know it is there". The
+/// second question exists because the two answers licence different sentences,
+/// and collapsing them is how a guess gets printed as a fact.
+@Suite struct PresenceEvidenceIsCarriedOut {
+
+    private func output(_ sources: [HoldSource]) -> DetectionOutput {
+        DetectionOutput(
+            shouldHold: !sources.isEmpty,
+            holdSources: sources,
+            holdMode: .whileRunning
+        )
+    }
+
+    @Test func aBareProcessMatchIsMarkedAsProcessOnly() {
+        let out = output([HoldSource(agent: .claudeCode, kind: .agentProcess)])
+        #expect(out.runningOnlyAgents == [.claudeCode])
+        #expect(out.processOnlyRunningAgents == [.claudeCode])
+    }
+
+    /// A hook-tracked session that holds only because of the mode reported its
+    /// own Stop, so it is presence we watched happen — not process-only.
+    @Test func anIdleSessionIsNotProcessOnly() {
+        let out = output([
+            HoldSource(
+                agent: .claudeCode,
+                kind: .session(id: "s1", state: .idle),
+                reason: .running
+            )
+        ])
+        #expect(out.runningOnlyAgents == [.claudeCode])
+        #expect(out.processOnlyRunningAgents.isEmpty)
+    }
+
+    /// Both kinds for one agent: the session is the more specific true thing we
+    /// know about it, so it wins — the same rule `primaryHoldReason` applies one
+    /// level up. Getting this backwards would downgrade a precisely-known agent
+    /// to the vaguer sentence whenever its process also happened to match.
+    @Test func aSessionOutranksAProcessMatchForTheSameAgent() {
+        let out = output([
+            HoldSource(agent: .claudeCode, kind: .agentProcess),
+            HoldSource(
+                agent: .claudeCode,
+                kind: .session(id: "s1", state: .idle),
+                reason: .running
+            ),
+        ])
+        #expect(out.runningOnlyAgents == [.claudeCode])
+        #expect(out.processOnlyRunningAgents.isEmpty)
+    }
+
+    @Test func eachAgentIsJudgedOnItsOwnEvidence() {
+        let out = output([
+            HoldSource(agent: .codex, kind: .agentProcess),
+            HoldSource(
+                agent: .claudeCode,
+                kind: .session(id: "s1", state: .idle),
+                reason: .running
+            ),
+        ])
+        #expect(out.runningOnlyAgents == [.claudeCode, .codex])
+        #expect(out.processOnlyRunningAgents == [.codex])
+    }
+
+    /// A working hold is not a presence hold in either list, and neither is a
+    /// file-activity window — those state that something happened, not that
+    /// something is there.
+    @Test func workingAndFallbackHoldsAreNeverPresenceHolds() {
+        let out = output([
+            HoldSource(agent: .claudeCode, kind: .session(id: "s1", state: .working)),
+            HoldSource(agent: .codex, kind: .fallbackActivity(lastActivityAt: Date())),
+        ])
+        #expect(out.runningOnlyAgents.isEmpty)
+        #expect(out.processOnlyRunningAgents.isEmpty)
+    }
+}
+
 // MARK: - The zombie, in both modes
 
 @Suite @MainActor struct StuckSessionsHoldInNoMode {
@@ -287,6 +432,45 @@ import HookWire
         #expect(fake.active.values.contains(.preventIdleSystemSleep))
         #expect(root.snapshot.runningIdleAgents == [.claudeCode])
         #expect(root.snapshot.agentHoldMode == .whileRunning)
+        // A bare process match, so the menu gets the weaker of the two
+        // sentences: the process table saw a process, it did not see a turn
+        // end. Claiming "not working" here would be a guess wearing a fact's
+        // clothes — and the guess is wrong in exactly the case this mode is
+        // bought for (a long tool call that touches no file).
+        #expect(root.snapshot.processOnlyRunningAgents == [.claudeCode])
+        #expect(MenuCopy.statusLine(for: root.snapshot)
+            == "Claude Code is running · Sleep blocked until it quits")
+    }
+
+    /// The other sub-case, through the same real glue: hooks told us this
+    /// session went idle, so the menu is allowed to say so. Pinned end to end
+    /// because the two sentences are only ever as trustworthy as the field that
+    /// picks between them surviving the trip from `DetectionOutput` to the
+    /// snapshot.
+    @Test func anIdleHookSessionKeepsTheSpecificSentence() {
+        let (root, fake) = makeRoot()
+        root.settings.agentHoldMode = .whileRunning
+        root.applyTuning()
+        root.apply(
+            output: DetectionOutput(
+                shouldHold: true,
+                holdSources: [
+                    HoldSource(
+                        agent: .claudeCode,
+                        kind: .session(id: "s1", state: .idle),
+                        reason: .running
+                    )
+                ],
+                precision: [.claudeCode: .hooks],
+                holdMode: .whileRunning,
+                runningModeCoverage: [.claudeCode: .sessions]
+            ),
+            sessions: []
+        )
+
+        #expect(fake.active.values.contains(.preventIdleSystemSleep))
+        #expect(root.snapshot.runningIdleAgents == [.claudeCode])
+        #expect(root.snapshot.processOnlyRunningAgents.isEmpty)
         #expect(MenuCopy.statusLine(for: root.snapshot)
             == "Claude Code open, not working · Sleep blocked until it closes")
     }

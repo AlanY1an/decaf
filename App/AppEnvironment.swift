@@ -509,9 +509,24 @@ final class AppEnvironment {
     }
 
     /// Starts the core (socket bind first — it doubles as the single-instance
-    /// lock, R11). Another live instance → inform and quit. Called from
-    /// `applicationDidFinishLaunching` before anything else.
+    /// lock, R11). Called from `applicationDidFinishLaunching` before anything
+    /// else.
+    ///
+    /// A second launch does NOT put up "look for the cup icon in the menu bar"
+    /// any more. That alert was a dead end for the one person it addressed:
+    /// someone who relaunched precisely because they could not find the icon,
+    /// told to go find the icon, then shown the door. Reopening an accessory
+    /// app is supposed to bring its interface forward, so it now does — the
+    /// second copy asks the lock holder to open Settings and leaves quietly
+    /// once it has been told that happened. Everything about the asking, the
+    /// deadline and the three outcomes lives in AgentDetection where it is
+    /// tested; this method only runs the result.
     func startCoreOrQuit() {
+        root.onReopenUIRequest = { [weak self] in self?.presentSettingsWindow() }
+        start(allowingRetry: true)
+    }
+
+    private func start(allowingRetry: Bool) {
         switch root.start() {
         case .started:
             // Silent bridge re-copy on version change (plan 03 / decision R4)
@@ -519,13 +534,52 @@ final class AppEnvironment {
             _ = try? claudeIntegration.refreshBridgeIfNeeded()
             integrations.refresh()
         case .anotherInstanceRunning:
-            let alert = NSAlert()
-            alert.alertStyle = .informational
-            alert.messageText = "Caffeinate is already running."
-            alert.informativeText = "Look for the cup icon in the menu bar."
-            alert.addButton(withTitle: "OK")
-            alert.runModal()
-            NSApp.terminate(nil)
+            let outcome = SingleInstanceControl.requestReopenUI(
+                socketPath: root.socketServer.socketPath
+            )
+            switch SecondLaunchDecision.action(for: outcome) {
+            case .exitSilently:
+                NSApp.terminate(nil)
+            case .retryStart:
+                // The lock holder vanished between the failed bind and the
+                // request. One retry — never a loop — and if the second attempt
+                // also loses the race we report rather than spin.
+                guard allowingRetry else {
+                    present(SecondLaunchDecision.notRespondingMessage)
+                    NSApp.terminate(nil)
+                    return
+                }
+                start(allowingRetry: false)
+            case .reportAndExit(let message):
+                present(message)
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func present(_ message: SecondLaunchMessage) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = message.title
+        alert.informativeText = message.body
+        alert.addButton(withTitle: message.buttonTitle)
+        alert.runModal()
+    }
+
+    /// The running instance's answer to "someone launched me again": open and
+    /// focus Settings.
+    ///
+    /// Settings is the right destination rather than, say, popping the menu:
+    /// it is a real window. A full menu bar, a notch and a third-party menu-bar
+    /// manager can all swallow a status item, and none of them can swallow a
+    /// window. `showSettingsWindow:` is the macOS 14+ selector behind SwiftUI's
+    /// `Settings` scene; the older name is tried second so a future rename
+    /// degrades to a no-op instead of a crash.
+    func presentSettingsWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        let selectors = [Selector(("showSettingsWindow:")), Selector(("showPreferencesWindow:"))]
+        for selector in selectors {
+            if NSApp.sendAction(selector, to: nil, from: nil) { return }
         }
     }
 

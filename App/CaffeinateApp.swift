@@ -67,4 +67,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         env.startStatusItemBridge()
         env.showOnboardingIfNeeded()
     }
+
+    /// The near path of "the user launched Caffeinate again" (plan 04 step 1).
+    ///
+    /// There are two of them and they need the same answer. Opening the app
+    /// from Finder or Spotlight while it is running does not start a second
+    /// process at all — LaunchServices activates this one and calls this
+    /// method. Only `open -n`, or running the binary directly, produces the
+    /// second process that loses the socket bind and asks over the socket
+    /// instead. Both end at the same window, which is the point: whatever the
+    /// user did to "open Caffeinate again", they get an interface.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        AppEnvironment.shared.presentSettingsWindow()
+        return true
+    }
 }

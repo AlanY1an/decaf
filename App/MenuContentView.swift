@@ -26,6 +26,7 @@ struct MenuContentView: View {
     @ObservedObject var settings: UISettings
     let toggleGate: ManualToggleGate
     let tabRouter: SettingsTabRouter
+    let customHold: CustomHoldPresenter
 
     @Environment(\.openSettings) private var openSettings
 
@@ -39,7 +40,7 @@ struct MenuContentView: View {
         let defaultUntil = UntilOptions.nextOccurrence(
             minutesSinceMidnight: settings.untilTimeMinutes, now: now
         )
-        let upcomingHours = UntilOptions.upcomingWholeHours(now: now)
+        let untilRows = MenuLayout.untilRows(now: now)
 
         // The top group — status line, session rows, and the
         // detection-precision pair. WHICH of those exist, in what order, is
@@ -87,14 +88,29 @@ struct MenuContentView: View {
             set: { _ in toggleGate.requestToggle() }
         ))
 
-        // "Keep For…" — every item is an action that (re)starts manual mode
-        // with that duration; the active preset shows a check mark.
+        // "Keep For…" — every preset item is an action that (re)starts manual
+        // mode with that duration; the active preset shows a check mark. The
+        // last row is `Custom…`, which opens the panel instead of acting.
+        //
+        // WHICH rows, in what order, is `MenuLayout.keepForRows` (pure,
+        // asserted in the App test bundle) rather than this body, for the same
+        // reason the top group is: a submenu's contents are a product decision
+        // and should not be able to change without walking past a test.
         Menu("Keep For…") {
-            ForEach(ManualPreset.allCases, id: \.self) { preset in
-                Toggle(preset.title, isOn: Binding(
-                    get: { snapshot.manual?.mode == preset.mode },
-                    set: { _ in commands.startManual(preset.mode) }
-                ))
+            ForEach(Array(MenuLayout.keepForRows().enumerated()), id: \.offset) { _, row in
+                switch row {
+                case .preset(let title, let mode):
+                    Toggle(title, isOn: Binding(
+                        get: { snapshot.manual?.mode == mode },
+                        set: { _ in commands.startManual(mode) }
+                    ))
+                case .custom(let title):
+                    // A Button, not a Toggle: it never carries a check mark
+                    // because it is not a value the hold can equal. The running
+                    // hold's own duration, custom or not, is already named by
+                    // the status line at the top of the menu.
+                    Button(title) { customHold.present(.duration) }
+                }
             }
         }
 
@@ -122,16 +138,25 @@ struct MenuContentView: View {
         //
         // Picking one here does NOT rewrite the stored default above — see
         // AppCommands.holdUntil. Choosing when THIS hold should end is a
-        // different act from changing what "Until" means tomorrow.
+        // different act from changing what "Until" means tomorrow. That holds
+        // for the `Custom…` row too: it is a point-of-use pick like the rest.
+        //
+        // `Custom…` is what six generated hours could never cover: a time
+        // between the hours, and any time more than six hours out.
         Menu(MenuTextFormatter.untilSubmenuTitle) {
-            ForEach(upcomingHours) { option in
-                // Toggle, like the "Keep For…" items: each is an action, and
-                // the one matching the running hold's deadline carries the
-                // check mark, so the submenu also answers "when does this end?"
-                Toggle(MenuTextFormatter.untilItemTitle(option), isOn: Binding(
-                    get: { snapshot.manual?.expiry == option.deadline },
-                    set: { _ in commands.holdUntil(option.deadline) }
-                ))
+            ForEach(Array(untilRows.enumerated()), id: \.offset) { _, row in
+                switch row {
+                case .hour(let title, let deadline):
+                    // Toggle, like the "Keep For…" items: each is an action, and
+                    // the one matching the running hold's deadline carries the
+                    // check mark, so the submenu also answers "when does this end?"
+                    Toggle(title, isOn: Binding(
+                        get: { snapshot.manual?.expiry == deadline },
+                        set: { _ in commands.holdUntil(deadline) }
+                    ))
+                case .custom(let title):
+                    Button(title) { customHold.present(.endTime) }
+                }
             }
         }
 

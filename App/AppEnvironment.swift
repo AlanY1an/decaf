@@ -442,6 +442,9 @@ final class AppEnvironment {
     let integrations: AgentIntegrationsModel
     let tabRouter = SettingsTabRouter()
     let toggleGate: ManualToggleGate
+    /// Opens the "Custom…" panel for either manual submenu. Owned here, like
+    /// every other thing a menu row needs and a menu row must not construct.
+    let customHold: CustomHoldPresenter
 
     private let claudeIntegration: ClaudeCodeIntegration
     private var bridge: StatusItemBridge?
@@ -484,6 +487,7 @@ final class AppEnvironment {
             provider: ClaudeIntegrationsProvider(integration: claudeIntegration, root: root)
         )
         self.toggleGate = ManualToggleGate(store: store, commands: root)
+        self.customHold = CustomHoldPresenter(commands: root)
 
         // Root snapshot → UI store (the UI's single data channel).
         //

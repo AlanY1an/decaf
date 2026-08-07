@@ -22,10 +22,17 @@ import Foundation
 import CaffeinateCore
 import HookWire
 
-// MARK: - Manual presets (plan 04 §3: fixed, not editable)
+// MARK: - Manual presets (plan 04 §3)
 
-/// The fixed "Keep For…" presets (5/15/30 min, 1/2/5 h) plus Indefinitely.
+/// The "Keep For…" presets (5/15/30 min, 1/2/5 h) plus Indefinitely.
 /// Shared by the menu submenu and the General settings "default duration" popup.
+///
+/// Still a fixed list, and still not user-editable — R7's "presets are fixed"
+/// half is untouched. What changed on 2026-08-07 is that the submenu no longer
+/// ENDS here: a `Custom…` row follows it (see `MenuLayout.keepForRows`), so a
+/// duration nobody chose for you is one item away instead of unavailable. A
+/// preset editor — reordering these seven, renaming them, persisting your own —
+/// is still not a thing this app has.
 enum ManualPreset: CaseIterable, Hashable {
     case infinite
     case fiveMinutes
@@ -127,6 +134,19 @@ enum MenuTextFormatter {
         return option.isTomorrow ? "Until \(time) Tomorrow" : "Until \(time)"
     }
 
+    // MARK: The "Custom…" row
+
+    /// The last row of BOTH manual submenus. One word, spelled the same in both
+    /// places, because it is the same promise in both: the list above is what we
+    /// guessed you would want, and this is where you say what you actually want.
+    ///
+    /// The ellipsis is doing real work here and is not decoration: it is the
+    /// platform's own way of saying "this one opens something and does not act
+    /// immediately", which is exactly the difference between this row and every
+    /// other row of these two submenus. Clicking it dismisses the menu — normal
+    /// `NSMenu` behaviour, and the same thing "Settings…" has always done.
+    static let customItemTitle = "Custom\u{2026}"
+
     // MARK: Detection precision summary (R12: highest precision among active agents)
 
     /// Both of these live in `MenuCopy` (CaffeinateCore) so the rule table has a
@@ -146,5 +166,88 @@ enum MenuTextFormatter {
     /// VoiceOver user hears cannot drift from the image they are hearing about.
     static func accessibilityLabel(for s: AppStateSnapshot) -> String {
         MenuCopy.accessibilityLabel(for: s)
+    }
+}
+
+// MARK: - The "Custom…" panel's words
+
+/// Which question the panel was opened to ask.
+///
+/// **One panel, two modes, rather than two panels.** They ask the same question
+/// — when does this hold end — and answer it with the same thing: one absolute
+/// instant, previewed on the same line, committed by the same button, cancelled
+/// by the same key. What differs between them is a single control: a text field
+/// or a time picker. That is a row, not a window. Two controllers would have
+/// meant two copies of the activation dance an `LSUIElement` app needs, two
+/// Return/Escape wirings and two preview lines to keep in step, to save one
+/// `switch`.
+///
+/// It also settles the multi-window question for free: both are opened from the
+/// same menu, so at most one can ever be wanted, and one controller that
+/// retargets an already-open window is the behaviour a user expects anyway.
+enum CustomHoldKind: Equatable, CaseIterable {
+    /// "Keep For… ▸ Custom…" — type a duration.
+    case duration
+    /// "Until… ▸ Custom…" — pick a clock time.
+    case endTime
+}
+
+/// Every string the panel shows, as a pure function of the mode, so the panel
+/// body stays assembly (plan 04 step 3 acceptance) and the words can be
+/// asserted without opening a window.
+enum CustomHoldCopy {
+
+    /// The window's title bar. Reads as the completion of the menu path that
+    /// opened it, so the panel never looks like it arrived from nowhere.
+    static func windowTitle(_ kind: CustomHoldKind) -> String {
+        switch kind {
+        case .duration: return "Keep Awake For"
+        case .endTime: return "Keep Awake Until"
+        }
+    }
+
+    /// The label beside the one input.
+    static func fieldLabel(_ kind: CustomHoldKind) -> String {
+        switch kind {
+        case .duration: return "Duration"
+        case .endTime: return "End time"
+        }
+    }
+
+    /// The text field's placeholder. It carries the one ambiguity in the
+    /// grammar — that a bare number means minutes — rather than leaving it to
+    /// be discovered by getting a hold ten times too short.
+    static let durationPrompt = "90, or 1h 30m"
+
+    /// The quiet line under the input.
+    static func hint(_ kind: CustomHoldKind) -> String {
+        switch kind {
+        case .duration:
+            return "Minutes, or hours and minutes. A plain number means minutes."
+        case .endTime:
+            // The one thing about this mode a user cannot see from the control:
+            // a time that has gone by today is not refused, it means tomorrow.
+            // Said here, and repeated concretely by the resolved line above the
+            // buttons whenever it actually happens.
+            return "A time that has already passed today means tomorrow."
+        }
+    }
+
+    /// The confirm button. Names the outcome, not the dialog — "OK" would leave
+    /// a user one keystroke from a keep-awake without having read the word.
+    static let confirmTitle = "Keep Awake"
+    static let cancelTitle = "Cancel"
+
+    /// The resolved line that sits between the input and the buttons: what
+    /// pressing Return is about to do, in absolute clock time.
+    ///
+    /// Absolute, like every other expiry string in this app — and here it is
+    /// also the whole safety story of the panel, because it is what turns "I
+    /// typed 2 PM at 3 PM" from a 23-hour surprise into a 23-hour choice.
+    static func resolvedLine(_ option: UntilOption, now: Date) -> String {
+        let time = MenuTextFormatter.timeString(option.deadline)
+        let when = option.isTomorrow ? "\(time) tomorrow" : time
+        let length = MenuTextFormatter.durationText(since: now, now: option.deadline)
+        return "Keeps this Mac awake until \(when) \u{2014} \(length) from now."
     }
 }

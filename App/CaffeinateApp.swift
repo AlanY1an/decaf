@@ -27,7 +27,8 @@ struct CaffeinateApp: App {
                 commands: env.commands,
                 settings: env.settings,
                 toggleGate: env.toggleGate,
-                tabRouter: env.tabRouter
+                tabRouter: env.tabRouter,
+                customHold: env.customHold
             )
         } label: {
             MenuBarIconLabel(store: env.store)

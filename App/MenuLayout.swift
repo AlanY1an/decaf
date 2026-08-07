@@ -1,12 +1,19 @@
-// MenuLayout — WHICH rows the top of the menu contains, as a pure function.
+// MenuLayout — WHICH rows the menu contains, as pure functions.
 //
-// The group above the first divider is the only part of the menu whose SHAPE
-// changes: everything below it (the manual controls, the display group, the
-// footer) is a fixed list whose items differ only in title and check state. So
-// this file owns that group, `MenuContentView` renders the list it returns, and
-// the App test bundle can assert the exact rows a given state produces rather
-// than "something changed" (plan 06 §4 — decisions live in pure functions, view
-// bodies stay assembly).
+// Three lists live here:
+//
+// 1. `topRows` — the group above the first divider, the only part of the menu
+//    whose SHAPE changes with state.
+// 2. `keepForRows` — the "Keep For…" submenu.
+// 3. `untilRows` — the "Until…" submenu.
+//
+// The last two do not vary with the snapshot, and they are functions anyway,
+// for the reason the first one is: `MenuContentView` renders the list it is
+// given, and the App test bundle asserts the exact ordered rows rather than
+// "something changed" (plan 06 §4 — decisions live in pure functions, view
+// bodies stay assembly). Both submenus gained a `Custom…` row on 2026-08-07,
+// which is precisely the kind of change that should have to walk past a test
+// that spells the list out.
 //
 // One decision lives here, and it is the same decision R7-A and R17 already
 // made twice: the control belongs where the decision happens. A user with no
@@ -54,6 +61,24 @@ enum MenuTopRow: Equatable {
     /// (`AgentAutoKeepAwakeCopy.menuHelp`) and is attached by the view, so it
     /// is not carried here.
     case agentAutoToggle(title: String, isOn: Bool)
+}
+
+/// One row of the "Keep For…" submenu, in render order.
+enum MenuKeepForRow: Equatable {
+    /// One of the fixed presets. Clicking it (re)starts manual mode with `mode`;
+    /// the one matching the running hold carries the check mark.
+    case preset(title: String, mode: ManualMode)
+    /// The last row: opens the panel instead of acting. Never checked — it is
+    /// not a value, it is a door.
+    case custom(title: String)
+}
+
+/// One row of the "Until…" submenu, in render order.
+enum MenuUntilRow: Equatable {
+    /// One of the upcoming whole hours, resolved at menu-open time.
+    case hour(title: String, deadline: Date)
+    /// The last row, same door as above.
+    case custom(title: String)
 }
 
 // MARK: - MenuLayout
@@ -176,5 +201,46 @@ enum MenuLayout {
         }
 
         return rows
+    }
+
+    // MARK: - The two manual submenus
+
+    /// The "Keep For…" submenu, in order: the seven fixed presets, then
+    /// `Custom…`.
+    ///
+    /// Not state-dependent — unlike `topRows`, this list is the same every time
+    /// the menu opens, and it is a function anyway so that the App test bundle
+    /// can assert its exact contents. A submenu whose last row is asserted here
+    /// cannot lose that row to a refactor of a view body.
+    ///
+    /// **`Custom…` goes last, and that placement is the argument.** The presets
+    /// are the fast path — a click and a distance the muscle already knows —
+    /// and putting an escape hatch above them would tax every ordinary use to
+    /// serve the occasional one. Last is also where the platform puts this row
+    /// in every menu that has one, from font sizes to print paper sizes.
+    static func keepForRows() -> [MenuKeepForRow] {
+        ManualPreset.allCases.map { .preset(title: $0.title, mode: $0.mode) }
+            + [.custom(title: MenuTextFormatter.customItemTitle)]
+    }
+
+    /// The "Until…" submenu, in order: the next whole hours after `now`, then
+    /// `Custom…`.
+    ///
+    /// The hours are what R7-A restored, and this row is what they were always
+    /// missing: six entries can only ever be six entries, so before it there was
+    /// no way to say 6:45, and no way to say anything more than six hours out.
+    ///
+    /// - Parameters:
+    ///   - now: the instant the menu opened. The hours are resolved against it
+    ///     once, because a `.menu` does not refresh while it stays open (plan
+    ///     04 §3 / R7). The panel this row opens is a window and DOES refresh —
+    ///     that difference is the panel's job, not this list's.
+    static func untilRows(
+        now: Date,
+        calendar: Calendar = .current
+    ) -> [MenuUntilRow] {
+        UntilOptions.upcomingWholeHours(now: now, calendar: calendar).map {
+            .hour(title: MenuTextFormatter.untilItemTitle($0), deadline: $0.deadline)
+        } + [.custom(title: MenuTextFormatter.customItemTitle)]
     }
 }

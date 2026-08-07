@@ -97,6 +97,8 @@ public actor DetectionCoordinator {
     /// feature existed, which is also the escape hatch if upstream renames the
     /// tools out from under us.
     private let tailReader: TranscriptTailReader?
+    /// Forwarded copy of every tail-read line (plan 09 M3; nil = no consumer).
+    private let transcriptLineSink: (@Sendable (String, Date) -> Void)?
     private let waitParser: WaitSignalParser
     /// Per-file parser cursor (carries at most a pending cron job id).
     private var waitCursors: [URL: WaitSignalParser.Cursor] = [:]
@@ -153,11 +155,16 @@ public actor DetectionCoordinator {
         // measurement, and a `nil` sampler makes the predicate permanently
         // unable to condemn anything. Injected so tests script it.
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
-        userNotifier: (any UserNotifying)? = nil
+        userNotifier: (any UserNotifying)? = nil,
+        // Every transcript line the tail-read loop yields, forwarded verbatim
+        // (plan 09 M3): the usage meter shares this single reader instead of
+        // running a second one over the same files. nil costs nothing.
+        transcriptLineSink: (@Sendable (String, Date) -> Void)? = nil
     ) {
         self.clock = clock
         self.tailReader = tailReader
         self.waitParser = waitParser
+        self.transcriptLineSink = transcriptLineSink
         self.userNotifier = userNotifier
         self.l2IdleWindow = l2IdleWindow
         self.socketDegradeGrace = socketDegradeGrace
@@ -418,6 +425,7 @@ public actor DetectionCoordinator {
                 let lines = tailReader.readNewLines(at: url)
                 if lines.isEmpty { break }
                 for line in lines {
+                    transcriptLineSink?(line, now)
                     let result = waitParser.parse(line: line, now: now, cursor: &cursor)
                     guard !result.isEmpty else { continue }
                     // File order is authoritative: a stop later in the file

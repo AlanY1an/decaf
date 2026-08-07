@@ -6,10 +6,19 @@
 // below that divider (the manual controls, the display group, the footer) is a
 // fixed list and is covered by MenuRowTests / MenuStatusLineTests.
 //
-// One behaviour is on trial here: a Mac that has never seen a coding agent gets
-// no agent machinery. This app is also a plain `caffeinate` replacement, and the
-// adaptation must be stable (no row that appears and vanishes with sessions) and
-// must recover the instant an agent really shows up.
+// Two behaviours are on trial here.
+//
+// 1. A Mac that has never seen a coding agent gets no agent machinery. This app
+//    is also a plain `caffeinate` replacement, and the adaptation must be stable
+//    (no row that appears and vanishes with sessions) and must recover the
+//    instant an agent really shows up.
+// 2. "Auto Keep Awake for Agents" — one switch, on by default. Off means the
+//    agent rows go and the switch stays, because the switch is the only thing
+//    that explains their absence and the only way back.
+//
+// The two interact in one place worth stating: the switch is gated by (1) and
+// nothing is gated by the switch being on except the agent rows themselves.
+// Turning the feature off can never remove its own switch from the menu.
 
 import Foundation
 import Testing
@@ -46,6 +55,18 @@ private func rows(
     MenuLayout.topRows(for: s, now: now)
 }
 
+/// The switch row in each of its two states, spelled out once.
+///
+/// Every expectation on an agent-equipped Mac below ends with one of these, and
+/// that repetition IS the claim: the switch is the last row of the group in
+/// every state, so a user always finds it in the same place.
+private let switchOn = MenuTopRow.agentAutoToggle(
+    title: "Auto Keep Awake for Agents", isOn: true
+)
+private let switchOff = MenuTopRow.agentAutoToggle(
+    title: "Auto Keep Awake for Agents", isOn: false
+)
+
 // MARK: - The matrix
 
 @Suite struct MenuTopSectionMatrix {
@@ -79,15 +100,16 @@ private func rows(
 
     // MARK: Agent installed, idle
 
-    /// Hooks installed, nothing running: the plain idle line and nothing else.
+    /// Hooks installed, nothing running: the plain idle line, then the switch.
     /// There is no hold, and a healthy hooks install has nothing to qualify —
-    /// a menu that narrates a working default is noise.
-    @Test func anInstalledButIdleAgentAddsNoRows() {
+    /// a menu that narrates a working default is noise. The switch is not
+    /// narration; it is the one thing here a user can act on.
+    @Test func anInstalledButIdleAgentAddsOnlyTheSwitch() {
         let s = AppStateSnapshot(
             precision: [.claudeCode: .hooks],
             hasEverDetectedAgent: true
         )
-        #expect(rows(s) == [.status("Idle — not preventing sleep")])
+        #expect(rows(s) == [.status("Idle — not preventing sleep"), switchOn])
     }
 
     // MARK: Agent working
@@ -102,6 +124,7 @@ private func rows(
         #expect(rows(s, now: fixedStart.addingTimeInterval(12 * 60)) == [
             .status("Claude Code working"),
             .session("api — working for 12 min"),
+            switchOn,
         ])
     }
 
@@ -119,6 +142,7 @@ private func rows(
         #expect(rows(s) == [
             .status("Just finished · Sleep allowed after \(MenuCopy.timeString(until))"),
             .session("api — grace period"),
+            switchOn,
         ])
     }
 
@@ -140,6 +164,7 @@ private func rows(
             .session("p4 — working for 1 min"),
             .session("p5 — working for 1 min"),
             .overflow("2 more sessions…"),
+            switchOn,
         ])
     }
 
@@ -159,6 +184,7 @@ private func rows(
             .session("api — working for 5 min"),
             .precisionDetail("Detection: hooks (an older event set)"),
             .precisionAction("Repair hooks…"),
+            switchOn,
         ])
     }
 
@@ -178,6 +204,7 @@ private func rows(
             .status("Claude Code working"),
             .precisionDetail("Detection: file activity (approximate)"),
             .precisionAction("Install hooks for precise detection…"),
+            switchOn,
         ])
     }
 
@@ -191,7 +218,12 @@ private func rows(
             precision: [.claudeCode: .fileActivity],
             wantsHold: true
         )
-        #expect(rows(s).count == 3)
+        #expect(rows(s) == [
+            .status("Claude Code working"),
+            .precisionDetail("Detection: file activity (approximate)"),
+            .precisionAction("Install hooks for precise detection…"),
+            switchOn,
+        ])
         s.fallbackAgents = []
         s.precision = noAgentPrecision
         #expect(rows(s) == [.status("Keeping awake — sleep is blocked")])
@@ -211,7 +243,151 @@ private func rows(
         #expect(rows(s) == [
             .status("Paused · Low Power Mode is on"),
             .session("api — working for 1 min"),
+            switchOn,
         ])
+    }
+}
+
+// MARK: - The switch
+
+/// "Auto Keep Awake for Agents" — one row, on or off.
+///
+/// The author asked for an option in this menu, and this is it: a switch, not a
+/// choice between behaviours. There is no second option and no submenu, and the
+/// tests below are written so that adding one would break them.
+@Suite struct AgentAutoKeepAwakeSwitch {
+
+    /// The shipped default. Nobody has to find this row for the product to
+    /// work — it is there for the people who want the behaviour gone.
+    @Test func itIsOnByDefault() {
+        let s = AppStateSnapshot(
+            precision: [.claudeCode: .hooks],
+            hasEverDetectedAgent: true
+        )
+        #expect(rows(s).last == switchOn)
+        #expect(AppStateSnapshot().agentAutoKeepAwake)
+    }
+
+    /// Switched off, with two sessions the detection layer can still see: every
+    /// agent row goes, the switch stays, and the status line falls back to the
+    /// truth about this Mac — which is that nothing is holding it awake.
+    ///
+    /// The snapshot is deliberately the impossible one — sessions present with
+    /// the switch off — because in production the composition root has already
+    /// emptied them. That belt-and-braces is the point: the menu must not be
+    /// able to narrate a hold that does not exist, whatever it is handed.
+    @Test func switchingItOffDropsEveryAgentRowAndKeepsTheSwitch() {
+        let s = AppStateSnapshot(
+            agentSessions: [
+                workingSession(id: "s1", project: "api"),
+                workingSession(id: "s2", project: "web"),
+            ],
+            precision: [.claudeCode: .fileActivity],
+            wantsHold: false,
+            hasEverDetectedAgent: true,
+            agentAutoKeepAwake: false
+        )
+        #expect(rows(s, now: fixedStart.addingTimeInterval(41 * 60)) == [
+            .status("Idle — not preventing sleep"),
+            switchOff,
+        ])
+    }
+
+    /// The same menu with the switch on, for the diff. This pair is the whole
+    /// feature: five rows become two, and the row that survives is the one that
+    /// explains why.
+    @Test func theSameMacWithTheSwitchOnShowsTheAgentRows() {
+        let s = AppStateSnapshot(
+            agentSessions: [
+                workingSession(id: "s1", project: "api"),
+                workingSession(id: "s2", project: "web"),
+            ],
+            precision: [.claudeCode: .fileActivity],
+            wantsHold: true,
+            hasEverDetectedAgent: true
+        )
+        #expect(rows(s, now: fixedStart.addingTimeInterval(41 * 60)) == [
+            .status("Claude Code working · 2 sessions"),
+            .session("api — working for 41 min"),
+            .session("web — working for 41 min"),
+            .precisionDetail("Detection: file activity (approximate)"),
+            .precisionAction("Install hooks for precise detection…"),
+            switchOn,
+        ])
+    }
+
+    /// A manual hold is not an agent hold. Switching agents off leaves it
+    /// exactly where it was, and the status line still says so — this is the
+    /// "plain keep-awake utility" the switch promises to leave behind.
+    @Test func aManualHoldIsUntouchedByTheSwitchBeingOff() {
+        let s = AppStateSnapshot(
+            manual: ManualState(mode: .infinite),
+            agentSessions: [workingSession()],
+            precision: [.claudeCode: .hooks],
+            wantsHold: true,
+            hasEverDetectedAgent: true,
+            agentAutoKeepAwake: false
+        )
+        #expect(rows(s) == [.status("Manual hold · Indefinite"), switchOff])
+    }
+
+    /// The switch is never gated on its own state. If it were, turning the
+    /// feature off would take away the only way back — and, for someone who
+    /// clicked it by accident, the only sign anything had happened.
+    @Test func theSwitchSurvivesEveryStateOfItself() {
+        for enabled in [true, false] {
+            let s = AppStateSnapshot(
+                precision: [.claudeCode: .hooks],
+                hasEverDetectedAgent: true,
+                agentAutoKeepAwake: enabled
+            )
+            #expect(rows(s).last == (enabled ? switchOn : switchOff))
+        }
+    }
+
+    /// R18-B still holds, and it outranks the switch: a Mac that has never had
+    /// a coding agent gets no agent rows at all — including this one. A switch
+    /// governing a feature you cannot use is the clearest case of a row that
+    /// exists only to tell you what you are missing.
+    @Test func anAgentlessMacGetsNoSwitchAtAllInEitherState() {
+        for enabled in [true, false] {
+            let s = AppStateSnapshot(
+                precision: noAgentPrecision,
+                agentAutoKeepAwake: enabled
+            )
+            #expect(rows(s) == [.status("Idle — not preventing sleep")])
+        }
+    }
+
+    /// …and the same for the pre-first-sweep empty precision map, which is what
+    /// the very first menu after a fresh launch is drawn against.
+    @Test func anAgentlessMacWithNoPrecisionYetGetsNoSwitchEither() {
+        #expect(rows(AppStateSnapshot(agentAutoKeepAwake: false))
+            == [.status("Idle — not preventing sleep")])
+    }
+
+    /// Exactly one agent control, and it is a checkable item. No submenu, no
+    /// second option, no third state — asserted structurally so that adding one
+    /// has to come through this test.
+    @Test func thereIsExactlyOneAgentControlAndItIsASwitch() {
+        let s = AppStateSnapshot(
+            agentSessions: [workingSession()],
+            precision: [.claudeCode: .fileActivity],
+            wantsHold: true,
+            hasEverDetectedAgent: true
+        )
+        let toggles = rows(s).filter {
+            if case .agentAutoToggle = $0 { return true }
+            return false
+        }
+        #expect(toggles.count == 1)
+        // The only button in the group is the precision pair's, which opens
+        // Settings. Nothing in this group opens a submenu or offers a choice.
+        let buttons = rows(s).filter {
+            if case .precisionAction = $0 { return true }
+            return false
+        }
+        #expect(buttons.count == 1)
     }
 }
 

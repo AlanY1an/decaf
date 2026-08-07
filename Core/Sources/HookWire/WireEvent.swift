@@ -84,7 +84,8 @@ public struct WireEvent: Equatable, Sendable, Codable {
         ppid: Int32,
         cwd: String? = nil,
         matcher: String? = nil,
-        ts: Double
+        ts: Double,
+        quota: QuotaPayload? = nil
     ) {
         self.init(
             v: v,
@@ -94,7 +95,8 @@ public struct WireEvent: Equatable, Sendable, Codable {
             ppid: ppid,
             cwd: cwd,
             matcher: matcher,
-            ts: ts
+            ts: ts,
+            quota: quota
         )
     }
 

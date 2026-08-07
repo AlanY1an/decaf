@@ -23,6 +23,7 @@ let package = Package(
         .library(name: "HookWire", targets: ["HookWire"]),
         .library(name: "UsageMetering", targets: ["UsageMetering"]),
         .executable(name: "decaf-bridge", targets: ["decaf-bridge"]),
+        .executable(name: "decaf-statusline", targets: ["decaf-statusline"]),
         .executable(name: "decaf-smoke", targets: ["decaf-smoke"]),
     ],
     targets: [
@@ -59,6 +60,12 @@ let package = Package(
         ),
         .executableTarget(
             name: "decaf-bridge",
+            dependencies: ["HookWire"]
+        ),
+        // Statusline-to-socket bridge (plan 09 M2): same R4 discipline as
+        // decaf-bridge — HookWire only.
+        .executableTarget(
+            name: "decaf-statusline",
             dependencies: ["HookWire"]
         ),
         .executableTarget(

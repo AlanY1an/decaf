@@ -71,8 +71,9 @@ Requires macOS 14 or later.
 - **One-click Claude Code hooks install.** Deep-merges six events
   (`SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `StopFailure`,
   `SessionEnd`) plus two `Notification` matchers (`permission_prompt`, which
-  opens the release window exactly as the end of a turn does, and `idle_prompt`,
-  which releases early) into `~/.claude/settings.json`. The file is backed up first,
+  opens a 5-minute window and hands the hold back the moment the approved tool
+  reports in, and `idle_prompt`, which releases early) into
+  `~/.claude/settings.json`. The file is backed up first,
   every key the app does not recognise keeps its value, and uninstall removes
   exactly the entries it added. The file is re-serialised, so key order and
   indentation are not preserved; the contract is semantic equality, not byte
@@ -132,13 +133,17 @@ Requires macOS 14 or later.
 
 ### Known limitations
 
-- **Approving a permission prompt does not re-arm the hold.** The prompt opens
-  the ordinary release window (3 minutes by default). Claude Code emits no hook
-  event when you click "allow" — `PreToolUse` fires *before* the dialog, and the
-  next event is `PostToolUse`, which only fires once the tool finishes — so if
-  the approved tool runs longer than the window, the Mac can idle-sleep while it
-  is still running. Workaround until this is closed: raise the grace period in
-  Settings, or start a manual hold before approving something long.
+- **A tool approved and running longer than five minutes has a gap before the
+  hold comes back.** Claude Code emits no hook event when you click "allow" —
+  `PreToolUse` fires *before* the dialog, and the next event is `PostToolUse`,
+  which only fires once the tool finishes. So a permission prompt opens a
+  5-minute window of its own, and if the tool you approved is still running when
+  that runs out, the Mac can idle-sleep until the tool finishes and reports in —
+  at which point the hold comes back and stays for the rest of the turn. The
+  window cannot simply be made longer: it is also how long an *unanswered*
+  prompt keeps your Mac awake, which the one rule says should be as short as
+  possible. Workaround for a known-long approval: start a manual hold before
+  approving it.
 
 ### Not in this release
 

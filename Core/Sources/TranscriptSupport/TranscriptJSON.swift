@@ -77,6 +77,18 @@ package enum JSON {
         return result
     }
 
+    /// A finite, non-negative JSON integer. Rejects booleans, strings,
+    /// negatives, fractions, NaN and infinity — a token count is a whole
+    /// number or it is nothing.
+    package static func nonNegativeInteger(_ value: Any?) -> Int? {
+        guard let value, !isCFBoolean(value), let number = value as? NSNumber else { return nil }
+        let double = number.doubleValue
+        guard double.isFinite, double >= 0, double <= Double(Int.max) else { return nil }
+        let integer = number.intValue
+        guard Double(integer) == double else { return nil }
+        return integer
+    }
+
     private static func isCFBoolean(_ value: Any) -> Bool {
         CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID()
     }

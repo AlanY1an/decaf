@@ -81,6 +81,10 @@ public final class CompositionRoot: ObservableObject {
     /// read once at init and written exactly once — `republish()` runs on every
     /// engine settle and must not touch UserDefaults on each one.
     private var everDetectedAgent: Bool
+    /// In-memory mirror of `SettingsStore.agentAutoKeepAwake`, read on every
+    /// detection output (see `apply(output:sessions:)`) and therefore not read
+    /// from UserDefaults each time.
+    private var agentAutoKeepAwake: Bool
 
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
@@ -117,6 +121,7 @@ public final class CompositionRoot: ObservableObject {
         self.settings = settings
         self.displaySleeper = displaySleeper
         self.everDetectedAgent = settings.hasEverDetectedAgent
+        self.agentAutoKeepAwake = settings.agentAutoKeepAwake
 
         let tuning = PowerTuning(
             batteryThreshold: settings.batteryThreshold,
@@ -243,6 +248,12 @@ public final class CompositionRoot: ObservableObject {
         // The display policy is a setting too: changing it in the settings pane
         // must reach the holds that are already running.
         applyDisplayPolicyToLiveHolds(settings.defaultDisplayPolicy)
+        // …and so is the agent switch, which Settings › Agents writes through
+        // the same `UISettings` mirror. Routing it here rather than giving the
+        // settings pane its own path is what keeps the two surfaces honest:
+        // whichever one the user flips, the holds are released (or re-adopted)
+        // by the same code.
+        applyAgentAutoKeepAwake(settings.agentAutoKeepAwake)
         republish()
     }
 
@@ -252,6 +263,49 @@ public final class CompositionRoot: ObservableObject {
     /// same value, since choosing from the menu also writes the default.
     private func applyDisplayPolicyToLiveHolds(_ policy: DisplayPolicy) {
         engine.setDisplayPolicyForAllSources(policy)
+    }
+
+    // MARK: - Agent auto keep-awake (the one agent control)
+
+    /// Applies a change to the switch. Shared by the menu command below and by
+    /// `applyTuning` (the Settings › Agents path), so both surfaces get exactly
+    /// the same behaviour. Does not persist — its two callers own that.
+    ///
+    /// Off: drop every agent-derived hold NOW. `engine.removeRequest` is the
+    /// same retraction the detection layer performs when a session finishes, so
+    /// nothing here is a special case in the engine — the difference is only
+    /// that it does not wait for a grace window. See `AppCommands` for why
+    /// waiting would be wrong.
+    ///
+    /// On: re-adopt whatever detection is already seeing, rather than waiting
+    /// for the next event. An agent that is mid-turn right now emits nothing
+    /// until its turn ends, so "wait for the next event" can mean minutes of a
+    /// switch that is on and doing nothing — the same trap the grace-period
+    /// picker once fell into (R3). The coordinator never stopped observing, so
+    /// its current output is available immediately.
+    private func applyAgentAutoKeepAwake(_ enabled: Bool) {
+        guard enabled != agentAutoKeepAwake else { return }
+        agentAutoKeepAwake = enabled
+        logger.log("agent auto keep-awake set to \(enabled, privacy: .public)")
+
+        if enabled {
+            let coordinator = coordinator
+            Task { [weak self] in
+                let output = await coordinator.currentOutput()
+                let sessions = await coordinator.currentHoldingSessions()
+                self?.apply(output: output, sessions: sessions)
+            }
+        } else {
+            for source in appliedAgentSources {
+                engine.removeRequest(source)
+            }
+            appliedAgentSources = []
+            // The rows go with the holds. Keeping them would leave the menu
+            // narrating work that is no longer keeping the Mac awake.
+            sessionSummaries = []
+            fallbackAgents = []
+        }
+        republish()
     }
 
     /// HooksInstallationInspector verdict from the integrations layer (probe
@@ -296,6 +350,37 @@ public final class CompositionRoot: ObservableObject {
     /// a wait-held source must be indistinguishable from any other here, so
     /// every safety gate applies to it without a special case.
     func apply(output: DetectionOutput, sessions: [AgentSession]) {
+        // The one place the switch gates the pipeline, and it gates the GLUE
+        // rather than the detection layer itself.
+        //
+        // The coordinator keeps watching: hooks stay installed, the socket stays
+        // bound, sessions are still tracked. Only this translation into
+        // `HoldRequest`s stops. Two reasons, and the second is the honest one:
+        //
+        // 1. Switching back on is then instant — the state is already there to
+        //    re-adopt (see `applyAgentAutoKeepAwake`), instead of a cold start
+        //    that would leave a mid-turn agent unheld until its next event.
+        // 2. Tearing the layer down would buy nothing a user can feel. It is a
+        //    socket listener and an FSEvents stream that were already running;
+        //    the cost the user actually objected to is the Mac not sleeping,
+        //    and that cost is entirely on this side of the seam.
+        //
+        // `precision` is still published (below), because Settings › Agents
+        // reports what we can see, which stays true either way — and because
+        // the `hasEverDetectedAgent` latch reads it, so a user who switches off
+        // does not lose the row that switches back on.
+        guard agentAutoKeepAwake else {
+            for source in appliedAgentSources {
+                engine.removeRequest(source)
+            }
+            appliedAgentSources = []
+            sessionSummaries = []
+            fallbackAgents = []
+            precision = output.precision
+            republish()
+            return
+        }
+
         var desired: Set<HoldSourceID> = []
         var fallbacks: Set<AgentKind> = []
         for source in output.holdSources {
@@ -397,7 +482,8 @@ public final class CompositionRoot: ObservableObject {
             wantsHold: !engine.activeSources.isEmpty,
             effectiveDisplayPolicy: engine.effectiveDisplayPolicy,
             selectedDisplayPolicy: settings.defaultDisplayPolicy,
-            hasEverDetectedAgent: everDetectedAgent
+            hasEverDetectedAgent: everDetectedAgent,
+            agentAutoKeepAwake: agentAutoKeepAwake
         )
         // The latch, closed here rather than at each of the places evidence
         // arrives: `hasLiveAgentEvidence` is defined on the snapshot, so this
@@ -469,6 +555,19 @@ extension CompositionRoot: AppCommands {
     /// override (KYA semantics); the rule lives in the engine's setRequest.
     public func confirmLowBatteryOverride() {
         startManual(settings.defaultManualMode)
+    }
+
+    /// The menu's "Auto Keep Awake for Agents" item: persist the choice, then
+    /// apply it on the spot.
+    ///
+    /// Persisting first, unconditionally, is deliberate — the write must land
+    /// even when the value is unchanged (a first click that agrees with the
+    /// factory default still deserves to be recorded), while
+    /// `applyAgentAutoKeepAwake` short-circuits when nothing moved so a repeat
+    /// click cannot churn the engine.
+    public func setAgentAutoKeepAwake(_ enabled: Bool) {
+        settings.agentAutoKeepAwake = enabled
+        applyAgentAutoKeepAwake(enabled)
     }
 
     /// Applies the chosen display behaviour to the running manual hold (and to

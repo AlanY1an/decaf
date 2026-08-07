@@ -41,14 +41,14 @@ struct MenuContentView: View {
         )
         let upcomingHours = UntilOptions.upcomingWholeHours(now: now)
 
-        // The top group — status line, session rows, the detection-precision
-        // pair, and the agent hold-mode toggle. WHICH of those exist, in what
-        // order, is decided by `MenuLayout.topRows` (pure, unit-tested next
-        // door) rather than by this body; that is also where the rule lives
-        // that a Mac which has never seen a coding agent gets no agent rows at
-        // all, so the menu reads as the plain keep-awake utility it also is.
+        // The top group — status line, session rows, and the
+        // detection-precision pair. WHICH of those exist, in what order, is
+        // decided by `MenuLayout.topRows` (pure, unit-tested next door) rather
+        // than by this body; that is also where the rule lives that a Mac which
+        // has never seen a coding agent gets no agent rows at all, so the menu
+        // reads as the plain keep-awake utility it also is.
         ForEach(Array(MenuLayout.topRows(
-            for: snapshot, selectedHoldMode: settings.agentHoldMode, now: now
+            for: snapshot, now: now
         ).enumerated()), id: \.offset) { _, row in
             switch row {
             case .status(let text),
@@ -64,24 +64,6 @@ struct MenuContentView: View {
                     NSApp.activate(ignoringOtherApps: true)
                     openSettings()
                 }
-
-            case .agentHoldToggle(let title, _, let help):
-                // Exactly the shape "Keep Display On" uses below: one checkable
-                // line that writes the persisted default. The write goes through
-                // `UISettings`, whose didSet carries it into
-                // `CompositionRoot.applyTuning()` — which re-evaluates the
-                // sessions ALREADY registered, so checking this adopts the agent
-                // idling at its prompt right now rather than the next one.
-                //
-                // The check mark is bound to the stored choice, not to the row's
-                // captured `isOn`: same reason the display toggle reads
-                // `selectedDisplayPolicy`. A control shows the choice; the status
-                // line above shows the reality.
-                Toggle(title, isOn: Binding(
-                    get: { settings.agentHoldMode.holdsIdleAgents },
-                    set: { settings.agentHoldMode = $0 ? .whileRunning : .whileWorking }
-                ))
-                .help(help)
             }
         }
 

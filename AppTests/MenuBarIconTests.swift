@@ -50,12 +50,11 @@ import HookWire
         let s = AppStateSnapshot(
             agentSessions: [
                 working(id: "a"),
-                summary(id: "b", phase: .waitingPermission),
-                summary(id: "c", phase: .graceIdle(until: Date().addingTimeInterval(60))),
+                summary(id: "b", phase: .graceIdle(until: Date().addingTimeInterval(60))),
             ],
             wantsHold: true
         )
-        #expect(iconState(for: s) == .agentHold(sessionCount: 3))
+        #expect(iconState(for: s) == .agentHold(sessionCount: 2))
     }
 
     /// The zero-config default. No session rows exist, and the badge is a single
@@ -63,17 +62,6 @@ import HookWire
     /// — but the cup is full, because the Mac is genuinely being held awake.
     @Test func aFallbackHoldFillsTheCup() {
         let s = AppStateSnapshot(fallbackAgents: [.claudeCode, .codex], wantsHold: true)
-        #expect(iconState(for: s) == .agentHold(sessionCount: 1))
-    }
-
-    /// Same reasoning for the presence hold `.whileRunning` adds.
-    @Test func aPresenceHoldFillsTheCup() {
-        let s = AppStateSnapshot(
-            runningIdleAgents: [.claudeCode],
-            processOnlyRunningAgents: [.claudeCode],
-            agentHoldMode: .whileRunning,
-            wantsHold: true
-        )
         #expect(iconState(for: s) == .agentHold(sessionCount: 1))
     }
 
@@ -127,29 +115,10 @@ import HookWire
             == "Caffeinate, keeping the Mac awake")
     }
 
-    /// The one case the icon alone cannot answer. Under `.whileRunning` a full
-    /// cup can mean "an agent is open and doing nothing", and "agent working"
-    /// would be the wrong sentence for someone deciding whether their machine is
-    /// busy.
-    @Test func aPresenceHoldIsNotAnnouncedAsWorking() {
-        let s = AppStateSnapshot(
-            runningIdleAgents: [.claudeCode],
-            processOnlyRunningAgents: [.claudeCode],
-            agentHoldMode: .whileRunning,
-            wantsHold: true
-        )
-        let label = MenuTextFormatter.accessibilityLabel(for: s)
-        #expect(label == "Caffeinate, an agent is open, keeping the Mac awake")
-        #expect(!label.contains("working"))
-    }
-
-    /// A working session outranks it again, exactly as the status line does.
-    @Test func aWorkingSessionTakesTheLabelBack() {
-        var s = AppStateSnapshot(
-            runningIdleAgents: [.claudeCode],
-            agentHoldMode: .whileRunning,
-            wantsHold: true
-        )
+    /// A session row that holds is announced as work, which is the only
+    /// sentence this app can now say about an agent hold.
+    @Test func aWorkingSessionIsAnnouncedAsWorking() {
+        var s = AppStateSnapshot(wantsHold: true)
         s.agentSessions = [
             AgentSessionSummary(
                 id: "s1", agent: .claudeCode, projectName: "api",

@@ -173,7 +173,7 @@ private struct OnboardingView: View {
                 Toggle(isOn: $installHooks) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Install hooks for Claude Code (recommended)")
-                        Text("Turn-level precision: knows exactly when a session is working, waiting for permission, or idle.")
+                        Text("Turn-level precision: knows the exact instant a turn starts and ends, instead of inferring it from file activity.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

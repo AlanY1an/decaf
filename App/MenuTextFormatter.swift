@@ -92,8 +92,6 @@ enum MenuTextFormatter {
         switch session.phase {
         case .working:
             return "\(session.projectName) — working for \(durationText(since: session.startedAt, now: now))"
-        case .waitingPermission:
-            return "\(session.projectName) — waiting for permission"
         case .graceIdle:
             return "\(session.projectName) — grace period"
         }

@@ -57,16 +57,20 @@ import HookWire
     @Test func severalWorkingSessionsAreCounted() {
         let s = snapshot(sessions: [
             session(id: "a", phase: .working),
-            session(id: "b", phase: .waitingPermission),
+            session(id: "b", phase: .working),
         ])
         #expect(MenuTextFormatter.statusLine(for: s) == "Claude Code working · 2 sessions")
     }
 
-    /// A permission prompt on screen is work in flight — it is the case this
-    /// whole product exists for, and it must not read as finished.
-    @Test func waitingForPermissionStillReadsAsWorking() {
-        let s = snapshot(sessions: [session(phase: .waitingPermission)])
-        #expect(MenuTextFormatter.statusLine(for: s) == "Claude Code working")
+    /// A grace window alongside a live turn does not get to speak for the set:
+    /// "working" is the most specific true thing, and the deadline line is only
+    /// right when EVERY holding session is counting one down.
+    @Test func aMixedSetStillReadsAsWorking() {
+        let s = snapshot(sessions: [
+            session(id: "a", phase: .working),
+            session(id: "b", phase: .graceIdle(until: Date().addingTimeInterval(120))),
+        ])
+        #expect(MenuTextFormatter.statusLine(for: s) == "Claude Code working · 2 sessions")
     }
 
     @Test func aFullyGracedSetNamesTheInstantSleepBecomesAllowed() {
@@ -121,50 +125,6 @@ import HookWire
         let s = AppStateSnapshot(wantsHold: true)
         #expect(MenuTextFormatter.statusLine(for: s) == "Keeping awake — sleep is blocked")
         #expect(iconState(for: s) == .manualHold)
-    }
-
-    // MARK: `.whileRunning` — the mode's own hold
-
-    @Test func anAgentWatchedGoingIdleGetsTheSpecificSentence() {
-        let s = AppStateSnapshot(
-            runningIdleAgents: [.claudeCode],
-            precision: [.claudeCode: .hooks],
-            agentHoldMode: .whileRunning,
-            runningModeCoverage: [.claudeCode: .sessions],
-            wantsHold: true
-        )
-        #expect(MenuTextFormatter.statusLine(for: s)
-            == "Claude Code open, not working · Sleep blocked until it closes")
-    }
-
-    /// The honest sub-case: a process match proves presence and nothing more,
-    /// so the line claims presence and nothing more.
-    @Test func aProcessOnlyHoldClaimsOnlyThatTheAgentIsRunning() {
-        let s = AppStateSnapshot(
-            runningIdleAgents: [.claudeCode],
-            processOnlyRunningAgents: [.claudeCode],
-            precision: [.claudeCode: .fileActivity],
-            agentHoldMode: .whileRunning,
-            runningModeCoverage: [.claudeCode: .processes],
-            wantsHold: true
-        )
-        let line = MenuTextFormatter.statusLine(for: s)
-        #expect(line == "Claude Code is running · Sleep blocked until it quits")
-        #expect(!line.contains("not working"))
-    }
-
-    /// Neither sub-case may invent a deadline. `.whileRunning` keeps holding
-    /// after the grace window lapses, because the session is still open — so
-    /// "Sleep allowed after 6:32 PM" would be a promise the app cannot keep, and
-    /// it is the one number in this menu a user would plan around.
-    @Test func runningModeNeverNamesAnInstantItCannotHonour() {
-        let until = Date(timeIntervalSince1970: 1_800_000_000)
-        let s = snapshot(
-            sessions: [session(phase: .graceIdle(until: until))], mode: .whileRunning
-        )
-        let line = MenuTextFormatter.statusLine(for: s)
-        #expect(line == "Just finished · Sleep blocked while the agent stays open")
-        #expect(!line.contains(MenuTextFormatter.timeString(until)))
     }
 
     // MARK: Safety gates
@@ -236,13 +196,11 @@ import HookWire
     }
 
     private func snapshot(
-        sessions: [AgentSessionSummary],
-        mode: AgentHoldMode = .whileWorking
+        sessions: [AgentSessionSummary]
     ) -> AppStateSnapshot {
         AppStateSnapshot(
             agentSessions: sessions,
             precision: [.claudeCode: .hooks],
-            agentHoldMode: mode,
             wantsHold: true
         )
     }
@@ -267,22 +225,6 @@ import HookWire
         let note = MenuTextFormatter.precisionNote(for: s)
         #expect(note?.detail == "Detection: file activity (approximate)")
         #expect(note?.actionTitle == "Install hooks for precise detection…")
-    }
-
-    /// The same hole, reached through the presence hold `.whileRunning` adds:
-    /// it produces no session row either.
-    @Test func aPresenceHoldCannotBeOutrankedEither() {
-        let s = AppStateSnapshot(
-            runningIdleAgents: [.claudeCode],
-            processOnlyRunningAgents: [.claudeCode],
-            precision: [.claudeCode: .fileActivity, .codex: .hooks],
-            agentHoldMode: .whileRunning,
-            runningModeCoverage: [.claudeCode: .processes],
-            wantsHold: true
-        )
-        #expect(MenuTextFormatter.summaryPrecision(for: s) == .fileActivity)
-        #expect(MenuTextFormatter.precisionNote(for: s)?.detail
-            == "Detection: file activity (approximate)")
     }
 
     /// An outdated install is not the zero-config fallback: every event it does

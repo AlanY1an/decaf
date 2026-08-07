@@ -114,18 +114,6 @@ final class UISettings: ObservableObject {
             onChange?()
         }
     }
-    /// Which fact about an agent keeps the Mac awake: that it is working
-    /// (default) or that it is open at all. `onChange` carries it into the
-    /// detection layer through `CompositionRoot.applyTuning`, which re-evaluates
-    /// the sessions that are ALREADY registered — so flipping this adopts or
-    /// drops the agent idling at its prompt right now, rather than waiting for
-    /// the next one.
-    @Published var agentHoldMode: AgentHoldMode {
-        didSet {
-            backing.agentHoldMode = agentHoldMode
-            onChange?()
-        }
-    }
     @Published var hasCompletedOnboarding: Bool {
         didSet {
             backing.hasCompletedOnboarding = hasCompletedOnboarding
@@ -140,7 +128,6 @@ final class UISettings: ObservableObject {
         self.defaultDisplayPolicy = backing.defaultDisplayPolicy
         self.batteryThreshold = backing.batteryThreshold
         self.gracePeriodMinutes = backing.gracePeriodMinutes
-        self.agentHoldMode = backing.agentHoldMode
         self.hasCompletedOnboarding = backing.hasCompletedOnboarding
     }
 
@@ -449,14 +436,8 @@ final class AppEnvironment {
         // is legal, so the notifier is injected from here rather than defaulted
         // inside the package (see SystemUserNotifier). Constructing it asks the
         // user for nothing — authorization is requested at the first post.
-        // `DarwinProcessEnumerator` is injected from here for the same reason:
-        // it reads this machine's real process table, so the package default is
-        // nil and only the shipping app scans. Without it,
-        // `AgentHoldMode.whileRunning` could only be honoured where hooks are
-        // installed, and would quietly degrade everywhere else.
         let root = CompositionRoot(
             settings: settingsStore,
-            processEnumerator: DarwinProcessEnumerator(),
             userNotifier: SystemUserNotifier()
         )
         let store = AppStateStore(snapshot: root.snapshot)

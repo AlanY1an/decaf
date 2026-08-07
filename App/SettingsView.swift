@@ -50,11 +50,6 @@ import SwiftUI
 import CaffeinateCore
 
 struct SettingsView: View {
-    /// Read by the Agents page only, and only for one sentence: whether this
-    /// Mac can actually see an agent that is merely OPEN. That is live state,
-    /// not a preference, so it comes from the snapshot rather than from
-    /// `UISettings` (see `AgentHoldCopy`).
-    @ObservedObject var store: AppStateStore
     @ObservedObject var settings: UISettings
     @ObservedObject var integrations: AgentIntegrationsModel
     @ObservedObject var tabRouter: SettingsTabRouter
@@ -84,7 +79,7 @@ struct SettingsView: View {
             GeneralSettingsTab(settings: settings)
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
-            AgentsSettingsTab(store: store, settings: settings, integrations: integrations)
+            AgentsSettingsTab(settings: settings, integrations: integrations)
                 .tabItem { Label("Agents", systemImage: "sparkles") }
                 .tag(SettingsTab.agents)
             SafetySettingsTab(settings: settings)
@@ -255,9 +250,6 @@ private struct Wordmark: View {
 // MARK: - Agents
 
 struct AgentsSettingsTab: View {
-    /// Live detection state — used for exactly one thing on this page: whether
-    /// "keep awake whenever an agent is open" can be honoured in this setup.
-    @ObservedObject var store: AppStateStore
     @ObservedObject var settings: UISettings
     @ObservedObject var integrations: AgentIntegrationsModel
 
@@ -283,38 +275,6 @@ struct AgentsSettingsTab: View {
                 SectionFooter(integrationFooter)
             }
 
-            // The mode sits above the grace period, and that order is the
-            // argument: this popup decides WHETHER a hold ends when the work
-            // does, and the grace period only refines the case where it does.
-            //
-            // No header, like the cards around it — the row label and the
-            // footer carry the whole thing. It is a two-value popup rather
-            // than a toggle because neither value is "off": both are real
-            // behaviours, and a switch labelled "keep awake while running"
-            // would leave the user guessing what the other position means.
-            Section {
-                Picker(AgentHoldCopy.settingsRowLabel, selection: $settings.agentHoldMode) {
-                    ForEach(AgentHoldMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
-            } footer: {
-                // Two jobs, both owned by `AgentHoldCopy` so the words can be
-                // tested: state the trade in plain language, and — when the
-                // costly mode is chosen — say how well this particular Mac can
-                // actually deliver it. Without hooks and without a process
-                // scan, "whenever an agent is open" quietly degrades to the
-                // default's behaviour, and the user is entitled to read that
-                // here rather than infer it from a Mac that slept anyway.
-                //
-                // It reads from the live snapshot, so installing hooks makes
-                // the warning disappear while the window is open.
-                SectionFooter(AgentHoldCopy.settingsFooter(
-                    mode: settings.agentHoldMode,
-                    coverage: store.snapshot.summaryRunningModeCoverage
-                ))
-            }
-
             // No "Timing" header either: it labelled exactly one row whose own
             // label already says "Release grace period". The gap between cards
             // is the beat that header was pretending to provide.
@@ -332,17 +292,12 @@ struct AgentsSettingsTab: View {
                 // should know they can watch it happen rather than wonder
                 // whether they need to quit the app.
                 //
-                // Third sentence only in `.whileRunning`, where this picker is
-                // very nearly inert: a session that stays open keeps holding
-                // whatever number is chosen here. A control that quietly does
-                // nothing is the same lie as a mode that quietly does less.
+                //
+                // "finishes or asks you something": the window is armed by the
+                // end of a turn AND by a permission prompt, which is the agent
+                // handing control back just as surely.
                 SectionFooter(
-                    [
-                        "Sleep stays blocked this long after an agent finishes, so quick follow-up prompts don't flap the hold. Changes apply straight away, including to a session already counting down.",
-                        AgentHoldCopy.gracePeriodCaveat(mode: settings.agentHoldMode)
-                    ]
-                    .compactMap { $0 }
-                    .joined(separator: " ")
+                    "Sleep stays blocked this long after an agent finishes or asks you something, so a quick answer or follow-up prompt doesn't flap the hold. Changes apply straight away, including to a session already counting down."
                 )
             }
 

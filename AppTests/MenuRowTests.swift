@@ -24,13 +24,6 @@ import HookWire
         ) == "api — working for 12 min")
     }
 
-    /// The phase the whole product exists for gets its own sentence: a
-    /// permission prompt is not idleness, and this is the row that says so.
-    @Test func aPermissionRowSaysWhatItIsWaitingFor() {
-        #expect(MenuTextFormatter.sessionLine(for: row(phase: .waitingPermission))
-            == "api — waiting for permission")
-    }
-
     /// The row does not repeat the deadline: the status line above already names
     /// the instant sleep becomes allowed, and printing it twice would make a
     /// five-row menu argue with itself if the two ever diverged.

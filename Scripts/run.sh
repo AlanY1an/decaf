@@ -47,13 +47,18 @@ APP=$(xcodebuild -project Decaf.xcodeproj -scheme Decaf -configuration Debug \
     awk '/ BUILT_PRODUCTS_DIR =/{print $3}')/Decaf.app
 [ -d "$APP" ] || { echo "No product at $APP" >&2; exit 1; }
 
-if pgrep -f "Decaf.app/Contents/MacOS/Decaf" >/dev/null; then
-    echo "Quitting the running instance…"
-    osascript -e 'quit app "Decaf"' 2>/dev/null || true
+# Quit Decaf, and also any build still running under the retired Caffeinate
+# name. Two of them coexisted for a while after the rename — both holding a
+# power assertion, two cups in the menu bar — because this script only ever
+# knew the current name. Anyone upgrading across the rename hits the same thing.
+for proc in "Decaf.app/Contents/MacOS/Decaf" "Caffeinate.app/Contents/MacOS/Caffeinate"; do
+    pgrep -f "$proc" >/dev/null || continue
+    echo "Quitting $(basename "${proc%%.app*}")…"
+    osascript -e "quit app \"$(basename "${proc%%.app*}")\"" 2>/dev/null || true
     sleep 2
-    pkill -f "Decaf.app/Contents/MacOS/Decaf" 2>/dev/null || true
+    pkill -f "$proc" 2>/dev/null || true
     sleep 1
-fi
+done
 
 echo "Launching $APP"
 open "$APP"

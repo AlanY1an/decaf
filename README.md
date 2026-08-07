@@ -49,7 +49,21 @@
   why the first entry is the dangerous one.
 
     docs/assets/icon-256.png     PRESENT (256x256, RGBA, full-bleed) but
-                                 UNRATIFIED. It is a render of icon direction
+                                 UNRATIFIED. VERIFIED 2026-08-07 by regenerating
+                                 it rather than eyeballing it: re-running the
+                                 direction-B pipeline into a temp dir
+                                 (make-appicon.py on B-steady-cursor.svg, then
+                                 the same two PIL lines set-appicon.sh uses)
+                                 reproduces this exact file, sha256
+                                 7afc65b0…63c4, byte for byte — and `diff -r`
+                                 of the regenerated appiconset against the
+                                 shipped one is empty. So the README hero and
+                                 the shipped icon provably come from one source.
+                                 (They are not the same bytes as each other, and
+                                 should not be: the hero is full-bleed, the
+                                 appiconset is inset to 80.5 % to match Finder's
+                                 grid. set-appicon.sh:79 says so.)
+                                 It is a render of icon direction
                                  B (the steady cursor), and the same direction
                                  is what the app itself now ships:
                                  App/Resources/Assets.xcassets/AppIcon.appiconset/
@@ -88,10 +102,31 @@
                                  thing to ship by accident: a broken <img>
                                  announces itself, a wrong one does not.
 
-    docs/assets/states.webp      MISSING. The four-state screenshot strip.
-                                 Full shot list in the comment at the point
-                                 of use below. This is the most load-bearing
-                                 image in the file.
+    docs/assets/states.webp      STILL MISSING, and now the only missing one.
+                                 The four-state screenshot strip; still the
+                                 most load-bearing image in the file. Its <img>
+                                 is COMMENTED OUT as of 2026-08-07 so the page
+                                 no longer renders a broken image — see the
+                                 banner at the point of use for how to put it
+                                 back, and docs/assets/CAPTURE.md for how to
+                                 shoot it (exact states, exact commands).
+                                 It cannot be automated: MenuBarExtra(.menu) is
+                                 a real NSMenu drawn by the WindowServer, so it
+                                 is capturable only by a human with screen
+                                 recording permission.
+
+    docs/assets/*.png (19 more)  ADDED 2026-08-07. Real offscreen renders of the
+                                 real shipping SwiftUI views (NSHostingView +
+                                 cacheDisplay, 2x, light and dark): the three
+                                 settings pages, three Agents hero states, the
+                                 install-consent sheet, both custom-hold panels,
+                                 onboarding step 1, and the four menu bar icon
+                                 states from IconRenderer. Three of them are
+                                 wired into the body; the rest are documentation
+                                 stock. NONE of them is a mockup, and none of
+                                 them depicts the menu. Provenance, the staged
+                                 inputs, and three known render limitations are
+                                 written down in docs/assets/CAPTURE.md §3.
 
     docs/assets/demo.gif         MISSING and OPTIONAL — not referenced by any
                                  <img> today. Spec kept in a comment below in
@@ -312,10 +347,56 @@ Keeps your Mac awake while Claude Code is actually working — and lets it sleep
   (State 3 was "blocked on a permission prompt, still held" until 2026-08-07.
   A permission prompt is the agent waiting on YOU, so it now opens a bounded
   window instead — which makes it a poor contrast shot against 4.)
--->
+
+  CORRECTION (2026-08-07): state 3 above says the status line carries "the wait
+  line". There is no wait line — MenuTopRow (App/MenuLayout.swift:47) has five
+  cases and none of them is a wait, and WaitInfo stops at HoldSource without
+  ever reaching AppStateSnapshot. What state 3 ACTUALLY shows, and it is a
+  better shot than the one specified here, is
+  "Just finished · Sleep allowed after <a time half an hour out>" —
+  CompositionRoot.swift:453 takes max(graceDeadline, waitUntil), so the wait
+  pushes the printed instant from 3 minutes out to 30. Use that.
+
+  ==== WHY THE <img> BELOW IS COMMENTED OUT ====================================
+  docs/assets/states.webp does not exist, and a live <img> pointing at a missing
+  file renders as a broken image on a public repo — worse than no image at all.
+  The tag and its caption are parked here, intact, so that restoring them is one
+  uncomment once the file lands.
+
+  It is the ONE image in this README that cannot be produced without a human at
+  the keyboard: the menu is a real NSMenu drawn by the WindowServer, so it can
+  neither be offscreen-rendered nor opened programmatically. Everything else in
+  docs/assets/ IS a real offscreen render of the real shipping SwiftUI views.
+
+  RESTORE, once docs/assets/states.webp exists: shoot it per
+  docs/assets/CAPTURE.md — which has the exact four states, the exact commands
+  that force each one (driving decaf-bridge over its socket), the crop, the
+  target size and the compositing commands. Then, mechanically:
+    1. close this comment on the line directly below this banner;
+    2. delete the comment-close on the line below the <sub> caption;
+    3. delete the INTERIM <picture> block and its caption that follow.
+  (Written out rather than shown: a literal comment-close inside a comment
+  terminates it, which is how this very block leaked a broken image once.)
+  =============================================================================
+
 <img src="docs/assets/states.webp" alt="Four menu states: hooks-precise hold, file-activity fallback, a declared wait (still awake), waiting for your input (sleeping normally)" width="820">
 
 <sub>Same agent, four situations. Only the last one lets the Mac sleep.</sub>
+-->
+
+<!--
+  INTERIM, and deliberately NOT a stand-in for the strip above. This is the app's
+  four-state menu bar icon, rendered offscreen from the shipping IconRenderer —
+  the real template images the status item installs, not a drawing of them. It
+  makes a claim about the ICON, not about the menu, so it does not carry the
+  argument states.webp carries and does not replace it.
+-->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menubar-icons-dark.png">
+  <img src="docs/assets/menubar-icons-light.png" alt="The four menu bar icon states: idle, manual hold, agents working with a session-count badge, and paused by a safety protection" width="528">
+</picture>
+
+<sub>Four icon states. The Mac sleeps normally in the first one.</sub>
 
 <!-- Badges: 5, shields.io flat-square, download CTA first. No stars, no
      download counts — a new repo's numbers only argue against it. macOS 14+
@@ -505,6 +586,21 @@ Decaf watches `~/.claude`. That deserves a straight answer rather than a badge.
 - **Nothing is logged with content in it.** Diagnostics are a closed enum of cases like `lineNotJSON` and `unknownTool` — a log line is structurally incapable of carrying a transcript excerpt.
 - **The only files it writes** are under `~/Library/Application Support/Decaf/` (session state, a copy of the hook helper, and a rotating one-deep backup of any config file it edits) and, if you install hooks, its own entries in `~/.claude/settings.json`.
 
+And you are shown that, in full, before any of it happens — installing hooks is gated on this sheet, and the file list on it is generated from the same code that does the writing, not from copy:
+
+<!--
+  A real offscreen render of the shipping InstallConsentSheet (App/SettingsView.swift:544),
+  produced with NSHostingView + cacheDisplay — no screen capture involved. The
+  change list is genuinely ClaudeCodeIntegration.plannedChanges() output; only the
+  home directory is staged as "/Users/you" so a real username does not ship in a
+  screenshot. On a Mac that already has ~/.claude, the second row reads "Merged"
+  rather than "New file". See docs/assets/CAPTURE.md §3.
+-->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/consent-sheet-dark.png">
+  <img src="docs/assets/consent-sheet-light.png" alt="The install consent sheet, listing the two files Decaf will write and previewing the exact JSON it deep-merges into ~/.claude/settings.json" width="540">
+</picture>
+
 ## What it deliberately does not do
 
 - **Not on the Mac App Store, ever.** The sandbox forbids inspecting other processes and forbids the socket-plus-helper layout the hook bridge needs. Distribution is Developer ID direct — outside the sandbox, straight from GitHub Releases and the Homebrew tap. This is a permanent decision, not a backlog item.
@@ -529,6 +625,34 @@ Seven, and no more. Every one of them had to answer "who does the default hurt?"
 - **Battery threshold** — stop holding below this. Off, 10 %, 20 % or 30 %; default 20 %, resuming three points above the line you picked so a battery hovering at it does not flap.
 - **Default manual duration** and **"Until" time** — what the one-click manual hold does. Defaults: indefinite, 6:00 PM.
 - **Launch at login.**
+
+<!--
+  ACCURACY (2026-08-07): the first bullet above is STALE and must be rewritten
+  before this file is published. "Keep this Mac awake — while an agent is
+  working (default), or while an agent is running" describes AgentHoldMode,
+  which was DELETED on 2026-08-07 together with ProcessScanner (the same change
+  the codex/opencode bullet further up already documents). There is no such
+  picker in the shipping Agents tab; the render below is what is actually there.
+  What replaced it is the plain on/off switch "Auto Keep Awake for Agents", so
+  the count in "Seven, and no more" needs re-checking too.
+-->
+
+<!--
+  Real offscreen renders of the shipping settings pages (App/SettingsView.swift),
+  NSHostingView + cacheDisplay, 2x. Two things to know before judging them:
+  the TabView's tab strip is AppKit vibrancy and cannot be captured offscreen,
+  so each page is rendered on its own with the strip cropped out; and switches
+  and pickers draw in their unemphasised grey because an offscreen window can
+  never be the key window. Knob POSITION is still truthful. Full note, plus the
+  other five states rendered for the docs (file-activity hero, repair hero, the
+  custom-hold panel, onboarding), in docs/assets/CAPTURE.md §3.
+-->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/settings-agents-dark.png">
+  <img src="docs/assets/settings-agents-light.png" alt="Settings, Agents page: a Claude Code hero row reading &quot;Following each turn, start to finish&quot;, an Auto Keep Awake for Agents switch, the release grace period picker, and Remove all integrations" width="620">
+</picture>
+
+<sub>Settings › Agents. The hero only goes solid when hooks are live; file-activity detection is a supported state, not a fault.</sub>
 
 ## Uninstall
 

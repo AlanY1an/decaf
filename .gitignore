@@ -7,3 +7,7 @@ Decaf.xcodeproj/
 build/
 *.dmg
 DerivedData/
+
+# docs/assets/render/build.sh re-copies App/*.swift here on every run; the
+# repo keeps only the harness itself, never a second copy of the app sources.
+docs/assets/render/Sources/DecafRender/App/

@@ -139,9 +139,9 @@
        when a live source carries DisplayPolicy.keepOn. Both idle-only, so the
        argument survived; the count did not.
     3. CODEX / OPENCODE. Was "the process scan also matches codex and
-       opencode" with the consequence left implicit. In `.whileRunning` a
-       match really does hold the Mac awake. Now stated outright, in the
-       capability list, the detection table and the FAQ.
+       opencode" with the consequence left implicit. SUPERSEDED 2026-08-07:
+       the process scan is gone with the hold mode it existed for, so codex
+       and opencode are not detected at all today. Stated as such.
     4. SIGNING. Cut entirely — see block 3.
     5. "BYTE-FOR-BYTE INTACT" (install + uninstall). False: the file is
        re-serialised and loses key order and indentation. The enforced
@@ -184,12 +184,10 @@
                            source carries DisplayPolicy.keepOn (reconcile step
                            3). IOPMPowerAsserter.swift:29 calls
                            IOPMAssertionCreateWithDescription directly.
-    codex/opencode hold    ProcessScanner.swift:99-123 is the name table;
-                           DetectionCoordinator.swift:729 turns any scanned
-                           agent into a `.agentProcess` hold source when
-                           `mode.holdsIdleAgents`. So `.whileRunning` really
-                           does hold for codex/opencode; `.whileWorking` never
-                           reaches that line.
+    codex/opencode         NOT DETECTED (2026-08-07). ProcessScanner and the
+                           hold mode it served are deleted; `AgentKind` still
+                           carries the cases for the V1.x adapters, but nothing
+                           produces a hold source for them.
     settings.json contract ClaudeSettingsEditor.swift:25-27 — re-serialisation
                            loses key order and indentation on purpose; the
                            uninstall contract is `semanticallyEqual` (:308),
@@ -204,10 +202,11 @@
                            WaitSignalParserTests.swift:530
                            `inputReadSurfaceIsExactlyTheAllowedFiveKeys`.
     no network             Zero `URLSession` in App/ or Core/Sources/.
-    seven settings         SettingsView.swift — launch at login, default
+    six settings           SettingsView.swift — launch at login, default
                            manual duration, "Until" time (default 1080 min =
-                           6:00 PM), display policy, hold mode, grace period,
-                           battery threshold.
+                           6:00 PM), display policy, grace period, battery
+                           threshold. (Was seven; the hold-mode picker was
+                           deleted on 2026-08-07.)
     manual presets         `enum ManualPreset` in App/MenuTextFormatter.swift
                            — 5/15/30 min, 1/2/5 h, Indefinitely.
     not sandboxed          App/Caffeinate.entitlements is an empty dict with a
@@ -298,8 +297,9 @@ Keeps your Mac awake while Claude Code is actually working — and lets it sleep
        Status: "Claude Code working" + precision row
        "Detection: file activity (approximate)".
        Caption: "No hooks, no config — still works, ~5 min resolution."
-    3. Agent blocked on a permission prompt; the Mac is still held.
-       Caption: "Waiting for your permission — stays awake."
+    3. Agent inside a declared wait (a /loop with a 30-minute gap).
+       Status: "Claude Code working" + the wait line.
+       Caption: "Waiting on a clock, not on you — stays awake."
     4. Agent at its prompt, waiting for input.
        Status: "Idle — not preventing sleep".
        Caption: "Waiting for your input — sleeps normally."
@@ -307,8 +307,11 @@ Keeps your Mac awake while Claude Code is actually working — and lets it sleep
   Shoot all four in the same appearance, same menu width, same wallpaper.
   States 3 and 4 are the product; 1 and 2 are the setup. If only two can be
   shot well, shoot 3 and 4.
+  (State 3 was "blocked on a permission prompt, still held" until 2026-08-07.
+  A permission prompt is the agent waiting on YOU, so it now opens the ordinary
+  release window instead — which makes it a poor contrast shot against 4.)
 -->
-<img src="docs/assets/states.webp" alt="Four menu states: hooks-precise hold, file-activity fallback, waiting for permission (still awake), waiting for your input (sleeping normally)" width="820">
+<img src="docs/assets/states.webp" alt="Four menu states: hooks-precise hold, file-activity fallback, a declared wait (still awake), waiting for your input (sleeping normally)" width="820">
 
 <sub>Same agent, four situations. Only the last one lets the Mac sleep.</sub>
 
@@ -343,8 +346,8 @@ Caffeinate's whole job is telling those apart.
 ## What it actually does
 
 - **Holds while a turn is in flight.** Prompt submitted → hold. Turn finished → release, after a short grace window (3 minutes by default; the choices are 1, 2, 3, 5 and 10).
-- **Holds while the agent is blocked on you for permission.** A tool-approval prompt at 2 a.m. is the worst possible moment to sleep: the run is not finished, it is one keypress from continuing.
-- **Releases while the agent is waiting for your input.** An idle REPL is not work. This is the distinction the category gets wrong, and it is the reason Caffeinate does not cost you a night of battery.
+- **Releases whenever the agent is waiting on you.** An idle REPL is not work, and neither is an unanswered permission prompt — both are the agent handing the floor back to you, and neither is worth a night of battery. (A prompt still gets the same short grace window the end of a turn does, so answering it three seconds later and carrying on briefly never costs you a wake.)
+- **Holds through a long silent tool call.** A 20-minute build writes nothing and prints nothing, but the process is live and the network is in flight. Four independent witnesses have to agree a `working` record has gone quiet before Caffeinate lets go of it. (One gap, stated rather than buried: if that tool call is the one that asked you for permission, approving it emits no hook event — Claude Code has none for "approved" — so the grace window opened by the prompt can still expire while the tool runs. Tracked in `docs/plan/REVIEW-DECISIONS.md`, 裁决二.)
 - **Holds through declared waits.** If the agent has scheduled its own wake-up — a `/loop` with a 30-minute gap, a cron job, a monitor with a timeout — Caffeinate reads that record and holds until then instead of sleeping through it. See [Wait-signal awareness](#wait-signal-awareness).
 - **Manual hold when you just want one.** 5/15/30 minutes, 1/2/5 hours, "Until 6:00 PM", or indefinitely.
 - **Gets out of the way.** Low Power Mode and fast user switching release every hold, manual ones included — neither has an override. The battery gate releases holds too, and it does not spare a manual one: a manual hold that is *already running* when the battery falls past the threshold is suspended along with everything else. The one exception is narrow and deliberate — starting a manual hold *while* the gate is already engaged is treated as an informed override, so that hold proceeds; the override is then cleared the moment the manual hold ends, expires, the Mac sleeps, or the battery recovers past the threshold (23 % at the default). And a sleep you asked for always wins: Caffeinate holds `PreventUserIdleSystemSleep` (plus `PreventUserIdleDisplaySleep`, and only if you ask it to keep the screen on), and both block *idle* sleep only — closing the lid or choosing Sleep from the Apple menu is never something this app can override.
@@ -364,17 +367,12 @@ Caffeinate's whole job is telling those apart.
      adds `preventIdleDisplaySleep` when any live source carries
      `DisplayPolicy.keepOn` (AssertionKind.swift:13). Both are idle-only, so the
      argument is unchanged — the count was not. -->
-- **Recognises the other agents only as processes — and does hold for them.** In the opt-in "while an agent is running" mode, the process scan also matches `codex` and `opencode`, and a match there *will* keep your Mac awake for as long as that process exists. That is the entire extent of their support today: it matches an executable basename, or an interpreter (`node`/`bun`/`deno`) one of whose leading script-path components matches. There are no hooks, no file-activity fallback, no turn-level detection, and nothing that can tell working from idle — which is also why, in the default "while an agent is *working*" mode, a `codex` or `opencode` process is invisible to Caffeinate and holds nothing.
-<!-- ACCURACY (sharpened 2026-08-06 by the verification pass): the previous
-     wording said the scan "matches" them and left the consequence implicit. It
-     is not implicit in the code: DetectionCoordinator.computeOutput appends a
-     `HoldSource(agent:kind: .agentProcess)` for ANY agent in the scan set when
-     `mode.holdsIdleAgents`, which sets `shouldHold` — so a codex process really
-     does hold the Mac awake in `.whileRunning`. Name table:
-     ProcessScanner.swift:99-123 (`directNames`, `scriptMarkers`). The
-     `.whileWorking` half is the guard at the same site ("Nothing here fires in
-     .whileWorking"). Say both halves; a reader who discovers the first one
-     unaided has caught the README hiding something. -->
+- **Claude Code only, today.** `codex` and `opencode` appear in the code as agent kinds the protocol already carries, so the V1.x adapters will not need a protocol change — but nothing detects them yet. A process scan that matched them by executable name used to exist, purely to serve an optional "while an agent is running" mode; both were deleted on 2026-08-07 along with the mode. If you run codex or opencode today, Caffeinate does not see them at all.
+<!-- ACCURACY (rewritten 2026-08-07): the previous bullet said the process scan
+     matches codex/opencode and that a match holds the Mac awake in
+     `.whileRunning`. Both halves are now false — ProcessScanner.swift is
+     deleted, and so is AgentHoldMode. Do not restore the old wording from the
+     git history without restoring the code first. -->
 
 <!--
   ASSET 3 — demo GIF. MISSING, optional, and deliberately below the fold. No
@@ -430,11 +428,11 @@ Three layers. You get the first one you qualify for, and the menu always tells y
 
 | Layer | Precision | Setup |
 | --- | --- | --- |
-| **Hooks** | Turn-precise. Knows the exact instant a turn starts, ends, blocks on permission, or goes idle. | One click. Adds entries to `~/.claude/settings.json`. |
+| **Hooks** | Turn-precise. Knows the exact instant a turn starts, ends, asks you for permission, or goes idle. | One click. Adds entries to `~/.claude/settings.json`. |
 | **File activity** | ~5 minutes. Watches for writes under `~/.claude` and holds while they keep coming. | None. This is what you get out of the box. |
-| **Process sampling** | Coarse. Tells a live agent from a stale record, and backs the optional "while an agent is running" mode. It matches `claude`, and also `codex` / `opencode` — an executable name or a script path is all it knows about any of them, and in that mode a match holds the Mac awake until the process exits. | None. |
+| **CPU sampling** | Coarse, and never a reason to hold on its own. It is one of the four witnesses that decide a `working` record has gone stale, which is how a long silent tool call is told apart from a session whose `Stop` was lost. | None. |
 
-The hook layer registers six events plus two notification matchers: `SessionStart`, `UserPromptSubmit`, `PostToolUse` (used purely as a liveness heartbeat), `Stop`, `StopFailure`, `SessionEnd`, and `Notification` split into `permission_prompt` (hold) and `idle_prompt` (release early). The install is a deep merge — every hook you already had, and every key Caffeinate does not recognise, survives with its value intact, and uninstall removes exactly the entries it added and nothing else. One caveat worth stating rather than discovering: the file is re-parsed and re-serialised, so key order and indentation are not preserved. The contract the tests enforce is semantic equality of the parsed JSON, not byte equality of the file.
+The hook layer registers six events plus two notification matchers: `SessionStart`, `UserPromptSubmit`, `PostToolUse` (used purely as a liveness heartbeat), `Stop`, `StopFailure`, `SessionEnd`, and `Notification` split into `permission_prompt` (opens the release window, same as the end of a turn) and `idle_prompt` (releases early). The install is a deep merge — every hook you already had, and every key Caffeinate does not recognise, survives with its value intact, and uninstall removes exactly the entries it added and nothing else. One caveat worth stating rather than discovering: the file is re-parsed and re-serialised, so key order and indentation are not preserved. The contract the tests enforce is semantic equality of the parsed JSON, not byte equality of the file.
 <!-- ACCURACY (corrected 2026-08-06 by the verification pass): "passed through
      untouched" was doing double duty — true of every value, false of the bytes.
      ClaudeSettingsEditor.swift:25-27 says so itself: "Re-serialization loses key
@@ -560,17 +558,17 @@ Power assertions die with the process, so quitting or deleting the app can never
 **Does it support Codex or opencode?**
 Not yet. Today Claude Code is the only supported agent: it is the only one with hooks, and the zero-config fallback layer watches `~/.claude` and nothing else.
 
-There is one place their names do appear, and it has a real effect, so it is worth being exact about: the process scan behind the opt-in "while an agent is running" mode matches `codex` and `opencode` too, and in that mode a running `codex` will keep your Mac awake for as long as the process exists. That is presence, not activity — the scan cannot tell you whether that process is doing anything, and it never fires in the default "while an agent is working" mode. Call it a blunt instrument that happens to point at three agents rather than one; it is not Codex support. Real support is on the roadmap above and will be announced when it works, not before.
+Their names do appear in the source, as agent kinds the socket protocol and the detection types already carry, so the V1.x adapters will not need a protocol change. Nothing produces a hold for them. Until 2026-08-07 a process scan matched them by executable name and, in an optional "while an agent is running" mode, that match really did keep the Mac awake; the mode and the scan were deleted together. Real support is on the roadmap above and will be announced when it works, not before.
 
 **How is this different from KeepingYouAwake or Amphetamine?**
-Those are switches, and good ones. They keep your Mac awake because you told them to, until you tell them to stop. Caffeinate decides — it holds while the agent works or waits on your approval, and lets go while the agent waits on you. If a switch is what you want, KeepingYouAwake is a well-maintained one and you should use it.
+Those are switches, and good ones. They keep your Mac awake because you told them to, until you tell them to stop. Caffeinate decides — it holds while the agent is working, and lets go the moment the agent is waiting on you. If a switch is what you want, KeepingYouAwake is a well-maintained one and you should use it. (Caffeinate is also that switch when you want it to be: manual holds, durations and "Until" are all there.)
 <!-- ACCURACY (2026-08-06): dropped "6.8k stars". The figure came from
      docs/launch/research-teardowns.md, which recorded 6,810 on 2026-08-06, but
      a star count in a README is a number nobody will ever update and that
      nothing in this repo can verify. -->
 
 **How is this different from the other AI-aware keep-awake apps?**
-Most of them hold while the agent process is alive. That is one improvement over a switch, and it still keeps your laptop awake all night because you left a terminal open. The three things to compare on: whether it distinguishes waiting-for-permission from waiting-for-you; whether it survives a `/loop` with a gap longer than its idle window; and whether it holds real IOKit assertions or shells out to `/usr/bin/caffeinate`.
+Most of them hold while the agent process is alive. That is one improvement over a switch, and it still keeps your laptop awake all night because you left a terminal open. The three things to compare on: whether it distinguishes an agent that is working from one that is waiting on you; whether it survives a `/loop` with a gap longer than its idle window; and whether it holds real IOKit assertions or shells out to `/usr/bin/caffeinate`.
 
 **Why isn't it on the Mac App Store?**
 Covered above: the sandbox makes it impossible, not merely inconvenient.

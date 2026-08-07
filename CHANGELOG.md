@@ -18,8 +18,11 @@
   corrected three: the low-battery gate does NOT spare an already-running manual
   hold (only one started under the gate is an override); the settings.json
   contract is semantic, not byte, equality; and the process scan's codex /
-  opencode match really does hold the Mac in `.whileRunning`, which the previous
-  wording left implicit. The same corrections are in README.md.
+  opencode match really did hold the Mac in the optional "while an agent is
+  running" mode. On 2026-08-07 that mode, the process scan and the permission
+  prompt's indefinite hold were all deleted — this file has been rewritten to
+  describe the shipping behaviour, not the path to it. The same corrections are
+  in README.md.
 
   Why 0.1.0 has no "Fixed" section even though 14 `fix(...)` commits exist:
   every one of them repaired code that had never been released, so no user has
@@ -44,12 +47,10 @@ Nothing yet.
 First release. A menu bar app that keeps a Mac awake while Claude Code is
 working, and lets it sleep when the agent is only waiting on you.
 
-Claude Code is the only agent supported in this release. Codex and opencode are
-recognised by the process scan and nothing else — there is no hook layer, no
-file-activity fallback and no working-vs-idle distinction for either. Note that
-the scan is not inert: in the opt-in "while an agent is running" mode a matching
-`codex` or `opencode` process does hold the Mac awake until it exits. Requires
-macOS 14 or later.
+Claude Code is the only agent supported in this release. Codex and opencode
+exist in the source as agent kinds the protocol already carries, so their
+adapters will not need a protocol change, but nothing detects them today.
+Requires macOS 14 or later.
 
 ### Added
 
@@ -57,19 +58,21 @@ macOS 14 or later.
   The app holds a `PreventUserIdleSystemSleep` IOKit assertion (plus
   `PreventUserIdleDisplaySleep`, and only if you ask it to keep the screen on)
   while a turn is
-  in flight and while the agent is blocked on a permission prompt, and releases
-  it after a grace period once the turn ends. An agent sitting at its prompt
-  waiting for you holds nothing. Only idle sleep is affected — closing the lid
-  or choosing Sleep from the Apple menu always wins.
-- **Three detection layers, with the active one always named in the menu.**
-  Hooks (turn-precise); FSEvents file activity under `~/.claude` (about five
-  minutes of resolution, no configuration at all); and process-table sampling.
-  The menu shows `Detection: file activity (approximate)` rather than letting
-  you believe you have precision you do not have.
+  in flight, and releases it after a grace period once the turn ends. One rule
+  decides everything: the Mac stays awake while the agent is *working*, and any
+  time the agent is waiting on you — at its prompt, or on an unanswered
+  permission prompt — it sleeps normally. Only idle sleep is affected — closing
+  the lid or choosing Sleep from the Apple menu always wins.
+- **Two detection layers, with the active one always named in the menu.**
+  Hooks (turn-precise) and FSEvents file activity under `~/.claude` (about five
+  minutes of resolution, no configuration at all). The menu shows
+  `Detection: file activity (approximate)` rather than letting you believe you
+  have precision you do not have.
 - **One-click Claude Code hooks install.** Deep-merges six events
   (`SessionStart`, `UserPromptSubmit`, `PostToolUse`, `Stop`, `StopFailure`,
-  `SessionEnd`) plus two `Notification` matchers (`permission_prompt`,
-  `idle_prompt`) into `~/.claude/settings.json`. The file is backed up first,
+  `SessionEnd`) plus two `Notification` matchers (`permission_prompt`, which
+  opens the release window exactly as the end of a turn does, and `idle_prompt`,
+  which releases early) into `~/.claude/settings.json`. The file is backed up first,
   every key the app does not recognise keeps its value, and uninstall removes
   exactly the entries it added. The file is re-serialised, so key order and
   indentation are not preserved; the contract is semantic equality, not byte
@@ -90,10 +93,6 @@ macOS 14 or later.
   writes and CPU time — all agree it has been silent for two hours is
   downgraded and stops holding. Any one witness dissenting vetoes the verdict,
   and any real sign of life restores the session in one step.
-- **An opt-in "while an agent is running" mode**, backed by a real scan of the
-  process table so the mode means what it says with no hooks installed. The
-  settings footer says plainly when the current detection layer cannot deliver
-  it.
 - **Manual holds.** 5/15/30 minutes, 1/2/5 hours, "Until" a chosen hour, or
   indefinitely, all shown as absolute clock times rather than countdowns.
 - **Display policy.** The screen sleeps normally while a hold is active
@@ -105,7 +104,7 @@ macOS 14 or later.
   that was already running. The single exception: starting a manual hold *while*
   that gate is engaged is treated as an informed override, and the override is
   undone as soon as the hold ends or the battery recovers.
-- **A settings window with seven settings** — hold mode, release grace period,
+- **A settings window with six settings** — release grace period,
   display policy, battery threshold, default manual duration, the "Until" time,
   and launch at login — in native grouped forms, plus a first-launch onboarding
   flow that asks for hooks consent instead of assuming it.
@@ -130,6 +129,16 @@ macOS 14 or later.
   over the app's menu and icon formatting. `Core` is a plain Swift package with
   no AppKit dependency, and the app bundle is a logic-test target with no test
   host, which is what makes both testable without launching anything.
+
+### Known limitations
+
+- **Approving a permission prompt does not re-arm the hold.** The prompt opens
+  the ordinary release window (3 minutes by default). Claude Code emits no hook
+  event when you click "allow" — `PreToolUse` fires *before* the dialog, and the
+  next event is `PostToolUse`, which only fires once the tool finishes — so if
+  the approved tool runs longer than the window, the Mac can idle-sleep while it
+  is still running. Workaround until this is closed: raise the grace period in
+  Settings, or start a manual hold before approving something long.
 
 ### Not in this release
 

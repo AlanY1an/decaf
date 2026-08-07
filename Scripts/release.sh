@@ -249,18 +249,26 @@ if [ -n "$SIGN_IDENTITY" ]; then
 fi
 
 # --- 1e. notarytool credentials -------------------------------------------
-# `notarytool store-credentials` writes a generic keychain item under the
-# service com.apple.gke.notary.tool. That is an implementation detail, so treat a
-# miss as inconclusive rather than fatal and confirm with notarytool itself
-# (one cheap authenticated call) before declaring the profile absent.
+# `notarytool store-credentials` keeps the profile in the keychain, but the
+# item's service name is an undocumented implementation detail that has moved
+# between Xcode versions — under Xcode 26 neither com.apple.gke.notary.tool nor
+# com.apple.gs.notary.tool matches a profile that demonstrably works. So the
+# keychain lookup is a fast path only and notarytool itself is the authority.
+#
+# Two traps this check fell into, both of which reported "no credentials" for a
+# profile that was fine:
+#   * `history` takes no --limit option. Passing one exits non-zero with
+#     "Unknown option", which is indistinguishable from a missing profile.
+#   * Skipping the probe under --dry-run made the one mode whose whole job is to
+#     rehearse the release the only mode that could not verify this.
 NOTARY_OK=0
 if security find-generic-password -s "com.apple.gke.notary.tool" -a "$NOTARY_PROFILE" \
         >/dev/null 2>&1; then
     NOTARY_OK=1
     ok "notarytool keychain profile '$NOTARY_PROFILE' found"
-elif [ "$DRY_RUN" -eq 0 ]; then
+else
     info "keychain lookup inconclusive; asking notarytool directly…"
-    if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" --limit 1 \
+    if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" \
             >/dev/null 2>&1; then
         NOTARY_OK=1
         ok "notarytool keychain profile '$NOTARY_PROFILE' works"
@@ -481,10 +489,21 @@ else
     # confirm it actually made it into the signature rather than trusting the
     # manifest, because a missing runtime flag is only reported by the notary
     # service, minutes later, as an unhelpful rejection.
-    if ! codesign --display --verbose=2 "$ARCHIVED_APP" 2>&1 | grep -q 'flags=.*runtime'; then
-        die "the archived app is signed WITHOUT the hardened runtime.
-   Notarization will reject it. Check ENABLE_HARDENED_RUNTIME in project.yml."
-    fi
+    #
+    # Read codesign's output into a variable instead of piping it into `grep -q`.
+    # Under `set -o pipefail` that pipeline reports failure precisely when it
+    # SUCCEEDS: grep -q exits at the first match and closes the pipe, codesign
+    # dies of SIGPIPE (141), and pipefail promotes that to the pipeline's exit
+    # status — so a correctly hardened app was reported as un-hardened, every
+    # time. The two other `grep -q` pipelines here survive only because their
+    # upstream is the printf builtin writing a few bytes, which fits the pipe
+    # buffer and completes before grep can exit.
+    SIG_INFO="$(codesign --display --verbose=2 "$ARCHIVED_APP" 2>&1 || true)"
+    case "$SIG_INFO" in
+        *flags=*runtime*) : ;;
+        *) die "the archived app is signed WITHOUT the hardened runtime.
+   Notarization will reject it. Check ENABLE_HARDENED_RUNTIME in project.yml." ;;
+    esac
     ok "app and embedded bridge signed, hardened runtime on"
 fi
 
@@ -560,7 +579,17 @@ ok "$DMG_NAME ($DMG_BYTES bytes)"
 # ==========================================================================
 
 step "xcrun notarytool submit --wait"
-if [ "$NOTARY_OK" -eq 0 ] || [ -z "$SIGN_IDENTITY" ]; then
+# --dry-run must never reach Apple. This guard originally tested only for
+# missing credentials or a missing signature, which stood in for "dry run" just
+# so long as the author had neither. The moment both existed, `--dry-run`
+# uploaded the DMG to the notary service while printing a banner that promised
+# "no notarization, no upload" — so the mode whose entire purpose is to be safe
+# to run was the one doing something irreversible.
+if [ "$DRY_RUN" -eq 1 ]; then
+    skip "dry run — not submitting to the notary service"
+    info "a real run would execute:"
+    info "  xcrun notarytool submit '$DMG_PATH' --keychain-profile '$NOTARY_PROFILE' --wait"
+elif [ "$NOTARY_OK" -eq 0 ] || [ -z "$SIGN_IDENTITY" ]; then
     skip "no notary credentials and/or no signature — nothing to submit"
     info "a real run would execute:"
     info "  xcrun notarytool submit '$DMG_PATH' --keychain-profile '$NOTARY_PROFILE' --wait"
@@ -591,7 +620,10 @@ fi
 # ==========================================================================
 
 step "stapler staple + Gatekeeper assessment"
-if [ "$NOTARY_OK" -eq 0 ] || [ -z "$SIGN_IDENTITY" ]; then
+# Same guard as the notarize step, and for the same reason: with credentials and
+# a signature present, a dry run would otherwise try to staple a ticket that was
+# never issued and abort the run on stapler's failure.
+if [ "$DRY_RUN" -eq 1 ] || [ "$NOTARY_OK" -eq 0 ] || [ -z "$SIGN_IDENTITY" ]; then
     skip "nothing was notarized, so there is no ticket to staple"
     info "a real run would execute:"
     info "  xcrun stapler staple '$DMG_PATH'"

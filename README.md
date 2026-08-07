@@ -1,55 +1,47 @@
 <!--
   ==========================================================================
   DO NOT PUBLISH THIS FILE AS-IS.
-  It contains unfilled placeholders, and it makes one promise that is not
-  true yet. Everything blocking is listed below. Delete this whole comment
-  block only when every line in it has been cleared.
+  The naming placeholders are gone, but two blockers remain: a missing image
+  and an unsigned build. Everything blocking is listed below. Delete this
+  whole comment block only when every line in it has been cleared.
   Written 2026-08-06. Every capability claim below was re-verified against
   the source on that date; see "VERIFIED" at the bottom of this block.
 
   WARNING — this file was drafted while other work was in flight in the same
-  tree, and two facts moved underneath it during drafting: the test count went
-  556 -> 568, and Scripts/release.sh went from missing to written. Both are
-  reflected below as of the last check. Re-run the two commands in block 4
-  before publishing rather than trusting the numbers printed here. Where this
-  file cites a line number it is accurate as of 2026-08-06 and is offered as a
-  starting point for a grep, not as a stable address.
+  tree, and facts moved underneath it during drafting: the test count went
+  556 -> 568, Scripts/release.sh went from missing to written, and on
+  2026-08-07 the product was renamed Caffeinate -> Decaf. Re-run the two
+  commands in block 4 before publishing rather than trusting the numbers
+  printed here. Where this file cites a line number it is accurate as of
+  2026-08-06 and is offered as a starting point for a grep, not as a stable
+  address.
   ==========================================================================
 
-  ---- 1. UNFILLED PLACEHOLDERS -------------------------------------------
-  Grep for `-TBD`. Below this comment block there are 17 occurrences on 8
-  lines, all inside URLs and shell commands. (A whole-file grep also counts
-  the names written out in this block, so it will report more — the 17 is the
-  number that has to reach zero.)
+  ---- 1. NAMING PLACEHOLDERS — CLEARED 2026-08-07 -------------------------
+  All 17 `-TBD` occurrences below this block are filled. `grep -- -TBD`
+  returns nothing outside this sentence. The frozen values, from the author's
+  gh auth and existing remotes:
 
-    OWNER-TBD   (8x)  The GitHub owner/org. AUTHOR DECISION 1 — still open.
-                      In: 4 of the 5 badge URLs, the DMG download link, the
-                      brew install line, the brew uninstall line, the git
-                      clone line. It also decides the bundle ID (AUTHOR
-                      DECISION 2, currently `dev.caffeinate.app` in
-                      project.yml, marked "frozen-later placeholder" there).
-                      The bundle ID itself does NOT appear in this file.
+    GitHub owner      AlanY1an          (was OWNER-TBD, 8x)
+    Repository        AlanY1an/decaf    (was REPO-TBD, 6x — lowercase, to
+                                        match echovessel / mappavita / quicktap)
+    Homebrew tap      AlanY1an/homebrew-decaf, cask token `decaf`
+                                        (was TAP-TBD, 3x)
+    Bundle ID         io.github.alany1an.decaf
+                                        (project.yml; does NOT appear in this
+                                        file. The old `dev.caffeinate.app`
+                                        placeholder is retired — Scripts/
+                                        release.sh keeps a tripwire against it.)
 
-    REPO-TBD    (6x)  Repo name casing, `Caffeinate` vs `caffeinate`.
-                      AUTHOR DECISION 3 — still open. In: the download badge,
-                      the CI badge (twice — href and shields path), the DMG
-                      download link, the git clone line, the `cd` after it.
-                      GitHub URLs are case-insensitive, so this is cosmetic in
-                      links but not in the clone/cd pair, which creates and
-                      enters a directory.
+  What that leaves genuinely unfilled: the LICENSE copyright holder (DECISION
+  5 — LICENSE says "Decaf contributors"), whether a `README.zh-CN.md` ships
+  alongside this file (DECISION 6 — this draft is English-only, per the launch
+  review), and the launch date (DECISION 7 — no date appears in this file).
 
-    TAP-TBD     (3x)  Homebrew tap repo name: `homebrew-caffeinate`
-                      (dedicated) or `homebrew-tap` (generic). Part of AUTHOR
-                      DECISION 3. In: the Homebrew badge (as the full repo
-                      name `homebrew-TAP-TBD`), the brew install line and the
-                      brew uninstall line (as the middle path component only —
-                      brew expands `OWNER/TAP/cask` to `OWNER/homebrew-TAP`).
-
-  Deliberately NOT chosen here (they are author decisions, not drafting gaps):
-  the LICENSE copyright holder (DECISION 5 — LICENSE currently says
-  "Caffeinate contributors"), whether a `README.zh-CN.md` ships alongside this
-  file (DECISION 6 — this draft is English-only, per the launch review), and
-  the launch date (DECISION 7 — no date appears in this file).
+  Note on the subtitle: "The `caffeinate` command as a smart menu bar app" is
+  deliberate and stays. It names the SYSTEM COMMAND people search for, not the
+  product; the product no longer shares that name, which is the point of the
+  rename. Same for the `caffeinate` repo topic. Do not "fix" either one.
 
   ---- 2. MISSING / UNRATIFIED IMAGE ASSETS -------------------------------
   This file references three images. One exists but is not ratified; two do
@@ -112,16 +104,22 @@
   exact text to restore, and the exact condition for restoring it, are in the
   comment at the point it used to sit.
 
-  The underlying situation is unchanged: `Scripts/release.sh` (archive -> sign
-  -> DMG -> notarize -> staple) exists and its dry run is green end to end, but
-  it has never produced a signed build, and its own preflight refuses a real
-  run for four reasons at once — placeholder bundle ID, no Developer ID
-  certificate, no notarytool keychain profile, no Apple Developer Program
-  enrolment. The script refuses to fake any of them.
+  The underlying situation is nearly unchanged. `Scripts/release.sh` (archive
+  -> sign -> DMG -> notarize -> staple) exists and its dry run is green end to
+  end, but it has never produced a signed build. As of 2026-08-07 the bundle-ID
+  blocker is GONE — it is frozen to io.github.alany1an.decaf — and the preflight
+  now names TWO: no Developer ID Application certificate, and no notarytool
+  keychain profile. (Both are downstream of the same missing thing: an active
+  Apple Developer Program membership.) The script refuses to fake either, and
+  the bundle-ID check remains as a tripwire against a revert.
 
-  So the README no longer contains a false claim. It does still contain
-  unfilled placeholders (block 1) and two missing images (block 2), which is
-  why this file still must not be published as-is.
+  So the README no longer contains a false claim, and no longer contains an
+  unfilled placeholder. Two things still keep it unpublishable:
+    - docs/assets/states.webp does not exist (block 2), so the most
+      load-bearing image on the page renders as a broken <img>;
+    - no signed, notarized build has ever been produced, so there is nothing
+      behind the Download badge and a clean Mac would refuse what it got.
+  Both are work, not decisions.
 
   ---- 3b. WHAT THE VERIFICATION PASS CHANGED (2026-08-06, second pass) ----
   A second, independent trace of every claim against the source found six
@@ -134,7 +132,7 @@
        `batteryOverridden` is set only when a manual request ARRIVES while the
        gate is engaged, so a manual hold already running when the battery
        falls is suspended like any other. The distinction is WHEN it started.
-    2. THE ASSERTION, SINGULAR. Was "the assertion Caffeinate holds is
+    2. THE ASSERTION, SINGULAR. Was "the assertion Decaf holds is
        PreventUserIdleSystemSleep". It also holds PreventUserIdleDisplaySleep
        when a live source carries DisplayPolicy.keepOn. Both idle-only, so the
        argument survived; the count did not.
@@ -155,15 +153,15 @@
   ---- 4. VERIFIED 2026-08-06 (re-check only if the code changes) ---------
   Every capability claim below was traced to a file on this date, twice, by
   two different passes:
-    568 tests / 89 suites  `swift test --package-path Core` was RUN (and RUN
-                           AGAIN by the verification pass, same number):
-                           "Test run with 568 tests in 89 suites passed after
-                           1.222 seconds". Exact, not a grep estimate — Swift
-                           Testing counts a parameterised test once and
-                           expands it into cases at run time. It printed 556
-                           in 88 suites earlier the same day, which is the
-                           whole argument for re-running it on release day
-                           rather than trusting this line.
+    553 tests / 78 suites  `swift test --package-path Core` was RUN. RE-RUN
+                           2026-08-07 after the Caffeinate -> Decaf rename:
+                           "Test run with 553 tests in 78 suites passed".
+                           Exact, not a grep estimate — Swift Testing counts a
+                           parameterised test once and expands it into cases at
+                           run time. It read 556/88 and then 568/89 on
+                           2026-08-06, which is the whole argument for
+                           re-running it on release day rather than trusting
+                           this line.
     grace 180 s default    PowerTuning.swift (UI presets 1/2/3/5/10 min,
                            SettingsView.swift:322 — a Picker over a fixed list,
                            NOT a 1..10 range)
@@ -209,7 +207,7 @@
                            deleted on 2026-08-07.)
     manual presets         `enum ManualPreset` in App/MenuTextFormatter.swift
                            — 5/15/30 min, 1/2/5 h, Indefinitely.
-    not sandboxed          App/Caffeinate.entitlements is an empty dict with a
+    not sandboxed          App/Decaf.entitlements is an empty dict with a
                            comment explaining why.
     macOS 14 floor         Two APIs, both greppable: SwiftUI's
                            `EnvironmentValues.openSettings`
@@ -237,12 +235,14 @@
   Not inspected — executed. Re-run all five before publishing; only the first
   two produce numbers this file quotes.
 
-    swift test --package-path Core     568 tests / 89 suites passed
-    xcodebuild ... -scheme Caffeinate test
-                                       76 tests / 12 suites passed (AppTests,
-                                       a logic bundle with no TEST_HOST, so it
-                                       never launches the app or touches the
-                                       real ~/.claude)
+    swift test --package-path Core     553 tests / 78 suites passed (re-run
+                                       2026-08-07, post-rename)
+    xcodebuild ... -scheme Decaf test
+                                       93 tests / 15 suites passed (AppTests,
+                                       re-run 2026-08-07 post-rename; a logic
+                                       bundle with no TEST_HOST, so it never
+                                       launches the app or touches the real
+                                       ~/.claude)
     xcodebuild ... build               BUILD SUCCEEDED, and the bundle carries
                                        the icon: CFBundleIconName=AppIcon,
                                        Assets.car lists all ten AppIcon
@@ -259,11 +259,13 @@
                                        Sign / notarize / staple report SKIP and
                                        print the commands a real run would use.
                                        A REAL run exits 1 and builds nothing,
-                                       naming all four blockers at once.
+                                       naming its blockers at once — 2 as of
+                                       2026-08-07, down from 4 now that the
+                                       bundle ID is frozen.
 
-  These numbers are perishable. The Core count moved 556 -> 568 in the hours
-  this file was being written, and AppTests did not exist at all when the
-  first draft was made. Re-run; do not trust.
+  These numbers are perishable. The Core count read 556, then 568, in the
+  hours this file was being written, and 553 after the rename pass; AppTests
+  did not exist at all when the first draft was made. Re-run; do not trust.
 -->
 
 <div align="center">
@@ -275,9 +277,9 @@
   catalog) is required because the Icon Composer pipeline produces a .icon
   bundle, not a loose PNG GitHub can render.
 -->
-<img src="docs/assets/icon-256.png" alt="Caffeinate app icon" width="200" height="200">
+<img src="docs/assets/icon-256.png" alt="Decaf app icon" width="200" height="200">
 
-# Caffeinate
+# Decaf
 
 **The `caffeinate` command as a smart menu bar app.**
 
@@ -322,11 +324,11 @@ Keeps your Mac awake while Claude Code is actually working — and lets it sleep
      Core package and the app target, but always UNSIGNED and never publishing
      — see block 4 above. It is not evidence about the signed artifact. -->
 <p>
-  <a href="https://github.com/OWNER-TBD/REPO-TBD/releases/latest"><img src="https://img.shields.io/badge/Download-.dmg-brightgreen?style=flat-square" alt="Download"></a>
+  <a href="https://github.com/AlanY1an/decaf/releases/latest"><img src="https://img.shields.io/badge/Download-.dmg-brightgreen?style=flat-square" alt="Download"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square" alt="Requires macOS 14 or later">
-  <a href="https://github.com/OWNER-TBD/homebrew-TAP-TBD"><img src="https://img.shields.io/badge/Homebrew-tap-orange?style=flat-square" alt="Homebrew tap"></a>
+  <a href="https://github.com/AlanY1an/homebrew-decaf"><img src="https://img.shields.io/badge/Homebrew-tap-orange?style=flat-square" alt="Homebrew tap"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="MIT License"></a>
-  <a href="https://github.com/OWNER-TBD/REPO-TBD/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/OWNER-TBD/REPO-TBD/ci.yml?style=flat-square&label=CI" alt="CI status"></a>
+  <a href="https://github.com/AlanY1an/decaf/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/AlanY1an/decaf/ci.yml?style=flat-square&label=CI" alt="CI status"></a>
 </p>
 
 </div>
@@ -341,16 +343,16 @@ The usual fix is a keep-awake app, and the usual keep-awake app is a switch: it 
 
 The AI-aware ones improve on that by holding while the agent process exists. That is better, and it is still wrong in the case that matters most: **an agent sitting at its prompt with nothing to do looks exactly like an agent thinking hard.** One should let your Mac sleep. The other must not.
 
-Caffeinate's whole job is telling those apart.
+Decaf's whole job is telling those apart.
 
 ## What it actually does
 
 - **Holds while a turn is in flight.** Prompt submitted → hold. Turn finished → release, after a short grace window (3 minutes by default; the choices are 1, 2, 3, 5 and 10).
 - **Releases whenever the agent is waiting on you.** An idle REPL is not work, and neither is an unanswered permission prompt — both are the agent handing the floor back to you, and neither is worth a night of battery. (A prompt gets a five-minute window first, so answering it three seconds later and carrying on never costs you a wake.)
-- **Holds through a long silent tool call.** A 20-minute build writes nothing and prints nothing, but the process is live and the network is in flight. Four independent witnesses have to agree a `working` record has gone quiet before Caffeinate lets go of it. And if that tool call is the one that asked you for permission: Claude Code emits no hook event when you click "allow", so Caffeinate treats the tool's own completion as the proof — the first tool that reports in after a prompt puts the session straight back to working. (One gap, stated rather than buried: between the five-minute window running out and that completion arriving, a very long approved tool is unprotected. It cannot be fixed by lengthening the window, which is also how long an *unanswered* prompt would keep your Mac awake. See `docs/plan/02-detection.md` §1.1c.)
-- **Holds through declared waits.** If the agent has scheduled its own wake-up — a `/loop` with a 30-minute gap, a cron job, a monitor with a timeout — Caffeinate reads that record and holds until then instead of sleeping through it. See [Wait-signal awareness](#wait-signal-awareness).
+- **Holds through a long silent tool call.** A 20-minute build writes nothing and prints nothing, but the process is live and the network is in flight. Four independent witnesses have to agree a `working` record has gone quiet before Decaf lets go of it. And if that tool call is the one that asked you for permission: Claude Code emits no hook event when you click "allow", so Decaf treats the tool's own completion as the proof — the first tool that reports in after a prompt puts the session straight back to working. (One gap, stated rather than buried: between the five-minute window running out and that completion arriving, a very long approved tool is unprotected. It cannot be fixed by lengthening the window, which is also how long an *unanswered* prompt would keep your Mac awake. See `docs/plan/02-detection.md` §1.1c.)
+- **Holds through declared waits.** If the agent has scheduled its own wake-up — a `/loop` with a 30-minute gap, a cron job, a monitor with a timeout — Decaf reads that record and holds until then instead of sleeping through it. See [Wait-signal awareness](#wait-signal-awareness).
 - **Manual hold when you just want one.** 5/15/30 minutes, 1/2/5 hours, "Until 6:00 PM", or indefinitely.
-- **Gets out of the way.** Low Power Mode and fast user switching release every hold, manual ones included — neither has an override. The battery gate releases holds too, and it does not spare a manual one: a manual hold that is *already running* when the battery falls past the threshold is suspended along with everything else. The one exception is narrow and deliberate — starting a manual hold *while* the gate is already engaged is treated as an informed override, so that hold proceeds; the override is then cleared the moment the manual hold ends, expires, the Mac sleeps, or the battery recovers past the threshold (23 % at the default). And a sleep you asked for always wins: Caffeinate holds `PreventUserIdleSystemSleep` (plus `PreventUserIdleDisplaySleep`, and only if you ask it to keep the screen on), and both block *idle* sleep only — closing the lid or choosing Sleep from the Apple menu is never something this app can override.
+- **Gets out of the way.** Low Power Mode and fast user switching release every hold, manual ones included — neither has an override. The battery gate releases holds too, and it does not spare a manual one: a manual hold that is *already running* when the battery falls past the threshold is suspended along with everything else. The one exception is narrow and deliberate — starting a manual hold *while* the gate is already engaged is treated as an informed override, so that hold proceeds; the override is then cleared the moment the manual hold ends, expires, the Mac sleeps, or the battery recovers past the threshold (23 % at the default). And a sleep you asked for always wins: Decaf holds `PreventUserIdleSystemSleep` (plus `PreventUserIdleDisplaySleep`, and only if you ask it to keep the screen on), and both block *idle* sleep only — closing the lid or choosing Sleep from the Apple menu is never something this app can override.
 <!-- ACCURACY (corrected 2026-08-06 by the verification pass): the previous
      wording was "a low battery releases every AUTOMATIC hold too", which reads
      as "a manual hold survives the battery gate". It does not.
@@ -367,7 +369,7 @@ Caffeinate's whole job is telling those apart.
      adds `preventIdleDisplaySleep` when any live source carries
      `DisplayPolicy.keepOn` (AssertionKind.swift:13). Both are idle-only, so the
      argument is unchanged — the count was not. -->
-- **Claude Code only, today.** `codex` and `opencode` appear in the code as agent kinds the protocol already carries, so the V1.x adapters will not need a protocol change — but nothing detects them yet. A process scan that matched them by executable name used to exist, purely to serve an optional "while an agent is running" mode; both were deleted on 2026-08-07 along with the mode. If you run codex or opencode today, Caffeinate does not see them at all.
+- **Claude Code only, today.** `codex` and `opencode` appear in the code as agent kinds the protocol already carries, so the V1.x adapters will not need a protocol change — but nothing detects them yet. A process scan that matched them by executable name used to exist, purely to serve an optional "while an agent is running" mode; both were deleted on 2026-08-07 along with the mode. If you run codex or opencode today, Decaf does not see them at all.
 <!-- ACCURACY (rewritten 2026-08-07): the previous bullet said the process scan
      matches codex/opencode and that a match holds the Mac awake in
      `.whileRunning`. Both halves are now false — ProcessScanner.swift is
@@ -390,13 +392,13 @@ Caffeinate's whole job is telling those apart.
 
 ## Install
 
-**Homebrew** (a personal tap — Caffeinate is not in homebrew-cask core yet):
+**Homebrew** (a personal tap — Decaf is not in homebrew-cask core yet):
 
 ```sh
-brew install --cask OWNER-TBD/TAP-TBD/caffeinate
+brew install --cask AlanY1an/decaf/decaf
 ```
 
-**Or download the DMG** from [the latest release](https://github.com/OWNER-TBD/REPO-TBD/releases/latest), open it, and drag Caffeinate to Applications.
+**Or download the DMG** from [the latest release](https://github.com/AlanY1an/decaf/releases/latest), open it, and drag Decaf to Applications.
 
 Requires **macOS 14 or later**.
 <!-- ACCURACY GATE — see block 3 of the header comment. CUT 2026-08-06 by the
@@ -407,10 +409,13 @@ Requires **macOS 14 or later**.
 
      It is a promise about an artifact that has never existed. `Scripts/release.sh`
      is now written and its dry run is green end to end, but its own preflight
-     refuses a real run today for four reasons: the bundle ID is still the
-     `dev.caffeinate.app` placeholder, there is no Developer ID certificate, no
-     `notarytool` keychain profile, and no Apple Developer Program enrolment
-     behind any of them. The claim was CUT rather than softened, because a
+     refuses a real run today for two reasons: there is no Developer ID
+     certificate and no `notarytool` keychain profile, with no Apple Developer
+     Program enrolment behind either. (It was three until 2026-08-07, when the
+     Caffeinate -> Decaf rename froze the bundle ID as
+     `io.github.alany1an.decaf`; the preflight now reports it as frozen and
+     keeps a tripwire against the retired `dev.caffeinate.app` placeholder.)
+     The claim was CUT rather than softened, because a
      hedged version ("will be signed") is still the sentence a reader uses to
      decide whether to trust a download.
 
@@ -420,7 +425,7 @@ Requires **macOS 14 or later**.
      that has never had Xcode or a developer certificate on it. Not before, and
      not on the strength of a successful notarytool submission alone. -->
 
-On first launch Caffeinate offers to install its hooks into Claude Code. That is one click, and it is optional — see below.
+On first launch Decaf offers to install its hooks into Claude Code. That is one click, and it is optional — see below.
 
 ## How it knows
 
@@ -432,7 +437,7 @@ Three layers. You get the first one you qualify for, and the menu always tells y
 | **File activity** | ~5 minutes. Watches for writes under `~/.claude` and holds while they keep coming. | None. This is what you get out of the box. |
 | **CPU sampling** | Coarse, and never a reason to hold on its own. It is one of the four witnesses that decide a `working` record has gone stale, which is how a long silent tool call is told apart from a session whose `Stop` was lost. | None. |
 
-The hook layer registers six events plus two notification matchers: `SessionStart`, `UserPromptSubmit`, `PostToolUse` (used purely as a liveness heartbeat), `Stop`, `StopFailure`, `SessionEnd`, and `Notification` split into `permission_prompt` (opens a five-minute window, and hands the hold back as soon as the approved tool reports in) and `idle_prompt` (releases early). The install is a deep merge — every hook you already had, and every key Caffeinate does not recognise, survives with its value intact, and uninstall removes exactly the entries it added and nothing else. One caveat worth stating rather than discovering: the file is re-parsed and re-serialised, so key order and indentation are not preserved. The contract the tests enforce is semantic equality of the parsed JSON, not byte equality of the file.
+The hook layer registers six events plus two notification matchers: `SessionStart`, `UserPromptSubmit`, `PostToolUse` (used purely as a liveness heartbeat), `Stop`, `StopFailure`, `SessionEnd`, and `Notification` split into `permission_prompt` (opens a five-minute window, and hands the hold back as soon as the approved tool reports in) and `idle_prompt` (releases early). The install is a deep merge — every hook you already had, and every key Decaf does not recognise, survives with its value intact, and uninstall removes exactly the entries it added and nothing else. One caveat worth stating rather than discovering: the file is re-parsed and re-serialised, so key order and indentation are not preserved. The contract the tests enforce is semantic equality of the parsed JSON, not byte equality of the file.
 <!-- ACCURACY (corrected 2026-08-06 by the verification pass): "passed through
      untouched" was doing double duty — true of every value, false of the bytes.
      ClaudeSettingsEditor.swift:25-27 says so itself: "Re-serialization loses key
@@ -442,13 +447,13 @@ The hook layer registers six events plus two notification matchers: `SessionStar
      diffs their settings.json after an install and finds it reformatted has
      been told something untrue by this README unless the caveat is here. -->
 
-The menu never claims a precision it does not have. If a config sync wipes the entries, it drops to `Detection: file activity (approximate)` and offers to install hooks again. If the entries are still delivering but were written by an older Caffeinate build — the app updated, the config did not follow — it says `Detection: hooks (an older event set)` and offers to repair, because that state is genuinely between the two layers rather than a fall back to either.
+The menu never claims a precision it does not have. If a config sync wipes the entries, it drops to `Detection: file activity (approximate)` and offers to install hooks again. If the entries are still delivering but were written by an older Decaf build — the app updated, the config did not follow — it says `Detection: hooks (an older event set)` and offers to repair, because that state is genuinely between the two layers rather than a fall back to either.
 <!-- ACCURACY (rewritten 2026-08-06): the previous draft said the repair offer
      appears when "you upgraded Claude Code, or a config sync overwrote the
      file". Neither is what the code does. `DetectionPrecision.hooksPartial`
      (DetectionPrecision.swift) means OUR entries are outdated relative to THIS
      build — ClaudeCodeIntegration.swift:182 states the cause is upgrading
-     Caffeinate — and it is the only precision whose `suggestsHookRepair` is
+     Decaf — and it is the only precision whose `suggestsHookRepair` is
      true. A wiped config yields `.entriesMissing` -> `.fileActivity`, whose
      note is "Install hooks for precise detection…", not "Repair hooks…" —
      both strings live in `MenuCopy.precisionNote(for:)` in
@@ -477,7 +482,7 @@ The last transcript write was around 22:56, and 300 seconds later is the file-ac
 
 The fix is that the answer was already on disk. At **22:55:47**, five and a half minutes before the release, the agent had written `ScheduleWakeup { delaySeconds: 420 }` into its own transcript. It had said "I am waiting until 23:02:47", and the app threw that away.
 
-Caffeinate now reads it. Four scheduling tools are recognised — `ScheduleWakeup`, `Monitor`, `CronCreate`, `CronDelete` — and the declared deadline extends the hold, plus a 60-second margin because waking a Mac is not instantaneous. Guard rails, in order:
+Decaf now reads it. Four scheduling tools are recognised — `ScheduleWakeup`, `Monitor`, `CronCreate`, `CronDelete` — and the declared deadline extends the hold, plus a 60-second margin because waking a Mac is not instantaneous. Guard rails, in order:
 
 - **Capped at one hour.** A parse bug can cost you an hour of sleep, never a night.
 - **Every safety gate still applies.** Low battery, Low Power Mode, user switching, an explicit Sleep. A declared wait is not an exemption. (The only thing that opens the battery gate is a manual hold *you* start while it is engaged, as above — a wait signal can never open it, and neither can a wait signal that arrives during one.)
@@ -485,7 +490,7 @@ Caffeinate now reads it. Four scheduling tools are recognised — `ScheduleWakeu
 
 ## Privacy
 
-Caffeinate watches `~/.claude`. That deserves a straight answer rather than a badge.
+Decaf watches `~/.claude`. That deserves a straight answer rather than a badge.
 
 - **It makes no network requests.** None. There is no telemetry, no crash reporter, no analytics, and no update check — there is no `URLSession` anywhere in the source. <!-- NOTE: narrow this to "the only network request is Sparkle's update check" the day Sparkle is integrated (V1.x, plan 06 §7). -->
 - **It never reads your conversation.** The transcript parser looks at exactly these fields: `sessionId`, `timestamp`, `isSidechain`, the record and block `type`, the tool `name`, and — only for the four scheduling tools above — `delaySeconds`, `timeout_ms`, `stop`, `cron`, `id`. (It walks the `message` → `content` → `input` containers to reach them, and reads no other leaf inside any of them.) Those last five are a Swift enum with a test pinning its cases, so widening the tool-input surface is a failing build rather than a code-review oversight. `prompt`, `reason` and every other conversational field are never read, never stored, never logged.
@@ -496,15 +501,15 @@ Caffeinate watches `~/.claude`. That deserves a straight answer rather than a ba
      The record-level fields (sessionId/timestamp/isSidechain/type/name) are
      read by string literal in WaitSignalParser.swift:198-230, with no enum and
      no pinning test. The sentence now says which half is pinned. -->
-- **One exception, and it is narrow.** To match a cancelled cron job to the wait it created, Caffeinate reads the single tool result line directly following a `CronCreate`, and keeps only a hex job id matched by an anchored regex (`^Scheduled .*job ([0-9a-f]{6,64})`). Every other tool result is skipped, because tool results contain arbitrary output. If the regex does not match, the pairing is abandoned and the hold falls back to the conservative cap.
+- **One exception, and it is narrow.** To match a cancelled cron job to the wait it created, Decaf reads the single tool result line directly following a `CronCreate`, and keeps only a hex job id matched by an anchored regex (`^Scheduled .*job ([0-9a-f]{6,64})`). Every other tool result is skipped, because tool results contain arbitrary output. If the regex does not match, the pairing is abandoned and the hold falls back to the conservative cap.
 - **Nothing is logged with content in it.** Diagnostics are a closed enum of cases like `lineNotJSON` and `unknownTool` — a log line is structurally incapable of carrying a transcript excerpt.
-- **The only files it writes** are under `~/Library/Application Support/Caffeinate/` (session state, a copy of the hook helper, and a rotating one-deep backup of any config file it edits) and, if you install hooks, its own entries in `~/.claude/settings.json`.
+- **The only files it writes** are under `~/Library/Application Support/Decaf/` (session state, a copy of the hook helper, and a rotating one-deep backup of any config file it edits) and, if you install hooks, its own entries in `~/.claude/settings.json`.
 
 ## What it deliberately does not do
 
 - **Not on the Mac App Store, ever.** The sandbox forbids inspecting other processes and forbids the socket-plus-helper layout the hook bridge needs. Distribution is Developer ID direct — outside the sandbox, straight from GitHub Releases and the Homebrew tap. This is a permanent decision, not a backlog item.
 - **It does not keep the Mac awake with the lid closed.** Clamshell keep-awake needs a privileged root helper and carries a real heat risk on a closed laptop. It is designed but deliberately deferred; if it ships, it will ship with a warning you cannot miss.
-- **It cannot wake a sleeping Mac.** Nothing here schedules wake-ups. It prevents sleep; it does not reverse it. If your Mac is already asleep when a loop is due, Caffeinate was too late.
+- **It cannot wake a sleeping Mac.** Nothing here schedules wake-ups. It prevents sleep; it does not reverse it. If your Mac is already asleep when a loop is due, Decaf was too late.
 - **It does not wrap `/usr/bin/caffeinate`.** Every assertion is `IOPMAssertionCreateWithDescription` called directly, which is what makes them visible and attributable in `pmset -g assertions`, and what makes them die with the process instead of outliving it. (One action does shell out: "Turn Off Display Now" runs `/usr/bin/pmset displaysleepnow`, because there is no public API for it. It is a one-shot command, not a held assertion.)
 <!-- ACCURACY (added 2026-08-06): the pmset parenthetical is new. The claim
      about assertions is exactly true (IOPMPowerAsserter.swift:29), but
@@ -512,7 +517,7 @@ Caffeinate watches `~/.claude`. That deserves a straight answer rather than a ba
      /usr/bin/pmset for the one menu action, and a reader who discovers that
      after reading an unqualified "it does not shell out" would be right to
      feel misled. -->
-- **It ships no CLI named `caffeinate`.** If a command-line tool appears, it is `caff`. Shadowing `/usr/bin/caffeinate` on your `PATH` would be an unforgivable thing for this app of all apps to do.
+- **It ships no CLI at all today, and never one named `caffeinate`.** If a command-line tool appears it is `decaf`, which is exactly why the app is called that: `decaf` collides with nothing on your `PATH`, and shadowing `/usr/bin/caffeinate` would be an unforgivable thing for this app of all apps to do.
 
 ## Settings
 
@@ -528,13 +533,13 @@ Seven, and no more. Every one of them had to answer "who does the default hurt?"
 ## Uninstall
 
 ```sh
-brew uninstall --cask OWNER-TBD/TAP-TBD/caffeinate
+brew uninstall --cask AlanY1an/decaf/decaf
 ```
 
-Or drag Caffeinate out of Applications. Then, if you installed hooks, remove what they left behind:
+Or drag Decaf out of Applications. Then, if you installed hooks, remove what they left behind:
 
-1. Open Caffeinate → Settings → Agents → **Uninstall Hooks**. This filters Caffeinate's entries out of `~/.claude/settings.json` and leaves every other setting intact — the file is rewritten, so key order and indentation may change, but no value of yours does. Do this *before* deleting the app if you can.
-2. If the app is already gone, delete `~/Library/Application Support/Caffeinate/` and remove any entry in `~/.claude/settings.json` whose command path contains `Application Support/Caffeinate`.
+1. Open Decaf → Settings → Agents → **Uninstall Hooks**. This filters Decaf's entries out of `~/.claude/settings.json` and leaves every other setting intact — the file is rewritten, so key order and indentation may change, but no value of yours does. Do this *before* deleting the app if you can.
+2. If the app is already gone, delete `~/Library/Application Support/Decaf/` and remove any entry in `~/.claude/settings.json` whose command path contains `Application Support/Decaf`.
 
 Power assertions die with the process, so quitting or deleting the app can never leave your Mac unable to sleep.
 
@@ -555,13 +560,19 @@ Power assertions die with the process, so quitting or deleting the app can never
 
 ## FAQ
 
+<!-- ADDED 2026-08-07 with the rename. The subtitle says `caffeinate` and the
+     app is called Decaf, which a first-time reader will notice; this answers it
+     once, in the place people look. Delete this entry and nothing else breaks. -->
+**Why is it called Decaf if it does the `caffeinate` command's job?**
+Because the job is knowing when to *stop*. Every app in this category is named for the stimulant — Caffeine, Amphetamine, Theine, keepresso — and every one of them is a switch you have to remember to flip off. Decaf is the one that puts itself down. The subtitle still says `caffeinate` because that is the command you already know and the word you would search for; the app deliberately does not share its name, so nothing here can ever shadow `/usr/bin/caffeinate`.
+
 **Does it support Codex or opencode?**
 Not yet. Today Claude Code is the only supported agent: it is the only one with hooks, and the zero-config fallback layer watches `~/.claude` and nothing else.
 
 Their names do appear in the source, as agent kinds the socket protocol and the detection types already carry, so the V1.x adapters will not need a protocol change. Nothing produces a hold for them. Until 2026-08-07 a process scan matched them by executable name and, in an optional "while an agent is running" mode, that match really did keep the Mac awake; the mode and the scan were deleted together. Real support is on the roadmap above and will be announced when it works, not before.
 
 **How is this different from KeepingYouAwake or Amphetamine?**
-Those are switches, and good ones. They keep your Mac awake because you told them to, until you tell them to stop. Caffeinate decides — it holds while the agent is working, and lets go the moment the agent is waiting on you. If a switch is what you want, KeepingYouAwake is a well-maintained one and you should use it. (Caffeinate is also that switch when you want it to be: manual holds, durations and "Until" are all there.)
+Those are switches, and good ones. They keep your Mac awake because you told them to, until you tell them to stop. Decaf decides — it holds while the agent is working, and lets go the moment the agent is waiting on you. If a switch is what you want, KeepingYouAwake is a well-maintained one and you should use it. (Decaf is also that switch when you want it to be: manual holds, durations and "Until" are all there.)
 <!-- ACCURACY (2026-08-06): dropped "6.8k stars". The figure came from
      docs/launch/research-teardowns.md, which recorded 6,810 on 2026-08-06, but
      a star count in a README is a number nobody will ever update and that
@@ -586,7 +597,7 @@ SwiftUI's `openSettings` and two-parameter `onChange(of:)`, plus the Swift concu
      deploymentTarget 14.0, so the floor is real either way. -->
 
 **Can I use it without installing hooks?**
-Yes, and it is the default. Without hooks Caffeinate watches file activity under `~/.claude`; you lose turn precision (about five minutes of resolution instead of instant) and the menu says so. Hooks are one click and reversible from Settings → Agents.
+Yes, and it is the default. Without hooks Decaf watches file activity under `~/.claude`; you lose turn precision (about five minutes of resolution instead of instant) and the menu says so. Hooks are one click and reversible from Settings → Agents.
 
 **Will it drain my battery?**
 It can only ever *prevent sleep*, and it stops doing that below 20 % — including a manual hold that was already running when you crossed the line. The one way past it is to start a manual hold *while* you are already below the threshold, which is treated as your call to make and is undone as soon as that hold ends. The default mode is the one that lets your Mac sleep whenever the agent is not working, which for most people means less awake time than a keep-awake switch they forgot to turn off.
@@ -594,19 +605,19 @@ It can only ever *prevent sleep*, and it stops doing that below 20 % — includi
 ## Building from source
 
 ```sh
-git clone https://github.com/OWNER-TBD/REPO-TBD.git
-cd REPO-TBD
+git clone https://github.com/AlanY1an/decaf.git
+cd decaf
 Scripts/bootstrap.sh      # xcodegen generate
 swift test --package-path Core
-open Caffeinate.xcodeproj
+open Decaf.xcodeproj
 ```
 
-The logic lives in `Core/` as a plain Swift package with no AppKit dependency, which is why it can be tested at all: **568 tests** cover the power engine, the session state machine, the transcript parser and the installer.
-<!-- VERIFIED 2026-08-06: `swift test --package-path Core` printed "Test run
-     with 568 tests in 89 suites passed after 1.222 seconds". Exact, not a grep
-     estimate. It printed 556/88 a few hours earlier the same day — RE-RUN AND
+The logic lives in `Core/` as a plain Swift package with no AppKit dependency, which is why it can be tested at all: **553 tests** cover the power engine, the session state machine, the transcript parser and the installer.
+<!-- VERIFIED 2026-08-07 (post-rename): `swift test --package-path Core`
+     printed "Test run with 553 tests in 78 suites passed". Exact, not a grep
+     estimate. It printed 556/88 and then 568/89 on 2026-08-06 — RE-RUN AND
      UPDATE THIS NUMBER on release day. -->
-The app target in `App/` is a thin SwiftUI shell over it. `Caffeinate.xcodeproj` is generated from `project.yml` and is not committed — edit the manifest, not the project.
+The app target in `App/` is a thin SwiftUI shell over it. `Decaf.xcodeproj` is generated from `project.yml` and is not committed — edit the manifest, not the project.
 
 ## License
 

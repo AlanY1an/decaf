@@ -21,6 +21,7 @@ let package = Package(
         .library(name: "AgentDetection", targets: ["AgentDetection"]),
         .library(name: "DecafComposition", targets: ["DecafComposition"]),
         .library(name: "HookWire", targets: ["HookWire"]),
+        .library(name: "UsageMetering", targets: ["UsageMetering"]),
         .executable(name: "decaf-bridge", targets: ["decaf-bridge"]),
         .executable(name: "decaf-smoke", targets: ["decaf-smoke"]),
     ],
@@ -32,9 +33,21 @@ let package = Package(
             name: "DecafCore",
             dependencies: ["HookWire"]
         ),
+        // Strict-JSON helpers shared by transcript readers (AgentDetection's
+        // wait-signal parser and UsageMetering's usage parser). `package`
+        // access: visible inside this package, invisible to the app target.
+        .target(
+            name: "TranscriptSupport"
+        ),
+        // Usage metering (plan 09): transcript token ledger. Depends ONLY on
+        // TranscriptSupport — no DecafCore/AgentDetection coupling.
+        .target(
+            name: "UsageMetering",
+            dependencies: ["TranscriptSupport"]
+        ),
         .target(
             name: "AgentDetection",
-            dependencies: ["DecafCore", "HookWire"]
+            dependencies: ["DecafCore", "HookWire", "TranscriptSupport"]
         ),
         // The composition root (plan 01 PR-6) must see both the engine
         // (DecafCore) and the detection layer (AgentDetection), and
@@ -54,7 +67,7 @@ let package = Package(
         ),
         .testTarget(
             name: "DecafCoreTests",
-            dependencies: ["DecafCore", "AgentDetection", "DecafComposition", "HookWire"],
+            dependencies: ["DecafCore", "AgentDetection", "DecafComposition", "HookWire", "UsageMetering", "TranscriptSupport"],
             exclude: ["Fixtures"] // loaded via #filePath, not Bundle.module
         ),
     ],

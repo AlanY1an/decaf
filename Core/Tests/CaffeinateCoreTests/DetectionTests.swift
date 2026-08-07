@@ -110,6 +110,11 @@ private struct HookStdinFixture {
 /// clock relative to it instead of restating 180.
 private let defaultGrace: TimeInterval = 180
 
+/// The window a permission prompt opens (plan 02 §1.1c). Deliberately a
+/// different number from `defaultGrace` — it bridges a turn that is still in
+/// flight, not one that ended.
+private let permissionGrace: TimeInterval = DetectionDefaults.permissionGracePeriod
+
 private func makeRegistry(
     gracePeriod: TimeInterval = defaultGrace,
     heartbeatCoalesceWindow: TimeInterval = SessionRegistry.defaultHeartbeatCoalesceWindow,
@@ -182,33 +187,63 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
         }
 
         /// A permission prompt is the agent waiting on the USER, which is
-        /// exactly when this Mac is allowed to sleep. So it opens the release
-        /// grace window — it does not hold indefinitely, and it does not
-        /// release on the spot either.
-        @Test func permissionPromptNotificationOpensTheGraceWindow() throws {
+        /// exactly when this Mac is allowed to sleep. So it opens a release
+        /// window — it does not hold indefinitely, and it does not release on
+        /// the spot either.
+        ///
+        /// Its own window, not the `Stop` one: `permissionGracePeriod` has to
+        /// bridge a turn that is still in flight (§1.1c), so it is longer and
+        /// it is not the user's "Release grace period" preference.
+        @Test func permissionPromptNotificationOpensThePermissionWindow() throws {
             let clock = DetectionClock()
             let registry = makeRegistry(clock: clock)
             let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
             let wire = fixture.wireEvent(matcher: "permission_prompt")
 
-            #expect(SessionRegistry.signal(for: wire) == .stopped)
+            #expect(SessionRegistry.signal(for: wire) == .awaitingPermission)
             registry.ingest(wire)
             #expect(
                 state(of: fixture.sessionID, in: registry)
-                    == .grace(until: clock.now.addingTimeInterval(defaultGrace))
+                    == .grace(until: clock.now.addingTimeInterval(permissionGrace))
             )
+            #expect(permissionGrace > defaultGrace, "a paused turn needs a longer bridge than a finished one")
+            // The pause is remembered, not just its deadline: that is what the
+            // approval rule reads.
+            #expect(registry.sessions.first?.awaitingApprovalSince == clock.now)
             // The quick "yes" three seconds later must not have to wake a Mac.
             #expect(registry.isHolding())
-            clock.advance(defaultGrace - 1)
+            clock.advance(permissionGrace - 1)
             registry.reconcile()
             #expect(registry.isHolding(), "still inside the window")
+        }
 
-            // …and an unanswered prompt lets the Mac sleep, instead of holding
-            // it awake all night on the chance somebody comes back.
-            clock.advance(2)
+        /// THE RULE'S OTHER HALF, and the case that must never regress: a
+        /// prompt nobody ever answers lets the Mac sleep.
+        ///
+        /// Nothing completes while a dialog stands unanswered, so no heartbeat
+        /// arrives, so the approval rule (§1.1c) never fires and the window
+        /// simply runs out. An agent waiting on the user is an agent this Mac
+        /// sleeps through — for the rest of the night, not just past the
+        /// deadline.
+        @Test func anUnansweredPermissionPromptStillLetsTheMacSleep() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
+            registry.ingest(fixture.wireEvent(matcher: "permission_prompt"))
+
+            clock.advance(permissionGrace)
+            registry.reconcile()
+            #expect(state(of: fixture.sessionID, in: registry) == .idle)
+            #expect(!registry.isHolding(), "the agent is waiting on the user; the Mac sleeps")
+
+            // Eight hours later it is still asleep. The marker survives (the
+            // dialog is still on screen, upstream never expires it) but on its
+            // own it holds exactly nothing.
+            clock.advance(8 * 3600)
             registry.reconcile()
             #expect(state(of: fixture.sessionID, in: registry) == .idle)
             #expect(!registry.isHolding())
+            #expect(registry.sessions.first?.awaitingApprovalSince != nil)
         }
 
         /// The window is a window, not an idle signal: if a `.working` signal
@@ -216,10 +251,10 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
         ///
         /// NOTE ON WHAT THIS DOES *NOT* PROVE. `.working` is emitted by
         /// `UserPromptSubmit` — the user typing a new prompt. Clicking "allow"
-        /// on a permission dialog is NOT that, and emits no state event at all
-        /// (see `anApprovedPromptLosesTheHoldWhileTheToolIsStillRunning`). So
-        /// this test covers "the user answered the prompt and then said
-        /// something else", not "the user approved the tool".
+        /// on a permission dialog is NOT that, and emits no state event at all;
+        /// that path is `anApprovedPromptKeepsTheHoldWhileTheToolRuns`. So this
+        /// test covers "the user answered the prompt and then said something
+        /// else", not "the user approved the tool".
         @Test func workResumingAfterAPermissionPromptHoldsAgain() throws {
             let clock = DetectionClock()
             let registry = makeRegistry(clock: clock)
@@ -235,51 +270,149 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
             #expect(registry.isHolding(), "a turn in flight has no deadline")
         }
 
-        /// CHARACTERIZATION — pins a KNOWN GAP, not a desired behaviour.
+        /// THE FIX (plan 02 §1.1c). Replaces the characterization test
+        /// `anApprovedPromptLosesTheHoldWhileTheToolIsStillRunning`, which
+        /// pinned this as a known gap.
         ///
         /// Upstream ordering (Claude Code hooks reference): `PreToolUse` fires
         /// *before* tool execution **regardless of permission**, and the
-        /// permission dialog is raised after it. Nothing at all fires when the
-        /// user clicks "allow"; the next event is `PostToolUse`, which fires
-        /// only when the tool COMPLETES.
+        /// dialog is raised after it. Nothing at all fires when the user clicks
+        /// "allow"; the next event is `PostToolUse`, which fires only when the
+        /// tool COMPLETES. That completion is therefore the app's only possible
+        /// evidence that the answer was yes — and it is conclusive, because
+        /// nothing can complete while its own dialog is unanswered.
         ///
-        /// So for the one kind of tool call that most often needs approval — a
-        /// long one — the sequence is: prompt → GRACE(180 s) → user approves →
-        /// silence while the tool runs → grace expires → hold released, with
-        /// the approved tool still running. That is the exact failure the
-        /// product exists to prevent, and neither the heartbeat nor the
-        /// four-witness stuck detector can help: both only ever ADD confidence
-        /// that a `WORKING` session is alive, and this session is no longer
-        /// `WORKING`.
+        /// So the sequence is: prompt → permission window → user approves →
+        /// silence → the tool finishes → `PostToolUse` → WORKING, and the hold
+        /// runs on with no deadline until the turn actually ends.
+        @Test func anApprovedPromptKeepsTheHoldWhileTheToolRuns() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
+            registry.ingest(fixture.wireEvent(matcher: "permission_prompt"))
+            let promptedAt = clock.now
+
+            // The user clicks "allow" three seconds later. No hook fires — the
+            // app cannot see this instant at all, and does not have to.
+            clock.advance(3)
+            registry.reconcile()
+            #expect(registry.isHolding())
+
+            // The approved tool runs silently for four minutes, well past the
+            // 180 s a finished turn would have got.
+            clock.advance(240)
+            registry.reconcile()
+            #expect(registry.isHolding(), "still inside the permission window")
+
+            // It completes: `PostToolUse`. The turn is demonstrably back in
+            // flight, so the session is WORKING again and the hold has no
+            // deadline.
+            registry.apply(signal: .heartbeat, sessionID: fixture.sessionID, agent: .claudeCode, ppid: 4242)
+            #expect(state(of: fixture.sessionID, in: registry) == .working)
+            #expect(registry.isHolding())
+            let resumed = try #require(registry.sessions.first)
+            #expect(resumed.awaitingApprovalSince == nil, "the pause is resolved, not still pending")
+            #expect(resumed.lastEventAt == promptedAt,
+                    "a heartbeat is still not a state event; only liveness and the pause move")
+            #expect(resumed.lastHeartbeatAt == clock.now,
+                    "the resumed record must not be handed to the stuck detector already stale")
+
+            // An hour into the rest of the turn the hold is still there — this
+            // is the failure the product exists to prevent, and it no longer
+            // happens.
+            clock.advance(3600)
+            registry.reconcile()
+            #expect(state(of: fixture.sessionID, in: registry) == .working)
+            #expect(registry.isHolding())
+        }
+
+        /// The residual exposure, stated honestly and pinned so it cannot get
+        /// quietly worse: a tool that runs longer than `permissionGracePeriod`
+        /// DOES lose the hold at the deadline, and regains it the moment it
+        /// completes.
         ///
-        /// This is the cost of removing the permission hold. It is bounded (one
-        /// grace period, then the ordinary L2/wait layers apply if hooks are
-        /// only partial) but it is real. Deleting this test to make the suite
-        /// look clean would hide it; it fails loudly the day the gap is closed,
-        /// which is when it should be rewritten.
-        @Test func anApprovedPromptLosesTheHoldWhileTheToolIsStillRunning() throws {
+        /// The window cannot be stretched to cover a 20-minute build without
+        /// making an abandoned dialog cost 20 minutes of a Mac that will not
+        /// sleep, which the one rule forbids. So the exposure is
+        /// `approvalLatency + toolRuntime − permissionGracePeriod`, it is
+        /// bounded by the tool's own runtime, and it self-heals — where before
+        /// the fix the hold stayed gone until the *whole turn* ended.
+        @Test func anApprovedToolLongerThanTheWindowRegainsTheHoldWhenItCompletes() throws {
             let clock = DetectionClock()
             let registry = makeRegistry(clock: clock)
             let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
             registry.ingest(fixture.wireEvent(matcher: "permission_prompt"))
 
-            // The user clicks "allow" three seconds later. No hook fires.
-            clock.advance(3)
-
-            // The approved tool runs silently. At the grace deadline the hold
-            // goes away even though work is very much in flight.
-            clock.advance(defaultGrace)
+            // Approved at +3 s; the tool is a 20-minute build.
+            clock.advance(permissionGrace)
             registry.reconcile()
             #expect(state(of: fixture.sessionID, in: registry) == .idle)
-            #expect(!registry.isHolding(), "KNOWN GAP: the running tool is unprotected here")
+            #expect(!registry.isHolding(), "the residual gap: nothing has proven the answer yet")
 
-            // `PostToolUse` finally lands when the tool completes, seven minutes
-            // past the deadline. A heartbeat is liveness only — it does not
-            // transition — so it does not recover the hold either.
-            clock.advance(420)
+            clock.advance(1200 - permissionGrace)
             registry.apply(signal: .heartbeat, sessionID: fixture.sessionID, agent: .claudeCode, ppid: 4242)
+            #expect(state(of: fixture.sessionID, in: registry) == .working,
+                    "the completion is the approval, however late it arrives")
+            #expect(registry.isHolding())
+        }
+
+        /// The dangerous crossover, and the reason the marker is cleared by
+        /// `Stop` rather than left to age out: a permission prompt EARLIER in a
+        /// turn must not buy that turn's trailing tool calls an exemption from
+        /// §1.1a.
+        ///
+        /// `Stop` is the agent reporting the turn ended. After it, a
+        /// `PostToolUse` is a sub-agent tail or post-Stop cleanup — exactly
+        /// what must not resurrect a finished turn.
+        @Test func aStopAfterAPermissionPromptEndsTheTurnForTrailingToolCalls() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
+            registry.ingest(fixture.wireEvent(matcher: "permission_prompt"))
+            #expect(registry.sessions.first?.awaitingApprovalSince != nil)
+
+            // Approved, the tool ran, the turn finished properly.
+            clock.advance(30)
+            registry.ingest(try HookStdinFixture.load("stop.json").wireEvent())
+            let deadline = clock.now.addingTimeInterval(defaultGrace)
+            #expect(state(of: fixture.sessionID, in: registry) == .grace(until: deadline),
+                    "Stop arms its OWN window, on the user's grace preference")
+            #expect(registry.sessions.first?.awaitingApprovalSince == nil,
+                    "the turn ended; there is no pause left to resume")
+
+            // A sub-agent tail lands inside the window and after it. Neither
+            // restarts anything.
+            clock.advance(30)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+            #expect(state(of: fixture.sessionID, in: registry) == .grace(until: deadline))
+
+            clock.advance(defaultGrace)
+            registry.reconcile()
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
             #expect(state(of: fixture.sessionID, in: registry) == .idle)
-            #expect(!registry.isHolding(), "a heartbeat never lifts IDLE")
+            #expect(!registry.isHolding(), "a trailing tool call must never resurrect a finished turn")
+        }
+
+        /// `idle_prompt` is authoritative about the turn being over, so it also
+        /// closes the pause. (`Stop` and `UserPromptSubmit` are covered above
+        /// and by `workResumingAfterAPermissionPromptHoldsAgain`.)
+        @Test func idlePromptAfterAPermissionPromptClosesThePause() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
+            registry.ingest(fixture.wireEvent(matcher: "permission_prompt"))
+
+            clock.advance(10)
+            registry.ingest(try HookStdinFixture.load("notification_idle_prompt.json")
+                .wireEvent(matcher: "idle_prompt"))
+            #expect(state(of: fixture.sessionID, in: registry) == .idle)
+            #expect(registry.sessions.first?.awaitingApprovalSince == nil)
+
+            clock.advance(10)
+            registry.ingest(try HookStdinFixture.load("post_tool_use.json").wireEvent())
+            #expect(state(of: fixture.sessionID, in: registry) == .idle,
+                    "the agent said it is at its prompt; a tail proves nothing about the user")
+            #expect(!registry.isHolding())
         }
 
         @Test func idlePromptNotificationIsAuthoritativeAndCutsGraceShort() throws {
@@ -772,24 +905,31 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
                 let line: UInt
             }
             let grace: (Date, TimeInterval) -> SessionState? = { .grace(until: $0.addingTimeInterval($1)) }
+            // A permission prompt opens a window of its own length (§1.1c),
+            // which is why it is its own column and not a synonym for Stop.
+            let permissionWindow: (Date, TimeInterval) -> SessionState? = { now, _ in
+                .grace(until: now.addingTimeInterval(permissionGrace))
+            }
             let cases: [Case] = [
                 // IDLE row
                 Case(from: .idle, input: .working, expected: { _, _ in .working }, line: #line),
                 Case(from: .idle, input: .idle, expected: { _, _ in .idle }, line: #line),
                 // Footnote 1: Stop before any WORKING was seen → grace (safe side).
-                // `.stopped` is also what a permission prompt normalizes to.
                 Case(from: .idle, input: .stopped, expected: grace, line: #line),
+                Case(from: .idle, input: .awaitingPermission, expected: permissionWindow, line: #line),
                 Case(from: .idle, input: .ended, expected: { _, _ in nil }, line: #line),
                 // WORKING row
                 Case(from: .working, input: .working, expected: { _, _ in .working }, line: #line),
                 // Footnote 2: out-of-order tolerance, latest signal wins.
                 Case(from: .working, input: .idle, expected: { _, _ in .idle }, line: #line),
                 Case(from: .working, input: .stopped, expected: grace, line: #line),
+                Case(from: .working, input: .awaitingPermission, expected: permissionWindow, line: #line),
                 Case(from: .working, input: .ended, expected: { _, _ in nil }, line: #line),
                 // GRACE row
                 Case(from: .grace, input: .working, expected: { _, _ in .working }, line: #line),
                 Case(from: .grace, input: .idle, expected: { _, _ in .idle }, line: #line),
                 Case(from: .grace, input: .stopped, expected: grace, line: #line),
+                Case(from: .grace, input: .awaitingPermission, expected: permissionWindow, line: #line),
                 Case(from: .grace, input: .ended, expected: { _, _ in nil }, line: #line),
             ]
             for testCase in cases {

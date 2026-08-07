@@ -46,6 +46,19 @@ public final class CompositionRoot: ObservableObject {
     /// The single CaffeinateCore -> UI data channel (plan 04 §1).
     @Published public private(set) var snapshot = AppStateSnapshot()
 
+    // MARK: - Reopen requests from a second copy of the app
+
+    /// Called on the main actor when another copy of Caffeinate is launched and
+    /// asks this instance to surface its interface (plan 04 step 1). The app
+    /// shell installs the real one; it opens and focuses Settings.
+    ///
+    /// Returning from this closure is what produces the "yes, I am alive"
+    /// answer on the socket, and that is the point: the reply has to be minted
+    /// by the main actor, because a wedged main actor is the failure the second
+    /// copy is trying to detect. Routing the answer on the socket queue instead
+    /// would make every wedged instance look healthy.
+    public var onReopenUIRequest: (@MainActor () -> Void)?
+
     // MARK: - Owned modules
 
     public let settings: SettingsStore
@@ -149,6 +162,8 @@ public final class CompositionRoot: ObservableObject {
     public func start() -> StartResult {
         guard !started else { return .started }
 
+        installControlHandler()
+
         do {
             try socketServer.start()
         } catch HookSocketServerError.anotherInstanceRunning {
@@ -212,6 +227,27 @@ public final class CompositionRoot: ObservableObject {
 
         republish()
         return .started
+    }
+
+    /// Routes `reopen-ui` frames to `onReopenUIRequest` and answers on the main
+    /// actor. Verbs this build does not know are refused rather than dropped, so
+    /// a newer second copy meeting an older running instance gets a definite
+    /// answer instead of waiting out its deadline.
+    private func installControlHandler() {
+        socketServer.controlHandler = { [weak self] request, respond in
+            guard request.control == ControlCommand.reopenUI else {
+                respond(false)
+                return
+            }
+            Task { @MainActor in
+                guard let handler = self?.onReopenUIRequest else {
+                    respond(false)
+                    return
+                }
+                handler()
+                respond(true)
+            }
+        }
     }
 
     public func stop() {

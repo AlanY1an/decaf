@@ -17,9 +17,16 @@
 //   further hardening (plan 02 §1.4).
 // - The socket doubles as the single-instance lock: bind failure while a live
 //   listener answers is surfaced as a typed error; the app shell (plan 04
-//   step 1, review decision R11) turns it into "Caffeinate is already
-//   running" and exits. A leftover socket file nobody answers (crash residue)
-//   is unlinked and rebound.
+//   step 1, review decision R11) turns it into "surface the running instance's
+//   UI" and exits. A leftover socket file nobody answers (crash residue) is
+//   unlinked and rebound.
+// - Control frames (HookWire/ControlFrame) are the one exception to
+//   fire-and-forget: they get a single-line answer on the same connection.
+//   That is how the second copy of the app tells "the running instance opened
+//   Settings" from "the running instance is wedged" — a connect(2) that
+//   succeeds only proves the kernel accepted the connection, not that anyone
+//   is home. The reply is produced by the app on the main actor, so receiving
+//   it is real evidence the UI thread is alive.
 // - `rebuild()` + `socketFilePresent` support the coordinator's watchdog
 //   (plan 02 §1.6): stat check each tick, unlink → bind → listen on failure.
 
@@ -44,6 +51,24 @@ public final class HookSocketServer: @unchecked Sendable {
     /// Per-connection read cap (plan 02 §1.4: parse at "\n" or 4 KB).
     public static let maxLineBytes = 4096
 
+    /// How long a control connection may stay open waiting for the handler to
+    /// answer before the server closes it. This is the server's own safety
+    /// net — the caller has its own, shorter deadline — and it exists so a
+    /// handler that never calls back cannot leak file descriptors. It runs on
+    /// the socket queue, which is not the main queue, so a wedged UI thread
+    /// does not disable it.
+    public static let controlReplyReapAfter: TimeInterval = 10
+
+    /// Answers a control frame. Installed by the composition root; nil in the
+    /// bare pipe (caff-smoke, the plain-delivery tests), where control frames
+    /// are declined immediately rather than left to time out.
+    ///
+    /// The handler is handed the request and a completion it must call exactly
+    /// once with the verdict. Calling it late is fine; never calling it is
+    /// survivable (see `controlReplyReapAfter`) and is precisely the "wedged"
+    /// case the caller is trying to detect.
+    public var controlHandler: (@Sendable (ControlRequest, @escaping @Sendable (Bool) -> Void) -> Void)?
+
     /// ~/Library/Application Support/Caffeinate/agent.sock (plan 02 §1.4).
     public static var defaultSocketPath: String {
         (NSHomeDirectory() as NSString)
@@ -64,14 +89,24 @@ public final class HookSocketServer: @unchecked Sendable {
 
     private final class Connection {
         let fd: Int32
+        /// Monotonic identity. File descriptors are recycled aggressively, so a
+        /// late control reply must not be able to land on whatever connection
+        /// happens to hold that number by then.
+        let token: UInt64
         let source: DispatchSourceRead
         var buffer = Data()
+        /// Set once a control frame has been handed to the handler: the
+        /// connection stays open until the reply is written or reaped.
+        var awaitingControlReply = false
 
-        init(fd: Int32, source: DispatchSourceRead) {
+        init(fd: Int32, token: UInt64, source: DispatchSourceRead) {
             self.fd = fd
+            self.token = token
             self.source = source
         }
     }
+
+    private var nextConnectionToken: UInt64 = 0
 
     public init(socketPath: String = HookSocketServer.defaultSocketPath) {
         self.socketPath = socketPath
@@ -230,7 +265,8 @@ public final class HookSocketServer: @unchecked Sendable {
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK)
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
-        let connection = Connection(fd: fd, source: source)
+        nextConnectionToken += 1
+        let connection = Connection(fd: fd, token: nextConnectionToken, source: source)
         connections[fd] = connection
         source.setEventHandler { [weak self] in self?.readFromConnection(connection) }
         source.setCancelHandler { close(fd) }
@@ -244,22 +280,24 @@ public final class HookSocketServer: @unchecked Sendable {
             if bytesRead > 0 {
                 connection.buffer.append(contentsOf: chunk[0..<bytesRead])
                 if let newlineIndex = connection.buffer.firstIndex(of: 0x0A) {
-                    deliver(line: Data(connection.buffer.prefix(upTo: newlineIndex)))
-                    closeConnection(connection)
+                    handle(line: Data(connection.buffer.prefix(upTo: newlineIndex)), on: connection)
                     return
                 }
                 if connection.buffer.count >= Self.maxLineBytes {
                     // 4 KB without a newline: parse what we have and move on.
-                    deliver(line: connection.buffer)
-                    closeConnection(connection)
+                    handle(line: connection.buffer, on: connection)
                     return
                 }
                 continue
             }
             if bytesRead == 0 {
                 // EOF without a trailing newline: tolerate, parse the buffer.
+                // A connection already waiting on a control reply keeps its fd
+                // until the reply or the reap — writing then fails harmlessly.
+                if connection.awaitingControlReply { return }
                 if !connection.buffer.isEmpty {
-                    deliver(line: connection.buffer)
+                    handle(line: connection.buffer, on: connection)
+                    return
                 }
                 closeConnection(connection)
                 return
@@ -274,6 +312,72 @@ public final class HookSocketServer: @unchecked Sendable {
     private func closeConnection(_ connection: Connection) {
         connections.removeValue(forKey: connection.fd)
         connection.source.cancel() // cancel handler closes the fd
+    }
+
+    /// One complete line has arrived. Control frames take the answering path
+    /// and keep the connection open; everything else is a hook frame and keeps
+    /// the fire-and-forget contract (parse, close, no reply).
+    private func handle(line: Data, on connection: Connection) {
+        if handleControlIfNeeded(line: line, on: connection) { return }
+        deliver(line: line)
+        closeConnection(connection)
+    }
+
+    /// True when `line` was a control frame and this connection is now owned by
+    /// the control path. A hook frame — which never carries a `control` key —
+    /// returns false and falls through untouched.
+    private func handleControlIfNeeded(line: Data, on connection: Connection) -> Bool {
+        guard let request = ControlRequest(jsonLine: line) else { return false }
+        guard let controlHandler else {
+            // Nobody is listening for control verbs in this process. Say so,
+            // immediately: an unanswered request is the one outcome the caller
+            // cannot act on.
+            reply(ControlResponse(control: request.control, ok: false), on: connection)
+            return true
+        }
+
+        connection.awaitingControlReply = true
+        let fd = connection.fd
+        let token = connection.token
+        queue.asyncAfter(deadline: .now() + Self.controlReplyReapAfter) { [weak self] in
+            guard let self, let pending = self.pendingConnection(fd: fd, token: token),
+                  pending.awaitingControlReply else { return }
+            self.logger.error("control reply never arrived; reaping connection")
+            self.closeConnection(pending)
+        }
+
+        controlHandler(request) { [weak self] ok in
+            guard let self else { return }
+            self.queue.async {
+                guard let pending = self.pendingConnection(fd: fd, token: token) else { return }
+                self.reply(ControlResponse(control: request.control, ok: ok), on: pending)
+            }
+        }
+        return true
+    }
+
+    /// The connection still holding `fd`, but only if it is the same one that
+    /// asked — see `Connection.token`. Runs on `queue`.
+    private func pendingConnection(fd: Int32, token: UInt64) -> Connection? {
+        guard let connection = connections[fd], connection.token == token else { return nil }
+        return connection
+    }
+
+    /// Writes one answer line and closes. Runs on `queue`.
+    private func reply(_ response: ControlResponse, on connection: Connection) {
+        connection.awaitingControlReply = false
+        if let data = response.encodedLineData() {
+            data.withUnsafeBytes { raw in
+                var offset = 0
+                while offset < raw.count {
+                    let written = write(connection.fd, raw.baseAddress!.advanced(by: offset), raw.count - offset)
+                    if written > 0 { offset += written; continue }
+                    if written < 0, errno == EINTR { continue }
+                    break // peer gone or would block: nothing useful left to do
+                }
+            }
+        }
+        closeConnection(connection)
     }
 
     private func deliver(line: Data) {

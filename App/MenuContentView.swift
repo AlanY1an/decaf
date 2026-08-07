@@ -1,5 +1,4 @@
-// MenuContentView — the `.menu`-style menu content (plan 04 §3), plus
-// MenuTextFormatter, the pure text-formatting functions behind every menu string.
+// MenuContentView — the `.menu`-style menu content (plan 04 §3).
 //
 // `.menu` constraints honored here:
 // - Standard controls only: Button / Toggle / Divider / Text / Menu.
@@ -7,142 +6,14 @@
 //   open — therefore every expiry string uses an ABSOLUTE time ("Until 6:32 PM",
 //   Do-Not-Disturb style), never a countdown (plan 04 §3 / review decision R7).
 //
-// All user-visible strings live in MenuTextFormatter (unit-testable pure
-// functions), never inline in the view (plan 04 step 3 acceptance).
+// This file is assembly only. Every user-visible string comes from
+// MenuTextFormatter (pure, unit-tested next door) or from CaffeinateCore's copy
+// owners, never inline here (plan 04 step 3 acceptance).
 
 import AppKit
 import SwiftUI
 import CaffeinateCore
 import HookWire
-
-// MARK: - Manual presets (plan 04 §3: fixed, not editable)
-
-/// The fixed "Keep For…" presets (5/15/30 min, 1/2/5 h) plus Indefinitely.
-/// Shared by the menu submenu and the General settings "default duration" popup.
-enum ManualPreset: CaseIterable, Hashable {
-    case infinite
-    case fiveMinutes
-    case fifteenMinutes
-    case thirtyMinutes
-    case oneHour
-    case twoHours
-    case fiveHours
-
-    var mode: ManualMode {
-        switch self {
-        case .infinite: return .infinite
-        case .fiveMinutes: return .duration(5 * 60)
-        case .fifteenMinutes: return .duration(15 * 60)
-        case .thirtyMinutes: return .duration(30 * 60)
-        case .oneHour: return .duration(60 * 60)
-        case .twoHours: return .duration(2 * 60 * 60)
-        case .fiveHours: return .duration(5 * 60 * 60)
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .infinite: return "Indefinitely"
-        case .fiveMinutes: return "5 Minutes"
-        case .fifteenMinutes: return "15 Minutes"
-        case .thirtyMinutes: return "30 Minutes"
-        case .oneHour: return "1 Hour"
-        case .twoHours: return "2 Hours"
-        case .fiveHours: return "5 Hours"
-        }
-    }
-
-    static func matching(_ mode: ManualMode) -> ManualPreset? {
-        allCases.first { $0.mode == mode }
-    }
-}
-
-// MARK: - MenuTextFormatter (pure functions; plan 04 step 3)
-
-enum MenuTextFormatter {
-    /// Max agent session rows before folding (plan 04 §3).
-    static let maxSessionRows = 5
-
-    /// Locale-aware short time, e.g. "6:32 PM". One formatter for the whole app,
-    /// in CaffeinateCore.
-    static func timeString(_ date: Date) -> String {
-        MenuCopy.timeString(date)
-    }
-
-    // MARK: Status line (plan 04 §3 table; priority mirrors the icon)
-
-    /// The status line. The rule table and its copy live in CaffeinateCore's
-    /// `MenuCopy`, where they are unit-tested — including the case this menu got
-    /// wrong for a long time: a file-activity (no hooks) hold is a hold, and
-    /// must never render as "Idle — not preventing sleep".
-    static func statusLine(for s: AppStateSnapshot, now: Date = Date()) -> String {
-        MenuCopy.statusLine(for: s, now: now)
-    }
-
-    // MARK: Session rows
-
-    static func sessionLine(for session: AgentSessionSummary, now: Date = Date()) -> String {
-        switch session.phase {
-        case .working:
-            return "\(session.projectName) — working for \(durationText(since: session.startedAt, now: now))"
-        case .waitingPermission:
-            return "\(session.projectName) — waiting for permission"
-        case .graceIdle:
-            return "\(session.projectName) — grace period"
-        }
-    }
-
-    static func overflowLine(hiddenCount: Int) -> String {
-        "\(hiddenCount) more sessions…"
-    }
-
-    static func durationText(since start: Date, now: Date) -> String {
-        let minutes = max(1, Int(now.timeIntervalSince(start) / 60))
-        if minutes < 60 { return "\(minutes) min" }
-        let hours = minutes / 60
-        let remainder = minutes % 60
-        return remainder == 0 ? "\(hours) hr" : "\(hours) hr \(remainder) min"
-    }
-
-    // MARK: "Until HH:MM" items (dates come from CaffeinateCore.UntilOptions)
-
-    /// Title of the submenu that lets the time be picked here rather than in
-    /// Settings. Ellipsis, like "Keep For…": this app spells a submenu that
-    /// opens onto choices the same way throughout.
-    static let untilSubmenuTitle = "Until\u{2026}"
-
-    /// "Until 6:00 PM", or "Until 1:00 AM Tomorrow" once the deadline has
-    /// crossed midnight. Absolute, never a countdown — the menu does not
-    /// refresh while it is open.
-    ///
-    /// The date math (which hours, which day, DST) is `UntilOptions` in Core,
-    /// where it is unit-tested; this function is only the sentence.
-    static func untilItemTitle(_ option: UntilOption) -> String {
-        let time = timeString(option.deadline)
-        return option.isTomorrow ? "Until \(time) Tomorrow" : "Until \(time)"
-    }
-
-    // MARK: Detection precision summary (R12: highest precision among active agents)
-
-    /// Both of these live in `MenuCopy` (CaffeinateCore) so the app target,
-    /// which has no test bundle, keeps only the assembly.
-    static func summaryPrecision(for s: AppStateSnapshot) -> DetectionPrecision? {
-        MenuCopy.summaryPrecision(for: s)
-    }
-
-    static func precisionNote(for s: AppStateSnapshot) -> MenuCopy.PrecisionNote? {
-        MenuCopy.precisionNote(for: s)
-    }
-
-    // MARK: Accessibility
-
-    /// Status item accessibility label, updated with the icon state (plan 04 §4).
-    /// Same owner as the icon's own `accessibilityDescription`, so the label a
-    /// VoiceOver user hears cannot drift from the image they are hearing about.
-    static func accessibilityLabel(for s: AppStateSnapshot) -> String {
-        MenuCopy.accessibilityLabel(for: s)
-    }
-}
 
 // MARK: - MenuContentView (plan 04 §3 structure, top to bottom)
 

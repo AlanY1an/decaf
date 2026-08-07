@@ -17,6 +17,18 @@ public struct UsageOverview: Equatable, Sendable {
     public var quotaFiveHour: QuotaState.Window?
     public var quotaSevenDay: QuotaState.Window?
     public var quotaProvenance: QuotaState.Provenance
+
+    public init(
+        usage: UsageSnapshot,
+        quotaFiveHour: QuotaState.Window?,
+        quotaSevenDay: QuotaState.Window?,
+        quotaProvenance: QuotaState.Provenance
+    ) {
+        self.usage = usage
+        self.quotaFiveHour = quotaFiveHour
+        self.quotaSevenDay = quotaSevenDay
+        self.quotaProvenance = quotaProvenance
+    }
 }
 
 public actor UsageMeter {

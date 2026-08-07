@@ -21,6 +21,12 @@ public struct UsageBlock: Equatable, Sendable {
     public var start: Date
     public var end: Date
     public var tokens: TokenTotals
+
+    public init(start: Date, end: Date, tokens: TokenTotals) {
+        self.start = start
+        self.end = end
+        self.tokens = tokens
+    }
 }
 
 public struct SessionWaterline: Equatable, Sendable {
@@ -33,6 +39,14 @@ public struct SessionWaterline: Equatable, Sendable {
     public var usedFraction: Double {
         guard contextLimit > 0 else { return 0 }
         return min(1, Double(contextTokens) / Double(contextLimit))
+    }
+
+    public init(sessionID: String, model: String, contextTokens: Int, contextLimit: Int, timestamp: Date) {
+        self.sessionID = sessionID
+        self.model = model
+        self.contextTokens = contextTokens
+        self.contextLimit = contextLimit
+        self.timestamp = timestamp
     }
 }
 
@@ -48,6 +62,18 @@ public struct UsageSnapshot: Equatable, Sendable {
     public var sevenDayTokens: TokenTotals
     /// Most-recent first.
     public var sessions: [SessionWaterline]
+
+    public init(
+        today: TokenTotals, todayCostUSD: Double?, todayHasUnpricedModels: Bool,
+        activeBlock: UsageBlock?, sevenDayTokens: TokenTotals, sessions: [SessionWaterline]
+    ) {
+        self.today = today
+        self.todayCostUSD = todayCostUSD
+        self.todayHasUnpricedModels = todayHasUnpricedModels
+        self.activeBlock = activeBlock
+        self.sevenDayTokens = sevenDayTokens
+        self.sessions = sessions
+    }
 }
 
 public struct UsageLedgerState: Codable, Equatable, Sendable {

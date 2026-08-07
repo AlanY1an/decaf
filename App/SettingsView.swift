@@ -335,6 +335,37 @@ struct AgentsSettingsTab: View {
                 SectionFooter(integrationFooter)
             }
 
+            // The statusline quota bridge (plan 09 M3c). Separate consent from
+            // hooks: it touches a different key of the same file, and wraps a
+            // command the user may already have. Only offered once Claude Code
+            // is actually found.
+            if integrations.claudeStatus.agentDetected {
+                Section {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Usage Statusline")
+                            Text(integrations.claudeStatus.statuslineInstalled
+                                 ? "Installed — official rate-limit numbers flow to the menu."
+                                 : "Reads Claude's official rate-limit numbers.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if integrations.claudeStatus.statuslineInstalled {
+                            Button("Uninstall") { integrations.uninstallStatusline() }
+                        } else {
+                            Button("Install") { integrations.installStatusline() }
+                        }
+                    }
+                } footer: {
+                    SectionFooter(
+                        "Sets Claude Code's status line to Decaf's helper. A status line "
+                        + "you already have keeps working — Decaf runs it and passes its "
+                        + "output through unchanged. Uninstall restores your original."
+                    )
+                }
+            }
+
             // The same switch that is in the menu, in the same words — one
             // control, one name. It is here because a user who turned it off
             // from the menu needs somewhere fixed to find it again, and because

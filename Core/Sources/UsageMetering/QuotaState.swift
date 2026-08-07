@@ -11,6 +11,11 @@ public struct QuotaState: Equatable, Sendable {
     public struct Window: Equatable, Sendable {
         public var usedPercentage: Double
         public var resetsAt: Date?
+
+        public init(usedPercentage: Double, resetsAt: Date?) {
+            self.usedPercentage = usedPercentage
+            self.resetsAt = resetsAt
+        }
     }
 
     public enum Provenance: Equatable, Sendable {

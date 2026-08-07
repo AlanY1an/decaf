@@ -27,6 +27,8 @@ targets:
         product: DecafComposition
       - package: DecafCore
         product: HookWire
+      - package: DecafCore
+        product: UsageMetering
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.alany1an.decaf

@@ -230,6 +230,8 @@ struct ClaudeCodeStatus: Equatable {
     var hooksInstalled: Bool
     /// Probe found our entries drifted/missing (plan 03 `broken`); repair = re-install.
     var needsRepair: Bool
+    /// The statusLine slot holds our quota bridge (plan 09 M3).
+    var statuslineInstalled: Bool = false
 }
 
 /// Local mirror of plan 03's `PlannedChange` — drives the install confirmation
@@ -254,6 +256,9 @@ protocol AgentIntegrationsProviding: AnyObject {
     func plannedChanges() -> [PlannedChangeSummary]
     func installClaudeCodeHooks() throws
     func uninstallClaudeCodeHooks() throws
+    /// The statusline quota bridge (plan 09 M3) — separate consent from hooks.
+    func installStatusline() throws
+    func uninstallStatusline() throws
     /// "Remove all integrations…" (review decision R14; Agents tab only, never the menu).
     func removeAllIntegrations() throws
 }
@@ -319,6 +324,14 @@ final class AgentIntegrationsModel: ObservableObject {
         run { try provider.uninstallClaudeCodeHooks() }
     }
 
+    func installStatusline() {
+        run { try provider.installStatusline() }
+    }
+
+    func uninstallStatusline() {
+        run { try provider.uninstallStatusline() }
+    }
+
     func removeAllIntegrations() {
         run { try provider.removeAllIntegrations() }
     }
@@ -353,11 +366,11 @@ final class ClaudeIntegrationsProvider: AgentIntegrationsProviding {
     /// locked, so the hop is safe; nothing mutable crosses but the answer.
     func probeClaudeCode() async -> ClaudeCodeStatus {
         let integration = self.integration
-        let result = await Task.detached(priority: .userInitiated) {
-            integration.probe()
+        let (result, statusline) = await Task.detached(priority: .userInitiated) {
+            (integration.probe(), integration.statuslineInstalled())
         }.value
 
-        let status: ClaudeCodeStatus
+        var status: ClaudeCodeStatus
         switch result {
         case .notDetected:
             status = ClaudeCodeStatus(
@@ -387,6 +400,7 @@ final class ClaudeIntegrationsProvider: AgentIntegrationsProviding {
         // one Bool is what used to report the zero-config fallback for a live
         // L1 layer, dropping the session-precise hold sources with it. The
         // mapping is `HooksInstallState(probe:)` in Core, where it is tested.
+        status.statuslineInstalled = statusline
         root.setHooksInstallState(HooksInstallState(probe: result), for: .claudeCode)
         // The one thing the detection layer cannot see for itself: the agent's
         // BINARY is on this Mac. On a machine where Claude Code is installed but
@@ -421,9 +435,18 @@ final class ClaudeIntegrationsProvider: AgentIntegrationsProviding {
         root.setHooksInstalled(false, for: .claudeCode)
     }
 
+    func installStatusline() throws {
+        try integration.installStatusline()
+    }
+
+    func uninstallStatusline() throws {
+        try integration.uninstallStatusline()
+    }
+
     func removeAllIntegrations() throws {
         // MVP: Claude Code is the only integration (plan 03).
         try uninstallClaudeCodeHooks()
+        try uninstallStatusline()
     }
 }
 

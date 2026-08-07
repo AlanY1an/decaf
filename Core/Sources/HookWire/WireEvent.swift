@@ -37,6 +37,9 @@ public struct WireEvent: Equatable, Sendable, Codable {
     public var matcher: String?
     /// Unix timestamp (seconds since epoch, fractional) when the bridge sent the frame.
     public var ts: Double
+    /// Official rate-limit numbers; only on `Statusline` frames (plan 09 M2).
+    /// Optional so every pre-M2 frame and receiver keeps working unchanged.
+    public var quota: QuotaPayload?
 
     enum CodingKeys: String, CodingKey {
         case v
@@ -47,6 +50,7 @@ public struct WireEvent: Equatable, Sendable, Codable {
         case cwd
         case matcher
         case ts
+        case quota
     }
 
     public init(
@@ -57,7 +61,8 @@ public struct WireEvent: Equatable, Sendable, Codable {
         ppid: Int32,
         cwd: String? = nil,
         matcher: String? = nil,
-        ts: Double
+        ts: Double,
+        quota: QuotaPayload? = nil
     ) {
         self.v = v
         self.agent = agent
@@ -67,6 +72,7 @@ public struct WireEvent: Equatable, Sendable, Codable {
         self.cwd = cwd
         self.matcher = matcher
         self.ts = ts
+        self.quota = quota
     }
 
     /// Convenience initializer for frames about a known agent.

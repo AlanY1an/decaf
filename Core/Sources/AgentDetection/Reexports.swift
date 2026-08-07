@@ -10,8 +10,3 @@ import HookWire
 
 public typealias AgentKind = HookWire.AgentKind
 public typealias DetectionPrecision = CaffeinateCore.DetectionPrecision
-/// The hold mode and its honesty companion live in CaffeinateCore for the same
-/// reason `DetectionPrecision` does: `SettingsStore` persists the one and
-/// `AppStateSnapshot` displays both, and neither may import AgentDetection.
-public typealias AgentHoldMode = CaffeinateCore.AgentHoldMode
-public typealias RunningModeCoverage = CaffeinateCore.RunningModeCoverage

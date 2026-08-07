@@ -7,8 +7,8 @@
 // 1. **Which sessions are eligible, and what happens to them.** Only `.working`
 //    is, and it is DOWNGRADED to `.stuck` with a marker — never deleted. The
 //    record survives, the hold does not. `.stuck` rather than `.idle` because
-//    the outcome must hold in NO `AgentHoldMode`, and `.idle` holds in
-//    `.whileRunning`.
+//    the two are different claims: `.idle` is the agent reporting it is at its
+//    prompt, `.stuck` is the app admitting it gave up on the record.
 // 2. **Revival.** A heartbeat, any hook event, or a transcript write puts a
 //    downgraded session straight back, and the event then applies on top of the
 //    restored state (a `Stop` opens grace, an `idle_prompt` lands on idle).
@@ -142,8 +142,8 @@ private func session(_ id: String, in registry: SessionRegistry) -> AgentSession
 
         let after = session("lost-stop", in: registry)
         #expect(after != nil, "downgrade, never delete — the record has to survive to be revived")
-        // `.stuck`, not `.idle`: the outcome has to hold in NO hold mode, and
-        // `.idle` holds in `AgentHoldMode.whileRunning` (see AgentHoldModeTests).
+        // `.stuck`, not `.idle`: an admission of ignorance, not an
+        // observation, and only the former is undone by the next sign of life.
         #expect(after?.state == .stuck)
         #expect(after?.stuckDowngradedAt == clock.now)
         #expect(!registry.isHolding(), "the Mac is allowed to sleep again")
@@ -166,10 +166,10 @@ private func session(_ id: String, in registry: SessionRegistry) -> AgentSession
         #expect(session("s", in: registry)?.state == .stuck)
     }
 
-    /// Only WORKING is eligible. GRACE has a deadline of its own, IDLE holds
-    /// nothing, and WAITING_PERMISSION's unbounded hold is upstream-locked
-    /// semantics with the battery floor as its backstop (plan 02 §1.1) — this
-    /// feature does not get to reinterpret it.
+    /// Only WORKING is eligible. GRACE has a deadline of its own and IDLE
+    /// holds nothing, so neither needs — or may have — a contradiction test
+    /// applied to it. A permission prompt lands in GRACE and is covered by the
+    /// same row.
     @Test func onlyWorkingSessionsAreEligible() {
         let clock = StuckClock()
         let registry = makeRegistry(clock: clock, sampler: idleSampler())
@@ -182,9 +182,9 @@ private func session(_ id: String, in registry: SessionRegistry) -> AgentSession
         let downgrades = registry.reconcile()
 
         #expect(downgrades.isEmpty)
-        #expect(session("permission", in: registry)?.state == .waitingPermission)
+        // Both grace windows expired on their own schedule, as they always did.
+        #expect(session("permission", in: registry)?.state == .idle)
         #expect(session("permission", in: registry)?.stuckDowngradedAt == nil)
-        // The grace window expired on its own schedule, as it always did.
         #expect(session("graced", in: registry)?.state == .idle)
         #expect(session("graced", in: registry)?.stuckDowngradedAt == nil)
     }
@@ -481,6 +481,34 @@ private func session(_ id: String, in registry: SessionRegistry) -> AgentSession
         #expect(session("s", in: registry)?.state == .idle)
         #expect(session("s", in: registry)?.stuckDowngradedAt == nil)
         #expect(!registry.isHolding())
+    }
+
+    /// A wait signal must never revive a session the four witnesses condemned.
+    /// It arrives without a transcript write to prove it is current — and a
+    /// real write revives the session properly, through `noteTranscriptWrite`.
+    ///
+    /// This is the one place `AgentSession.isHolding`'s `.stuck` short-circuit
+    /// is load-bearing: the state machine would otherwise let `hasLiveWait`
+    /// hand a condemned record its hold straight back.
+    @Test func aWaitCannotResurrectAStuckSession() {
+        let clock = StuckClock()
+        let registry = makeRegistry(clock: clock, sampler: idleSampler())
+        _ = downgraded(clock: clock, registry: registry)
+        #expect(!registry.isHolding())
+
+        registry.applyWaitSignal(
+            WaitSignal(
+                sessionID: "s",
+                waitUntil: clock.now.addingTimeInterval(600),
+                source: .monitor
+            ),
+            now: clock.now
+        )
+        #expect(
+            !registry.isHolding(),
+            "a condemned record must not be revived by a wait alone"
+        )
+        #expect(session("s", in: registry)?.state == .stuck)
     }
 
     /// `SessionEnd` after a downgrade removes the record, as it always does.

@@ -545,8 +545,7 @@ private final class FakeStreamHandle: FSEventStreamHandle, @unchecked Sendable {
     @Test func precisionRankOrdersTheLayers() {
         #expect(DetectionPrecision.hooks.rank > DetectionPrecision.hooksPartial.rank)
         #expect(DetectionPrecision.hooksPartial.rank > DetectionPrecision.fileActivity.rank)
-        #expect(DetectionPrecision.fileActivity.rank > DetectionPrecision.processOnly.rank)
-        #expect(DetectionPrecision.processOnly.rank > DetectionPrecision.unavailable.rank)
+        #expect(DetectionPrecision.fileActivity.rank > DetectionPrecision.unavailable.rank)
         #expect(!DetectionPrecision.fileActivity.deliversHookEvents)
         #expect(!DetectionPrecision.hooks.suggestsHookRepair)
     }

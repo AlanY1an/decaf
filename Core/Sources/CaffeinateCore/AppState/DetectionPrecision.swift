@@ -28,8 +28,6 @@ public enum DetectionPrecision: Sendable, Equatable, Hashable {
     case hooksPartial
     /// L2 — FSEvents file-activity fallback ("fallback mode").
     case fileActivity
-    /// L3 — process/CPU sampling only (V1.x).
-    case processOnly
     /// Agent not installed / no trace found.
     case unavailable
 }
@@ -53,10 +51,9 @@ extension DetectionPrecision {
     /// exhaustive switch that has to be revisited every time a layer is added.
     public var rank: Int {
         switch self {
-        case .hooks: return 4
-        case .hooksPartial: return 3
-        case .fileActivity: return 2
-        case .processOnly: return 1
+        case .hooks: return 3
+        case .hooksPartial: return 2
+        case .fileActivity: return 1
         case .unavailable: return 0
         }
     }

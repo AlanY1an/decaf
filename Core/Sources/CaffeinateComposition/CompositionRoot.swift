@@ -72,19 +72,10 @@ public final class CompositionRoot: ObservableObject {
     private var appliedAgentSources: Set<HoldSourceID> = []
     /// Latest detection-derived UI rows / precision map.
     private var sessionSummaries: [AgentSessionSummary] = []
-    /// Agents currently held by an L2/L3 fallback source. These produce no
+    /// Agents currently held by an L2 fallback source. These produce no
     /// session rows (file activity sees the agent, not its turns), so without
     /// them the UI would have a held assertion and nothing to attribute it to.
     private var fallbackAgents: [AgentKind] = []
-    /// Agents held only because `AgentHoldMode.whileRunning` is in force: an
-    /// idle session at its prompt, or a bare matched process. Always empty in
-    /// the default mode.
-    private var runningIdleAgents: [AgentKind] = []
-    /// The subset of the above standing on a process match alone. The menu says
-    /// something weaker about these, because a process match cannot see a turn.
-    private var processOnlyRunningAgents: [AgentKind] = []
-    private var holdMode: AgentHoldMode = SettingsStore.Defaults.agentHoldMode
-    private var runningModeCoverage: [AgentKind: RunningModeCoverage] = [:]
     private var precision: [AgentKind: DetectionPrecision] = [:]
     /// In-memory mirror of `SettingsStore.hasEverDetectedAgent`, so the latch is
     /// read once at init and written exactly once — `republish()` runs on every
@@ -94,10 +85,6 @@ public final class CompositionRoot: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
     private var started = false
-    /// L3 process enumeration, or nil when none was injected (every assembly
-    /// except the app target). Nil means `.whileRunning` can still be delivered
-    /// from hook sessions, and honestly reports `.activityOnly` when it cannot.
-    private let scanner: ProcessScanner?
 
     // MARK: - Init
 
@@ -120,14 +107,6 @@ public final class CompositionRoot: ObservableObject {
         // root and the asserter.
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
-        // Plan 02 §3's L3 enumeration, and the reason `AgentHoldMode.whileRunning`
-        // means what it says without hooks installed. Defaults to nil — no
-        // scanning — for the same reason `userNotifier` does: the real
-        // enumerator reads this machine's actual process table, and a package
-        // that is also linked into `swift test` must not have its results
-        // depend on whether the developer happens to have `claude` open. The
-        // app target injects `DarwinProcessEnumerator()`.
-        processEnumerator: (any ProcessEnumerating)? = nil,
         // The app's only notification channel (plan 04's zero-notification rule
         // narrowed, REVIEW-DECISIONS 2026-08-06). Defaults to nil — silent —
         // because the concrete `UNUserNotificationCenter` adapter needs an
@@ -137,7 +116,6 @@ public final class CompositionRoot: ObservableObject {
     ) {
         self.settings = settings
         self.displaySleeper = displaySleeper
-        self.scanner = processEnumerator.map { ProcessScanner(enumerator: $0) }
         self.everDetectedAgent = settings.hasEverDetectedAgent
 
         let tuning = PowerTuning(
@@ -147,11 +125,9 @@ public final class CompositionRoot: ObservableObject {
         self.engine = PowerStateEngine(asserter: asserter, tuning: tuning)
         self.manualHold = ManualHoldController(engine: engine)
         self.socketServer = HookSocketServer(socketPath: socketPath)
-        self.holdMode = settings.agentHoldMode
         self.coordinator = DetectionCoordinator(
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
-            holdMode: settings.agentHoldMode,
             stuckThreshold: stuckThreshold,
             store: sessionsStore,
             watcher: watcher,
@@ -229,55 +205,8 @@ public final class CompositionRoot: ObservableObject {
             }
         })
 
-        // L3 process scan (plan 02 §3). Only runs while it can tell us
-        // something — `.whileRunning` selected and some agent not delivering
-        // hook events — so a Mac in the default mode, or one with hooks
-        // installed everywhere, pays nothing at all.
-        if scanner != nil {
-            pumpTasks.append(Task { [weak self] in
-                while !Task.isCancelled {
-                    guard let self else { return }
-                    await self.scanProcessesIfUseful()
-                    try? await Task.sleep(
-                        nanoseconds: UInt64(CompositionRoot.processScanInterval * 1_000_000_000)
-                    )
-                }
-            })
-        }
-
         republish()
         return .started
-    }
-
-    /// Cadence of the L3 scan (plan 02 §3).
-    ///
-    /// A full 1025-process enumeration measures at 2.69 ms, so this is chosen
-    /// against latency rather than cost: 5 s is how long a user might wait to
-    /// see the menu notice an agent they just closed. It deliberately does NOT
-    /// pull the registry sweep onto its cadence — `noteAgentProcesses` skips
-    /// the reconcile when a scan repeats the previous answer, which is nearly
-    /// always — and it sits an order of magnitude above the CPU sampler's 1 s
-    /// `minimumSampleSpacing`, so scanning cannot starve the stuck detector's
-    /// third witness by sampling it too often to judge.
-    static let processScanInterval: TimeInterval = 5
-
-    /// One scan, if a scan would tell us anything (`ProcessScanner.shouldScan`).
-    ///
-    /// When it would not, nothing is reported — and the coordinator's
-    /// `processScanStaleAfter` then retires the last report on its own. That is
-    /// what makes switching back to `.whileWorking` safe without any explicit
-    /// teardown: a presence hold cannot outlive the scanning that justified it.
-    private func scanProcessesIfUseful() async {
-        guard let scanner,
-              ProcessScanner.shouldScan(mode: holdMode, precision: precision)
-        else { return }
-        let now = Date()
-        // Off the main actor: the enumeration is a syscall loop, and this class
-        // is what the menu reads.
-        let present = await Task.detached(priority: .utility) {
-            scanner.presentAgents(now: now)
-        }.value
-        await coordinator.noteAgentProcesses(present, at: now)
     }
 
     public func stop() {
@@ -311,25 +240,6 @@ public final class CompositionRoot: ObservableObject {
         ))
         let coordinator = coordinator
         Task { await coordinator.setGracePeriod(gracePeriod) }
-        // The hold mode has exactly the same defect surface as the grace period
-        // and therefore exactly the same treatment: read on every settings
-        // change, pushed into the layer that decides, and re-evaluated against
-        // the sessions already registered rather than only against the next
-        // ones. Flipping to "while an agent is running" must adopt the agent
-        // that is idle at its prompt RIGHT NOW — that session may never emit
-        // another hook event — and flipping back must drop it immediately.
-        let mode = settings.agentHoldMode
-        holdMode = mode
-        Task { await coordinator.setHoldMode(mode) }
-        // Scan straight away rather than waiting up to `processScanInterval`.
-        // Without this, the Settings footer would spend the first seconds after
-        // the switch telling the user this Mac cannot see processes — which was
-        // true a moment ago and is about to stop being true. A control that
-        // slanders itself for five seconds is a smaller lie than the one this
-        // feature exists to remove, but it is the same kind.
-        if mode.holdsIdleAgents {
-            Task { [weak self] in await self?.scanProcessesIfUseful() }
-        }
         // The display policy is a setting too: changing it in the settings pane
         // must reach the holds that are already running.
         applyDisplayPolicyToLiveHolds(settings.defaultDisplayPolicy)
@@ -395,18 +305,6 @@ public final class CompositionRoot: ObservableObject {
             case .fallbackActivity:
                 desired.insert(.agentFallback(source.agent))
                 fallbacks.insert(source.agent)
-            case .agentProcess:
-                // Agent-granularity with no session behind it, which is exactly
-                // what `.agentFallback` already means to the engine, so it
-                // reuses that source id: two reasons for the same agent are one
-                // hold, and set semantics make the retraction come out right
-                // (the hold ends when the LAST reason does).
-                //
-                // It is deliberately NOT added to `fallbacks`. The menu words a
-                // fallback hold as "working", and this hold is the opposite
-                // claim — the agent is open and not working. Those agents go to
-                // `runningIdleAgents` below, which has its own sentence.
-                desired.insert(.agentFallback(source.agent))
             }
         }
 
@@ -431,7 +329,6 @@ public final class CompositionRoot: ObservableObject {
             let phase: SessionPhase
             switch session.state {
             case .working: phase = .working
-            case .waitingPermission: phase = .waitingPermission
             // A wait signal extends the deadline, never shortens it (plan 08),
             // so the row shows the instant the hold actually ends.
             case .grace(let until): phase = .graceIdle(until: max(until, session.waitUntil ?? until))
@@ -440,23 +337,10 @@ public final class CompositionRoot: ObservableObject {
                 // learnt from a transcript wait signal is idle *and* holding
                 // until its declared instant — showing no row for a hold the
                 // menu is displaying would be the worse lie.
-                //
-                // In `.whileRunning` an idle session holds with no deadline at
-                // all. `sessions` is the registry's HOLDING set, so reaching
-                // this line without a wait means the mode is what is holding it
-                // — `.runningIdle`, which is the one phase that prints no
-                // instant, because there is no instant to print.
-                //
-                // An idle session holding under `.whileRunning` produces no row
-                // either: every `SessionPhase` means "working, in one of three
-                // ways", and an agent parked at its prompt is none of them.
-                // Those holds are reported at agent granularity by
-                // `runningIdleAgents`, which the menu words as "open, not
-                // working".
                 guard let waitUntil = session.waitUntil else { return nil }
                 phase = .graceIdle(until: waitUntil)
             case .stuck:
-                // Holds in no mode; there is nothing to show and nothing to
+                // Holds nothing; there is nothing to show and nothing to
                 // explain. (The user already heard about it once, from the
                 // downgrade notification.)
                 return nil
@@ -476,14 +360,6 @@ public final class CompositionRoot: ObservableObject {
         // `.agentFallback` request was live in the engine while `agentSessions`
         // was empty, and both surfaces rendered that as "Idle".
         fallbackAgents = fallbacks.sorted { $0.rawValue < $1.rawValue }
-        // Agents held purely because they are OPEN — an idle session at its
-        // prompt, or a matched process with nothing else to say. Kept apart
-        // from `fallbackAgents` because the menu says "working" for those and
-        // that sentence is false here.
-        runningIdleAgents = output.runningOnlyAgents
-        processOnlyRunningAgents = output.processOnlyRunningAgents
-        holdMode = output.holdMode
-        runningModeCoverage = output.runningModeCoverage
         precision = output.precision
         republish()
     }
@@ -516,18 +392,14 @@ public final class CompositionRoot: ObservableObject {
             manual: manualState,
             agentSessions: sessionSummaries,
             fallbackAgents: fallbackAgents,
-            runningIdleAgents: runningIdleAgents,
-            processOnlyRunningAgents: processOnlyRunningAgents,
             safetyPause: safetyPause,
             precision: precision,
-            agentHoldMode: holdMode,
-            runningModeCoverage: runningModeCoverage,
             wantsHold: !engine.activeSources.isEmpty,
             effectiveDisplayPolicy: engine.effectiveDisplayPolicy,
             selectedDisplayPolicy: settings.defaultDisplayPolicy,
             hasEverDetectedAgent: everDetectedAgent
         )
-        // The latch, closed here rather than at each of the four places evidence
+        // The latch, closed here rather than at each of the places evidence
         // arrives: `hasLiveAgentEvidence` is defined on the snapshot, so this
         // reads the assembled state instead of re-deriving the predicate — and
         // every path that can produce agent evidence ends in a republish.

@@ -11,8 +11,10 @@ import HookWire
 /// from the registry.
 public enum SessionState: Equatable, Codable, Sendable {
     case working
-    case waitingPermission
-    /// Post-Stop grace window with an absolute wall-clock deadline.
+    /// Release grace window with an absolute wall-clock deadline. Armed by
+    /// `Stop` / `StopFailure` — and by a permission prompt, which is the agent
+    /// handing control back to the user just as surely as the end of a turn is
+    /// (see `SessionRegistry.signal(for:)`).
     case grace(until: Date)
     case idle
     /// The stuck detector found this `.working` record self-contradictory: all
@@ -20,31 +22,28 @@ public enum SessionState: Equatable, Codable, Sendable {
     /// `stuckThreshold` (no hook event, no heartbeat, no transcript write, no
     /// CPU, no live wait). The hold was released; the record survives.
     ///
-    /// **Why this is a state and not `.idle` plus a marker.** The downgrade
-    /// used to land on `.idle`, which was harmless while `.idle` meant "holds
-    /// nothing" unconditionally. `AgentHoldMode.whileRunning` changes that:
-    /// there `.idle` — an agent sitting at its prompt — DOES hold. Reusing
-    /// `.idle` for the downgrade would therefore have handed a stuck session
-    /// its immortal hold straight back in the new mode, which is precisely the
-    /// hole the stuck detector exists to close.
+    /// **Why this is a state and not `.idle` plus a marker.** The two meanings
+    /// are different claims about the agent, and only one of them is an
+    /// observation:
     ///
-    /// So the two meanings that were folded into `.idle` are separated, because
-    /// the mode makes them behave differently:
-    ///
-    /// - `.idle` — "the agent told us it is at its prompt". Real, reported,
-    ///   and evidence the agent is ALIVE. Holds in `.whileRunning`.
+    /// - `.idle` — "the agent told us it is at its prompt". Real, reported, and
+    ///   evidence the agent is ALIVE.
     /// - `.stuck` — "we gave up on a record we could no longer justify". An
-    ///   admission of ignorance, not an observation. Holds in NO mode.
+    ///   admission of ignorance, not an observation.
     ///
     /// Making it a case rather than a flag is deliberate: every exhaustive
-    /// switch over `SessionState` now has to answer for it at compile time,
-    /// which is the only way "a future mode must not accidentally hold a
-    /// zombie" survives contact with later edits.
+    /// switch over `SessionState` has to answer for it at compile time, which
+    /// is the only way "a zombie record must never be handed a hold back"
+    /// survives contact with later edits. It is also what lets
+    /// `AgentSession.isHolding` refuse a `.stuck` session outright — including
+    /// against a live wait signal, which would otherwise let a transcript line
+    /// that arrived without a write to prove it current revive a condemned
+    /// record.
     ///
-    /// **Terminal, but not final.** It is terminal in the sense that no mode
-    /// and no deadline can make it hold again. Any actual sign of life —
+    /// **Terminal, but not final.** It is terminal in the sense that no
+    /// deadline and no wait can make it hold again. Any actual sign of life —
     /// heartbeat, hook event, transcript write — restores `.working` in one
-    /// step (`SessionRegistry.undoStuckDowngrade`), exactly as before.
+    /// step (`SessionRegistry.undoStuckDowngrade`).
     case stuck
 }
 
@@ -96,14 +95,14 @@ public struct AgentSession: Equatable, Codable, Sendable {
     }
 
     /// Set when the stuck detector downgraded this session from `.working` to
-    /// `.idle`, and cleared the instant anything proves it alive again.
+    /// `.stuck`, and cleared the instant anything proves it alive again.
     ///
     /// The downgrade is the app admitting it can no longer justify a hold it is
     /// holding — all four witnesses of `StuckSessionDetector` agreed the
     /// `.working` record contradicts itself. Keeping the record (rather than
     /// removing it) and marking WHY is what makes being wrong cheap: this field
-    /// is the only difference between "idle because the agent said so" and
-    /// "idle because we gave up on it", and only the latter is undone on the
+    /// is the only difference between "quiet because the agent said so" and
+    /// "quiet because we gave up on it", and only the latter is undone on the
     /// next sign of life (`SessionRegistry.undoStuckDowngrade`).
     ///
     /// Invariant while non-nil: `state == .stuck`, because the downgrade only
@@ -114,8 +113,8 @@ public struct AgentSession: Equatable, Codable, Sendable {
     /// notification reports and what a later triage would want. It is also the
     /// migration handle: a `sessions.json` written before `.stuck` existed
     /// stores `.idle` plus this marker, and `SessionRegistry.restore` uses the
-    /// pair to rebuild the state (otherwise a relaunch in `.whileRunning` would
-    /// promote every previously-condemned session back into a hold).
+    /// pair to rebuild the state, so a record the detector condemned is not
+    /// read back after a relaunch as an ordinary idle session.
     ///
     /// Persisted, so a relaunch does not silently re-promote a session that was
     /// downgraded before the app restarted. Optional, so a `sessions.json`

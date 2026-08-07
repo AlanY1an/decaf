@@ -42,17 +42,6 @@ public enum DetectionDefaults {
     /// huge backlog can never monopolise the actor. Whatever is left is picked
     /// up by the next event or the next tick (plan 08 §性能).
     public static let maxTailReadRoundsPerEvent = 8
-    /// How long a process scan (plan 02 §3's `ProcessScanner`, pushed in via
-    /// `noteAgentProcesses`) stays believable.
-    ///
-    /// A presence report is a measurement with a timestamp, and a stale
-    /// measurement is not a weaker measurement — it is no measurement at all.
-    /// If the scanner stops reporting (it was never started, it crashed, the
-    /// app is running without one), `.whileRunning` must fall back to saying it
-    /// cannot see processes rather than holding forever on the last scan that
-    /// happened to find one. Twelve times the 5 s sampling cadence: far beyond
-    /// any scheduling jitter, far below any window a user would notice.
-    public static let processScanStaleAfter: TimeInterval = 60
 }
 
 public actor DetectionCoordinator {
@@ -96,11 +85,6 @@ public actor DetectionCoordinator {
     /// L2 per-agent last activity instant (FSEvents; V1.x adds L3 CPU signals
     /// into the same map — no separate window parameter).
     private var lastActivityAt: [AgentKind: Date] = [:]
-    /// Agents with at least one matched process at the last scan, and when that
-    /// scan happened. `nil` = no scanner has ever reported, which is a
-    /// different fact from "a scan found nothing" and must not be collapsed
-    /// onto it: the first is "we cannot see", the second is "we looked".
-    private var agentProcesses: (present: Set<AgentKind>, at: Date)?
     /// Watch-root existence per agent (drives §4 precision row 2).
     private var watchRootExists: [AgentKind: Bool] = [:]
     /// HooksInstallationInspector verdict per agent (§4 precision row 1).
@@ -130,10 +114,6 @@ public actor DetectionCoordinator {
         l2IdleWindow: TimeInterval = DetectionDefaults.l2IdleWindow,
         socketDegradeGrace: TimeInterval = DetectionDefaults.socketDegradeGrace,
         sweepInterval: TimeInterval = DetectionDefaults.sweepInterval,
-        // The factory default, restated here rather than only in SettingsStore:
-        // an assembly that forgets to pass the preference gets the SAFE mode,
-        // never the costly one.
-        holdMode: AgentHoldMode = .whileWorking,
         clock: @escaping @Sendable () -> Date = { Date() },
         livenessProbe: @escaping @Sendable (pid_t) -> Bool = { ProcessLiveness.isAlive($0) },
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
@@ -162,7 +142,6 @@ public actor DetectionCoordinator {
             // parser and the registry would disagree (plan 08 hard limit 2).
             waitCap: waitParser.waitCap,
             stuckThreshold: stuckThreshold,
-            holdMode: holdMode,
             clock: clock,
             isProcessAlive: livenessProbe,
             activitySampler: activitySampler
@@ -317,74 +296,6 @@ public actor DetectionCoordinator {
 
     /// The grace period currently in force (clamped to the registry's 0–600 s).
     public var currentGracePeriod: TimeInterval { gracePeriod }
-
-    /// Applies the "Keep awake while an agent is…" preference while the app is
-    /// running.
-    ///
-    /// Same shape and same reason as `setGracePeriod` above: a live switch has
-    /// to re-answer the hold question for the sessions that are ALREADY
-    /// registered, in both directions. Turning the mode on must adopt an agent
-    /// sitting idle at its prompt right now — not at its next hook event, which
-    /// for an idle session may never come — and turning it off must drop that
-    /// hold on the spot rather than at the next 30 s tick. The reconcile below
-    /// is what makes both true, and it also republishes `holdMode` and the
-    /// coverage map so the menu's wording changes with the behaviour.
-    public func setHoldMode(_ mode: AgentHoldMode, now: Date? = nil) {
-        guard registry.setHoldMode(mode) else { return }
-        reconcile(now: now ?? clock())
-    }
-
-    /// The hold mode currently in force.
-    public var currentHoldMode: AgentHoldMode { registry.holdMode }
-
-    // MARK: L3 inputs (plan 02 §3 — the process scanner's consumption seam)
-
-    /// The result of one full process-table scan: every agent kind with at
-    /// least one matching process alive right now.
-    ///
-    /// A push seam, exactly like `noteFileActivity` and for the same reason —
-    /// the scanner owns libproc, the timer and the name matching, and this
-    /// actor owns what a scan MEANS. Nothing here imports the scanner, so the
-    /// two can be built and tested independently.
-    ///
-    /// The argument is the complete result of one scan, not an increment. That
-    /// is what makes "the process disappeared" expressible at all (plan 02 §3:
-    /// a match count that falls to zero clears that agent's fallback hold
-    /// immediately rather than waiting out the idle window) — an agent absent
-    /// from the set is absent from the machine, and in `.whileRunning` its hold
-    /// ends on this call.
-    public func noteAgentProcesses(_ present: Set<AgentKind>, at date: Date? = nil) {
-        let now = date ?? clock()
-        // Scans are ordered measurements: a report older than the one already
-        // held is not news, and letting it through would let a queued scan
-        // resurrect a process that a newer scan saw exit.
-        if let existing = agentProcesses, existing.at > now { return }
-        // A repeat of the same answer is a heartbeat, not news. The timestamp
-        // still has to advance — it is the proof the scanner is alive, and
-        // `scannedAgents` retires a report that stops being refreshed — but
-        // reconciling on it would put the whole registry sweep (a `kill(2)` and
-        // a CPU sample per session) on the scan's cadence instead of the 30 s
-        // tick's, for an output that cannot have changed. The staleness
-        // boundary below still fires if the scanner ever stops.
-        let previous = agentProcesses
-        let unchanged = previous.map {
-            $0.present == present
-                && now.timeIntervalSince($0.at) < DetectionDefaults.processScanStaleAfter
-        } ?? false
-        agentProcesses = (present: present, at: now)
-        guard !unchanged else { return }
-        reconcile(now: max(now, clock()))
-    }
-
-    /// Agents seen by the most recent scan, or nil when no scan is current —
-    /// never scanned at all, or the last report is older than
-    /// `processScanStaleAfter`.
-    private func scannedAgents(now: Date) -> Set<AgentKind>? {
-        guard let agentProcesses else { return nil }
-        guard now.timeIntervalSince(agentProcesses.at) < DetectionDefaults.processScanStaleAfter
-        else { return nil }
-        return agentProcesses.present
-    }
 
     /// HooksInstallationInspector verdict (installed = our entries complete).
     ///
@@ -595,31 +506,7 @@ public actor DetectionCoordinator {
         if watchRootExists[agent] == true {
             return .fileActivity
         }
-        // Plan 02 §4 row 4: no config, no watch root, but the process is there.
-        // Reachable only once a scanner is pushing reports in; with none, this
-        // reads exactly as it did before (`.unavailable`).
-        if scannedAgents(now: now)?.contains(agent) == true {
-            return .processOnly
-        }
         return .unavailable
-    }
-
-    /// Plan 02 §4's honesty row for the hold mode: what the app can actually
-    /// see about this agent's PRESENCE, as opposed to its activity.
-    ///
-    /// Ordered by what answers the question rather than by precision rank.
-    /// Hooks come first because a session that exists is presence in the most
-    /// direct sense — an idle prompt reports itself. A process scan is the
-    /// substitute for that when there are no hooks. File activity is not on the
-    /// list at all: it is a perfectly good activity signal and a non-answer
-    /// about presence, and treating it as a weak yes is exactly the quiet lie
-    /// this field exists to prevent.
-    private func runningCoverage(for agent: AgentKind, now: Date, precision: DetectionPrecision)
-        -> RunningModeCoverage
-    {
-        if precision.deliversHookEvents { return .sessions }
-        if scannedAgents(now: now) != nil { return .processes }
-        return .activityOnly
     }
 
     /// Healthy, or unhealthy for less than `socketDegradeGrace` (plan 02 §1.6:
@@ -644,15 +531,6 @@ public actor DetectionCoordinator {
             return map
         }()
 
-        let mode = registry.holdMode
-        // Sessions that hold ONLY because the mode is `.whileRunning`; empty in
-        // `.whileWorking`. Computed once, since it is the same answer for every
-        // agent's branch below.
-        let runningOnly = Set(registry.idleHoldingSessions(now: now).map(\.id))
-        func reason(for session: AgentSession) -> HoldReason {
-            runningOnly.contains(session.id) ? .running : .working
-        }
-
         var holdSources: [HoldSource] = []
         for agent in AgentKind.allCases {
             switch precision[agent] ?? .unavailable {
@@ -666,8 +544,7 @@ public actor DetectionCoordinator {
                         HoldSource(
                             agent: agent,
                             kind: .session(id: session.id, state: session.state),
-                            wait: session.waitInfo(at: now),
-                            reason: reason(for: session)
+                            wait: session.waitInfo(at: now)
                         )
                     )
                 }
@@ -685,7 +562,7 @@ public actor DetectionCoordinator {
                         HoldSource(agent: agent, kind: .fallbackActivity(lastActivityAt: last))
                     )
                 }
-            case .fileActivity, .processOnly:
+            case .fileActivity:
                 // L2 sliding window: hold while the last activity is within
                 // the idle window (plan 02 §2).
                 if let last = lastActivityAt[agent],
@@ -705,28 +582,12 @@ public actor DetectionCoordinator {
                         HoldSource(
                             agent: agent,
                             kind: .session(id: session.id, state: session.state),
-                            wait: session.waitInfo(at: now),
-                            reason: reason(for: session)
+                            wait: session.waitInfo(at: now)
                         )
                     )
                 }
             case .unavailable:
                 break
-            }
-
-            // `.whileRunning`, the process half. This is what makes the mode
-            // mean what it says with no hooks installed: a file write cannot
-            // distinguish a running-but-idle agent from a closed one, and the
-            // process table can. Deliberately OUTSIDE the precision switch —
-            // presence is presence at every precision, and gating it on the
-            // fallback layers would silently drop the guarantee for anyone
-            // whose hooks are only partially installed.
-            //
-            // Nothing here fires in `.whileWorking`: a running process says
-            // nothing about work in flight, and holding on it would erase the
-            // difference between the two modes.
-            if mode.holdsIdleAgents, scannedAgents(now: now)?.contains(agent) == true {
-                holdSources.append(HoldSource(agent: agent, kind: .agentProcess))
             }
         }
         // Ensure every known agent has an explicit precision entry.
@@ -734,19 +595,10 @@ public actor DetectionCoordinator {
             precision[agent] = .unavailable
         }
 
-        var coverage: [AgentKind: RunningModeCoverage] = [:]
-        for agent in AgentKind.allCases {
-            coverage[agent] = runningCoverage(
-                for: agent, now: now, precision: precision[agent] ?? .unavailable
-            )
-        }
-
         return DetectionOutput(
             shouldHold: !holdSources.isEmpty,
             holdSources: holdSources,
-            precision: precision,
-            holdMode: mode,
-            runningModeCoverage: coverage
+            precision: precision
         )
     }
 
@@ -775,16 +627,9 @@ public actor DetectionCoordinator {
             let expiry = last.addingTimeInterval(l2IdleWindow)
             if expiry > now,
                let p = lastPrecision[agent],
-               p == .fileActivity || p == .processOnly || p == .hooksPartial {
+               p == .fileActivity || p == .hooksPartial {
                 candidates.append(expiry)
             }
-        }
-        // A process scan going stale ends both a `.processOnly` precision and
-        // any `.whileRunning` hold resting on it, so it is a real boundary and
-        // must not wait for the next 30 s tick.
-        if let scan = agentProcesses {
-            let stale = scan.at.addingTimeInterval(DetectionDefaults.processScanStaleAfter)
-            if stale > now { candidates.append(stale) }
         }
         if !socketHealthy, let since = socketUnhealthySince {
             let degradeAt = since.addingTimeInterval(socketDegradeGrace)

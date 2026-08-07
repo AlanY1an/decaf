@@ -21,7 +21,7 @@
 // `ppid` is the shared Claude Code application process rather than a
 // per-session pid, so the sweep only fires when the whole app quits. The
 // downgrade is a contradiction test over four independent witnesses
-// (`StuckSessionDetector`), and its outcome is `.working` → `.idle` plus a
+// (`StuckSessionDetector`), and its outcome is `.working` → `.stuck` plus a
 // marker, never a removal: any later sign of life undoes it in one step.
 //
 // Wait signals (plan 08) are folded in here as well: `waitUntil` is not a new
@@ -35,37 +35,30 @@ import HookWire
 // MARK: - Holding semantics
 
 extension SessionState {
-    /// Whether this state keeps the Mac awake at `now` under `mode`
-    /// (plan 02 §1.2, extended by today's hold-mode ruling).
+    /// Whether this state keeps the Mac awake at `now` (plan 02 §1.2).
+    ///
+    /// The one rule, as a switch: the Mac stays awake while the agent is
+    /// WORKING, and any time the agent is waiting on the user it sleeps
+    /// normally. `.idle` is the agent waiting on the user, so it holds nothing.
     ///
     /// Grace uses half-open interval semantics: at exactly `until` the hold is
-    /// over (06 §4 row S5 pins this to prevent off-by-one). In `.whileRunning`
-    /// the grace deadline stops mattering — a session in its grace window is
-    /// still a session, and the mode holds for as long as one exists — but the
-    /// window itself is untouched, so `reconcile` still migrates it to `.idle`
-    /// on schedule and the hold survives on the `.idle` row instead. Nothing
-    /// about grace has to know a mode exists.
-    ///
-    /// `mode` defaults to `.whileWorking` so every existing caller keeps asking
-    /// exactly the question it was asking before this parameter existed.
+    /// over (06 §4 row S5 pins this to prevent off-by-one).
     ///
     /// State only: a session's real answer is `AgentSession.isHolding(now:)`,
     /// which also honours a live wait signal — and refuses `.stuck` outright.
-    public func isHolding(now: Date, mode: AgentHoldMode = .whileWorking) -> Bool {
+    public func isHolding(now: Date) -> Bool {
         switch self {
-        case .working, .waitingPermission:
+        case .working:
             return true
         case .grace(let until):
-            return now < until || mode.holdsIdleAgents
+            return now < until
         case .idle:
-            // The whole of the new mode, in one line: a session sitting at its
-            // prompt is an agent that is RUNNING but not WORKING.
-            return mode.holdsIdleAgents
+            return false
         case .stuck:
-            // Terminal in every mode. `.stuck` is not an observation of the
-            // agent, it is the app admitting it can no longer justify a hold —
-            // and an admission of ignorance must never be turned back into a
-            // reason to keep a Mac awake, however coarse the mode.
+            // `.stuck` is not an observation of the agent, it is the app
+            // admitting it can no longer justify a hold — and an admission of
+            // ignorance must never be turned back into a reason to keep a Mac
+            // awake.
             return false
         }
     }
@@ -80,27 +73,23 @@ extension AgentSession {
     }
 
     /// The instant this session stops holding, or nil when it holds
-    /// indefinitely (working / waiting on a permission prompt).
+    /// indefinitely (a turn in flight).
     ///
     /// Plan 08: `effectiveDeadline = max(graceDeadline, waitUntil ?? .distantPast)`
     /// — a wait extends, never shortens. `.idle` carrying a wait is the app
     /// having learnt about a loop it has no hook events for (or a grace window
-    /// that expired while the wait stands); `.idle` without one holds nothing,
-    /// exactly as before.
-    /// Answers for `.whileWorking`, which is the only mode in which a deadline
-    /// is a meaningful thing to ask about: in `.whileRunning` the hold ends
-    /// when the session leaves the registry, an event no clock can predict.
+    /// that expired while the wait stands); `.idle` without one holds nothing.
     /// `reconcile` consults this inside `if case .grace` only.
     public func effectiveDeadline() -> Date? {
         switch state {
-        case .working, .waitingPermission:
+        case .working:
             return nil
         case .grace(let until):
             return max(until, waitUntil ?? .distantPast)
         case .idle:
             return waitUntil
         case .stuck:
-            // Holds in no mode, so there is no instant at which it stops.
+            // Holds nothing, so there is no instant at which it stops.
             return nil
         }
     }
@@ -112,9 +101,9 @@ extension AgentSession {
     /// no business being revived by a line that arrives without a transcript
     /// write to prove it is current (any real write revives it properly, via
     /// `noteTranscriptWrite`, and this branch is then never reached).
-    public func isHolding(now: Date, mode: AgentHoldMode = .whileWorking) -> Bool {
+    public func isHolding(now: Date) -> Bool {
         if case .stuck = state { return false }
-        return state.isHolding(now: now, mode: mode) || hasLiveWait(at: now)
+        return state.isHolding(now: now) || hasLiveWait(at: now)
     }
 
     /// Wait metadata for `DetectionOutput`, present only while the wait is live.
@@ -132,7 +121,6 @@ public final class SessionRegistry {
     public enum Signal: Equatable, Sendable {
         case sessionStart
         case working
-        case waitingPermission
         case idle
         case stopped
         case ended
@@ -166,16 +154,6 @@ public final class SessionRegistry {
     /// until the next launch, which for a menu-bar app that is never quit means
     /// it does nothing at all.
     public private(set) var gracePeriod: TimeInterval
-
-    /// When a session keeps the Mac awake (see `AgentHoldMode`).
-    ///
-    /// Settable for the same reason `gracePeriod` is: this is a live
-    /// preference, and a value fixed at construction is a preference that does
-    /// nothing until a relaunch that never comes. Unlike the grace period there
-    /// is nothing to rebase — the mode is a pure predicate over the states
-    /// already stored, so flipping it re-answers every session's hold question
-    /// on the caller's next reconcile with no migration at all.
-    public private(set) var holdMode: AgentHoldMode
 
     /// Plan 08 hard limit 2, enforced a SECOND time here.
     ///
@@ -271,12 +249,10 @@ public final class SessionRegistry {
         waitCap: TimeInterval = WaitSignalParser.defaultWaitCap,
         heartbeatCoalesceWindow: TimeInterval = SessionRegistry.defaultHeartbeatCoalesceWindow,
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
-        holdMode: AgentHoldMode = .whileWorking,
         clock: @escaping () -> Date = { Date() },
         isProcessAlive: @escaping (pid_t) -> Bool = ProcessLiveness.isAlive,
         activitySampler: (any ProcessActivitySampling)? = nil
     ) {
-        self.holdMode = holdMode
         self.gracePeriod = min(max(gracePeriod, 0), 600)
         self.waitCap = max(0, waitCap)
         self.heartbeatCoalesceWindow = max(0, heartbeatCoalesceWindow)
@@ -284,26 +260,6 @@ public final class SessionRegistry {
         self.clock = clock
         self.isProcessAlive = isProcessAlive
         self.activitySampler = activitySampler
-    }
-
-    /// Applies a new hold mode. Returns true when it actually changed, so the
-    /// caller knows to reconcile and re-publish.
-    ///
-    /// Nothing stored is touched. Both modes read the same states; they only
-    /// disagree about which of those states counts as a reason to stay awake.
-    /// That is what makes a live switch instantaneous and lossless in both
-    /// directions — turning the mode ON adopts the idle sessions that are
-    /// already registered, turning it OFF drops them on the very next hold
-    /// question, and neither direction can strand a session in a state its
-    /// history does not justify.
-    @discardableResult
-    public func setHoldMode(_ newValue: AgentHoldMode) -> Bool {
-        guard newValue != holdMode else { return false }
-        holdMode = newValue
-        // Not a stored-set mutation, so `changeCount` is deliberately NOT
-        // bumped: sessions.json holds sessions, not preferences, and rewriting
-        // it because a radio button moved would be noise.
-        return true
     }
 
     /// Applies a new grace period, clamped exactly as the initialiser clamps it.
@@ -362,7 +318,26 @@ public final class SessionRegistry {
         case "Notification":
             switch wire.matcher {
             case "permission_prompt":
-                return .waitingPermission
+                // A permission prompt is the agent waiting on the USER, which
+                // is precisely when this Mac is allowed to sleep — so it is an
+                // idle signal, not a reason to hold. It gets the release grace
+                // window rather than `idle_prompt`'s immediate cut, and the
+                // difference is what the two signals actually know:
+                //
+                // - `idle_prompt` is the agent reporting that the turn is over
+                //   and the user has the floor. Authoritative end of work, so
+                //   it cuts any remaining grace window short.
+                // - a permission prompt is a pause INSIDE a turn, and the
+                //   overwhelmingly common answer is "yes", three seconds later,
+                //   from someone already at the keyboard. Releasing on the spot
+                //   would make that ordinary case cost a wake; the grace window
+                //   covers it and then lets go, which is the same treatment
+                //   `Stop` gets and for the same reason.
+                //
+                // Hence the same normalized signal as `Stop`: once "hold
+                // indefinitely" is gone, what is left of the old permission
+                // handling is exactly "arm the release window".
+                return .stopped
             case "idle_prompt":
                 return .idle
             default:
@@ -460,7 +435,7 @@ public final class SessionRegistry {
         // standing refusal of its wait signals is lifted (a resumed session, or
         // simply the next loop iteration, must be able to re-arm).
         switch signal {
-        case .sessionStart, .working, .waitingPermission, .stopped, .unknown:
+        case .sessionStart, .working, .stopped, .unknown:
             waitRefusedAt.removeValue(forKey: sessionID)
         case .idle, .ended:
             waitRefusedAt[sessionID] = now
@@ -481,8 +456,6 @@ public final class SessionRegistry {
             // Latest signal wins from every state (out-of-order tolerance);
             // a prompt during grace cancels the grace window (row S6).
             session.state = .working
-        case .waitingPermission:
-            session.state = .waitingPermission
         case .idle:
             // idle_prompt is the authoritative idle signal: it cuts any
             // remaining grace window short (plan 02 §1.1) — and, since plan 08,
@@ -494,9 +467,10 @@ public final class SessionRegistry {
             session.waitSource = nil
             cronJobIDBySession.removeValue(forKey: sessionID)
         case .stopped:
-            // Stop/StopFailure always (re)arms the grace window — including
-            // from IDLE (app may start late and see Stop first; safe side) and
-            // from GRACE (deadline refresh).
+            // Stop/StopFailure — and a permission prompt, which normalizes to
+            // the same signal — always (re)arm the grace window, including from
+            // IDLE (app may start late and see Stop first; safe side) and from
+            // GRACE (deadline refresh).
             session.state = .grace(until: now.addingTimeInterval(gracePeriod))
         case .ended:
             // GONE is not a stored state: remove immediately, no grace — and a
@@ -624,7 +598,7 @@ public final class SessionRegistry {
     /// own. They can only disagree in a hand-built or hand-edited record, and
     /// in both directions the safe reading is "this was a downgrade, undo it":
     /// leaving `.stuck` standing after real evidence of life would strand a
-    /// live session in a state that holds in no mode.
+    /// live session in a state that holds nothing.
     ///
     /// Returns true when a downgrade was found, so callers can tell a revival
     /// from an ordinary observation.
@@ -889,16 +863,15 @@ public final class SessionRegistry {
             // would make being wrong permanent and invisible, which is the
             // property the original bug had.
             //
-            // `.stuck` rather than `.idle` is what keeps this fix intact under
-            // `AgentHoldMode.whileRunning`, where `.idle` sessions DO hold: see
-            // `SessionState.stuck`. Note also that only `.working` is ever
-            // eligible, in either mode — an agent parked at its prompt emits no
-            // hook events, no heartbeats, no transcript writes and no CPU by
-            // definition, so extending eligibility to `.idle` would condemn
-            // every healthy idle session within `stuckThreshold` and delete the
-            // new mode from the inside. What bounds an `.idle` hold instead is
-            // the PPID sweep below, which is a measurement of the agent
-            // process, not an inference about it.
+            // `.stuck` rather than `.idle` because the two are different
+            // claims and only one is an observation: see `SessionState.stuck`.
+            // Note also that only `.working` is ever eligible — an agent parked
+            // at its prompt emits no hook events, no heartbeats, no transcript
+            // writes and no CPU by definition, so extending eligibility to
+            // `.idle` would condemn every healthy idle session within
+            // `stuckThreshold` for doing exactly what idle means. An `.idle`
+            // session needs no such bound anyway: it holds nothing, and the
+            // PPID sweep above removes it when the process goes.
             if case .working = session.state {
                 let verdict = StuckSessionDetector.evaluate(
                     now: now,
@@ -973,13 +946,12 @@ public final class SessionRegistry {
         Array(sessionsByID.values)
     }
 
-    /// Sessions currently keeping the Mac awake under the registry's current
-    /// hold mode, in a stable order (startedAt, then id). A live wait counts as
-    /// holding (plan 08).
+    /// Sessions currently keeping the Mac awake, in a stable order (startedAt,
+    /// then id). A live wait counts as holding (plan 08).
     public func holdingSessions(now: Date? = nil) -> [AgentSession] {
         let now = now ?? clock()
         return sessionsByID.values
-            .filter { $0.isHolding(now: now, mode: holdMode) }
+            .filter { $0.isHolding(now: now) }
             .sorted {
                 ($0.startedAt, $0.id) < ($1.startedAt, $1.id)
             }
@@ -988,20 +960,7 @@ public final class SessionRegistry {
     /// Whether any session holds at `now` (set semantics, plan 02 §1.2).
     public func isHolding(now: Date? = nil) -> Bool {
         let now = now ?? clock()
-        return sessionsByID.values.contains { $0.isHolding(now: now, mode: holdMode) }
-    }
-
-    /// Sessions that hold ONLY because the mode is `.whileRunning` — an agent
-    /// that is present but not working. Empty in `.whileWorking` by
-    /// construction.
-    ///
-    /// The menu has to word these differently ("running" is not "working"), and
-    /// the difference is a property of the hold decision rather than of the
-    /// session, so it is computed here rather than re-derived downstream from a
-    /// state the UI would have to interpret.
-    public func idleHoldingSessions(now: Date? = nil) -> [AgentSession] {
-        let now = now ?? clock()
-        return holdingSessions(now: now).filter { !$0.isHolding(now: now, mode: .whileWorking) }
+        return sessionsByID.values.contains { $0.isHolding(now: now) }
     }
 
     /// Earliest future grace deadline, if any — the coordinator schedules its
@@ -1034,12 +993,11 @@ public final class SessionRegistry {
     /// Rebuilds `.stuck` from a `sessions.json` written before that state
     /// existed, where a downgrade was stored as `.idle` plus the marker.
     ///
-    /// Without this, a relaunch in `.whileRunning` would read every previously
-    /// condemned session as an ordinary idle agent and hand it back the hold
-    /// the downgrade had just taken away — the persistence-shaped version of
-    /// exactly the hole `.stuck` exists to close. The pair is unambiguous:
-    /// nothing but the downgrade ever sets the marker, and every path that
-    /// changes state afterwards clears it.
+    /// Without it a relaunch would read a condemned record as an ordinary idle
+    /// session, losing the one thing the downgrade recorded: that the app gave
+    /// up on this session rather than being told it was idle. The pair is
+    /// unambiguous — nothing but the downgrade ever sets the marker, and every
+    /// path that changes state afterwards clears it.
     private static func migratingStuckState(_ session: AgentSession) -> AgentSession {
         guard session.stuckDowngradedAt != nil, session.state == .idle else { return session }
         var migrated = session

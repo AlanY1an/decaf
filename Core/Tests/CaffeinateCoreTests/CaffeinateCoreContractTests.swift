@@ -80,7 +80,6 @@ import Testing
     @Test func sessionPhaseAlwaysHoldsInMenuSemantics() {
         // Plan 04 §2: every phase shown in the session list holds the assertion.
         #expect(SessionPhase.working.holdsAssertion)
-        #expect(SessionPhase.waitingPermission.holdsAssertion)
         #expect(SessionPhase.graceIdle(until: .distantFuture).holdsAssertion)
     }
 

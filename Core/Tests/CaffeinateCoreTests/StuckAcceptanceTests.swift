@@ -356,7 +356,7 @@ private func everyFiveMinutes(_ index: Int) -> Bool { index % 10 == 0 }
 
         let session = stored("stuck-on-hardware", in: registry)
         #expect(session != nil, "downgrade, never delete")
-        // Terminal in every hold mode — see AgentHoldModeTests.
+        // Terminal: no deadline and no wait can make it hold again.
         #expect(session?.state == .stuck)
         #expect(session?.stuckDowngradedAt != nil)
         #expect(session?.ppid == appPPID)

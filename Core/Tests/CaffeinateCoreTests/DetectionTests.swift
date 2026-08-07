@@ -106,8 +106,12 @@ private struct HookStdinFixture {
     }
 }
 
+/// The grace window `makeRegistry` hands out, named so a test can advance the
+/// clock relative to it instead of restating 180.
+private let defaultGrace: TimeInterval = 180
+
 private func makeRegistry(
-    gracePeriod: TimeInterval = 180,
+    gracePeriod: TimeInterval = defaultGrace,
     heartbeatCoalesceWindow: TimeInterval = SessionRegistry.defaultHeartbeatCoalesceWindow,
     clock: DetectionClock,
     liveness: DetectionLiveness = DetectionLiveness()
@@ -177,21 +181,105 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
             #expect(registry.isHolding())
         }
 
-        @Test func permissionPromptNotificationHoldsIndefinitely() throws {
+        /// A permission prompt is the agent waiting on the USER, which is
+        /// exactly when this Mac is allowed to sleep. So it opens the release
+        /// grace window — it does not hold indefinitely, and it does not
+        /// release on the spot either.
+        @Test func permissionPromptNotificationOpensTheGraceWindow() throws {
             let clock = DetectionClock()
             let registry = makeRegistry(clock: clock)
             let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
             let wire = fixture.wireEvent(matcher: "permission_prompt")
 
-            #expect(SessionRegistry.signal(for: wire) == .waitingPermission)
+            #expect(SessionRegistry.signal(for: wire) == .stopped)
             registry.ingest(wire)
-            #expect(state(of: fixture.sessionID, in: registry) == .waitingPermission)
+            #expect(
+                state(of: fixture.sessionID, in: registry)
+                    == .grace(until: clock.now.addingTimeInterval(defaultGrace))
+            )
+            // The quick "yes" three seconds later must not have to wake a Mac.
             #expect(registry.isHolding())
-            // Deliberate semantics (plan 02 §1.1): WAITING_PERMISSION holds with
-            // no deadline — an unattended permission dialog must not sleep.
-            clock.advance(3600)
+            clock.advance(defaultGrace - 1)
             registry.reconcile()
-            #expect(registry.isHolding())
+            #expect(registry.isHolding(), "still inside the window")
+
+            // …and an unanswered prompt lets the Mac sleep, instead of holding
+            // it awake all night on the chance somebody comes back.
+            clock.advance(2)
+            registry.reconcile()
+            #expect(state(of: fixture.sessionID, in: registry) == .idle)
+            #expect(!registry.isHolding())
+        }
+
+        /// The window is a window, not an idle signal: if a `.working` signal
+        /// does arrive, it re-arms `WORKING` and the hold with it.
+        ///
+        /// NOTE ON WHAT THIS DOES *NOT* PROVE. `.working` is emitted by
+        /// `UserPromptSubmit` — the user typing a new prompt. Clicking "allow"
+        /// on a permission dialog is NOT that, and emits no state event at all
+        /// (see `anApprovedPromptLosesTheHoldWhileTheToolIsStillRunning`). So
+        /// this test covers "the user answered the prompt and then said
+        /// something else", not "the user approved the tool".
+        @Test func workResumingAfterAPermissionPromptHoldsAgain() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
+            registry.ingest(fixture.wireEvent(matcher: "permission_prompt"))
+
+            clock.advance(3)
+            registry.apply(signal: .working, sessionID: fixture.sessionID, agent: .claudeCode, ppid: 4242)
+            #expect(state(of: fixture.sessionID, in: registry) == .working)
+
+            clock.advance(defaultGrace * 10)
+            registry.reconcile()
+            #expect(registry.isHolding(), "a turn in flight has no deadline")
+        }
+
+        /// CHARACTERIZATION — pins a KNOWN GAP, not a desired behaviour.
+        ///
+        /// Upstream ordering (Claude Code hooks reference): `PreToolUse` fires
+        /// *before* tool execution **regardless of permission**, and the
+        /// permission dialog is raised after it. Nothing at all fires when the
+        /// user clicks "allow"; the next event is `PostToolUse`, which fires
+        /// only when the tool COMPLETES.
+        ///
+        /// So for the one kind of tool call that most often needs approval — a
+        /// long one — the sequence is: prompt → GRACE(180 s) → user approves →
+        /// silence while the tool runs → grace expires → hold released, with
+        /// the approved tool still running. That is the exact failure the
+        /// product exists to prevent, and neither the heartbeat nor the
+        /// four-witness stuck detector can help: both only ever ADD confidence
+        /// that a `WORKING` session is alive, and this session is no longer
+        /// `WORKING`.
+        ///
+        /// This is the cost of removing the permission hold. It is bounded (one
+        /// grace period, then the ordinary L2/wait layers apply if hooks are
+        /// only partial) but it is real. Deleting this test to make the suite
+        /// look clean would hide it; it fails loudly the day the gap is closed,
+        /// which is when it should be rewritten.
+        @Test func anApprovedPromptLosesTheHoldWhileTheToolIsStillRunning() throws {
+            let clock = DetectionClock()
+            let registry = makeRegistry(clock: clock)
+            let fixture = try HookStdinFixture.load("notification_permission_prompt.json")
+            registry.ingest(fixture.wireEvent(matcher: "permission_prompt"))
+
+            // The user clicks "allow" three seconds later. No hook fires.
+            clock.advance(3)
+
+            // The approved tool runs silently. At the grace deadline the hold
+            // goes away even though work is very much in flight.
+            clock.advance(defaultGrace)
+            registry.reconcile()
+            #expect(state(of: fixture.sessionID, in: registry) == .idle)
+            #expect(!registry.isHolding(), "KNOWN GAP: the running tool is unprotected here")
+
+            // `PostToolUse` finally lands when the tool completes, seven minutes
+            // past the deadline. A heartbeat is liveness only — it does not
+            // transition — so it does not recover the hold either.
+            clock.advance(420)
+            registry.apply(signal: .heartbeat, sessionID: fixture.sessionID, agent: .claudeCode, ppid: 4242)
+            #expect(state(of: fixture.sessionID, in: registry) == .idle)
+            #expect(!registry.isHolding(), "a heartbeat never lifts IDLE")
         }
 
         @Test func idlePromptNotificationIsAuthoritativeAndCutsGraceShort() throws {
@@ -654,13 +742,12 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
     @Suite struct StateMachine {
 
         private enum Seed: String, CaseIterable {
-            case idle, working, waitingPermission, grace
+            case idle, working, grace
 
             var signal: SessionRegistry.Signal {
                 switch self {
                 case .idle: return .sessionStart
                 case .working: return .working
-                case .waitingPermission: return .waitingPermission
                 case .grace: return .stopped
                 }
             }
@@ -688,27 +775,19 @@ private func state(of id: String, in registry: SessionRegistry) -> SessionState?
             let cases: [Case] = [
                 // IDLE row
                 Case(from: .idle, input: .working, expected: { _, _ in .working }, line: #line),
-                Case(from: .idle, input: .waitingPermission, expected: { _, _ in .waitingPermission }, line: #line),
                 Case(from: .idle, input: .idle, expected: { _, _ in .idle }, line: #line),
                 // Footnote 1: Stop before any WORKING was seen → grace (safe side).
+                // `.stopped` is also what a permission prompt normalizes to.
                 Case(from: .idle, input: .stopped, expected: grace, line: #line),
                 Case(from: .idle, input: .ended, expected: { _, _ in nil }, line: #line),
                 // WORKING row
                 Case(from: .working, input: .working, expected: { _, _ in .working }, line: #line),
-                Case(from: .working, input: .waitingPermission, expected: { _, _ in .waitingPermission }, line: #line),
                 // Footnote 2: out-of-order tolerance, latest signal wins.
                 Case(from: .working, input: .idle, expected: { _, _ in .idle }, line: #line),
                 Case(from: .working, input: .stopped, expected: grace, line: #line),
                 Case(from: .working, input: .ended, expected: { _, _ in nil }, line: #line),
-                // WAITING_PERMISSION row
-                Case(from: .waitingPermission, input: .working, expected: { _, _ in .working }, line: #line),
-                Case(from: .waitingPermission, input: .waitingPermission, expected: { _, _ in .waitingPermission }, line: #line),
-                Case(from: .waitingPermission, input: .idle, expected: { _, _ in .idle }, line: #line),
-                Case(from: .waitingPermission, input: .stopped, expected: grace, line: #line),
-                Case(from: .waitingPermission, input: .ended, expected: { _, _ in nil }, line: #line),
                 // GRACE row
                 Case(from: .grace, input: .working, expected: { _, _ in .working }, line: #line),
-                Case(from: .grace, input: .waitingPermission, expected: { _, _ in .waitingPermission }, line: #line),
                 Case(from: .grace, input: .idle, expected: { _, _ in .idle }, line: #line),
                 Case(from: .grace, input: .stopped, expected: grace, line: #line),
                 Case(from: .grace, input: .ended, expected: { _, _ in nil }, line: #line),

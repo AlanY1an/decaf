@@ -50,12 +50,6 @@ public func iconState(for s: AppStateSnapshot) -> MenuBarIconState {
     // "asleep when you close the lid" while the assertion was held.
     if !s.fallbackAgents.isEmpty { return .agentHold(sessionCount: 1) }
 
-    // `.whileRunning` with no session detail: the process table says the agent
-    // is open, and that is holding an assertion right now. Same reasoning as the
-    // line above — the cup is full because the Mac is awake, and the badge stays
-    // a single dot because "an agent is there" is the whole of what we know.
-    if !s.runningIdleAgents.isEmpty { return .agentHold(sessionCount: 1) }
-
     if s.manual != nil { return .manualHold }
 
     // Belt and braces. Some source is holding that produced neither a session
@@ -124,14 +118,9 @@ public enum MenuCopy {
                 return nil
             }
             if graceEnds.count == active.count, let latest = graceEnds.max() {
-                // The grace deadline is when sleep becomes allowed — but only in
-                // `.whileWorking`. Under `.whileRunning` the session is still
-                // open when the window lapses, and an open session holds; naming
-                // an instant there would promise a release that is not coming,
-                // and it is the one number in this menu a user would act on.
-                return s.agentHoldMode.holdsIdleAgents
-                    ? "Just finished · Sleep blocked while the agent stays open"
-                    : "Just finished · Sleep allowed after \(timeString(latest))"
+                // The grace deadline is when sleep becomes allowed, and it is
+                // the one number in this menu a user would act on.
+                return "Just finished · Sleep allowed after \(timeString(latest))"
             }
             let name = active[0].agent.displayName
             return active.count == 1
@@ -151,25 +140,6 @@ public enum MenuCopy {
             return s.fallbackAgents.count == 1
                 ? "\(name) working"
                 : "\(name) working · \(s.fallbackAgents.count) agents"
-        }
-
-        // `AgentHoldMode.whileRunning`, with nothing in flight: an agent sitting
-        // idle at its prompt, or a bare process match. This is the mode's own
-        // hold, and it is the one hold in the app with no work behind it.
-        //
-        // Not the "working" sentence above, which would state the opposite of
-        // what is true — and which of the two available sentences applies turns
-        // on how the agent's presence is known, so the wording is owned by
-        // `AgentHoldCopy` and the choice is made from the snapshot here. The
-        // clause after the dot is the one thing a user in this mode needs and
-        // cannot infer from anywhere else: the hold ends when the agent goes
-        // away, not on a clock.
-        if let agent = s.runningIdleAgents.first {
-            return AgentHoldCopy.runningIdleStatusLine(
-                agent: agent,
-                agentCount: s.runningIdleAgents.count,
-                knownOnlyByProcess: s.processOnlyRunningAgents.contains(agent)
-            )
         }
 
         if let manual = s.manual {
@@ -213,11 +183,6 @@ public enum MenuCopy {
             s.agentSessions.filter { $0.phase.holdsAssertion }.map { $0.agent }
         )
         activeAgents.formUnion(s.fallbackAgents)
-        // Presence holds count too, for the same reason fallback holds do: they
-        // produce no session row, so leaving them out would let a precise
-        // agent's `.hooks` win the max while the only thing actually holding is
-        // a process match.
-        activeAgents.formUnion(s.runningIdleAgents)
 
         let candidates: [DetectionPrecision]
         if activeAgents.isEmpty {
@@ -235,7 +200,7 @@ public enum MenuCopy {
 
     public static func precisionNote(for s: AppStateSnapshot) -> PrecisionNote? {
         switch summaryPrecision(for: s) {
-        case .fileActivity, .processOnly:
+        case .fileActivity:
             return PrecisionNote(
                 detail: "Detection: file activity (approximate)",
                 actionTitle: "Install hooks for precise detection\u{2026}"
@@ -260,23 +225,8 @@ public enum MenuCopy {
     // MARK: Accessibility
 
     /// Status item / icon accessibility label (plan 04 §4).
-    ///
-    /// One case cannot be answered from the icon alone: under
-    /// `AgentHoldMode.whileRunning` the full cup can mean "an agent is open and
-    /// doing nothing", and "agent working" would be the wrong sentence for a
-    /// VoiceOver user deciding whether their machine is busy.
     public static func accessibilityLabel(for s: AppStateSnapshot) -> String {
-        let active = s.agentSessions.filter { $0.phase.holdsAssertion }
-        if s.safetyPause == nil,
-           active.isEmpty,
-           s.fallbackAgents.isEmpty,
-           !s.runningIdleAgents.isEmpty {
-            let count = s.runningIdleAgents.count
-            return count == 1
-                ? "Caffeinate, an agent is open, keeping the Mac awake"
-                : "Caffeinate, \(count) agents are open, keeping the Mac awake"
-        }
-        return accessibilityLabel(for: iconState(for: s))
+        accessibilityLabel(for: iconState(for: s))
     }
 
     public static func accessibilityLabel(for state: MenuBarIconState) -> String {

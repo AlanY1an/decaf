@@ -38,6 +38,12 @@ public struct SessionWaterline: Equatable, Sendable {
 
 public struct UsageSnapshot: Equatable, Sendable {
     public var today: TokenTotals
+    /// API-equivalent value, summed over priced models only; nil when nothing
+    /// today is priced. Never a bill — subscription usage is prepaid.
+    public var todayCostUSD: Double?
+    /// True when today's totals include a model the pricing table cannot
+    /// price, so `todayCostUSD` understates the equivalent value.
+    public var todayHasUnpricedModels: Bool
     public var activeBlock: UsageBlock?
     public var sevenDayTokens: TokenTotals
     /// Most-recent first.
@@ -83,17 +89,20 @@ public actor UsageLedger {
     /// Hour buckets kept this long past `now` (8 d covers the 7-day window).
     private let retention: TimeInterval
     private let dedupRetention: TimeInterval
+    private let pricing: PricingTable
 
     private let dayFormatter: DateFormatter
 
     public init(
         timeZone: TimeZone = .current,
         retention: TimeInterval = 8 * 86_400,
-        dedupRetention: TimeInterval = 48 * 3600
+        dedupRetention: TimeInterval = 48 * 3600,
+        pricing: PricingTable = .builtin
     ) {
         self.timeZone = timeZone
         self.retention = retention
         self.dedupRetention = dedupRetention
+        self.pricing = pricing
         self.dayFormatter = Self.makeDayFormatter(timeZone: timeZone)
     }
 
@@ -104,11 +113,13 @@ public actor UsageLedger {
         state: UsageLedgerState,
         timeZone: TimeZone = .current,
         retention: TimeInterval = 8 * 86_400,
-        dedupRetention: TimeInterval = 48 * 3600
+        dedupRetention: TimeInterval = 48 * 3600,
+        pricing: PricingTable = .builtin
     ) {
         self.timeZone = timeZone
         self.retention = retention
         self.dedupRetention = dedupRetention
+        self.pricing = pricing
         self.dayFormatter = Self.makeDayFormatter(timeZone: timeZone)
         for rollup in state.days {
             days[DayModelKey(day: rollup.day, model: rollup.model)] = rollup.tokens
@@ -157,8 +168,15 @@ public actor UsageLedger {
 
         let todayKey = dayFormatter.string(from: now)
         var today = TokenTotals()
+        var todayCost: Double?
+        var hasUnpriced = false
         for (key, tokens) in days where key.day == todayKey {
             today += tokens
+            if let cost = pricing.costUSD(model: key.model, tokens: tokens) {
+                todayCost = (todayCost ?? 0) + cost
+            } else {
+                hasUnpriced = true
+            }
         }
 
         var sevenDay = TokenTotals()
@@ -181,6 +199,8 @@ public actor UsageLedger {
 
         return UsageSnapshot(
             today: today,
+            todayCostUSD: todayCost,
+            todayHasUnpricedModels: hasUnpriced,
             activeBlock: activeBlock(now: now),
             sevenDayTokens: sevenDay,
             sessions: sessions

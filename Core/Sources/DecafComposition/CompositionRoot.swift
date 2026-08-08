@@ -224,12 +224,13 @@ public final class CompositionRoot: ObservableObject {
                 await self.route(event)
             }
         })
-        // Usage refresh pump: the ledger moves with every transcript line, but
-        // the UI only needs a fresh overview about once a minute (plus the
-        // event-driven refreshes in `route` and `apply`).
+        // Usage refresh pump: the ledger moves with every transcript line;
+        // 15 s bounds how stale a freshly opened menu can be (plus the
+        // event-driven refreshes in `route` and `apply`). Equality-gated
+        // republish keeps an idle machine's pump free.
         pumpTasks.append(Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
                 await self?.refreshUsageOverview()
             }
         })

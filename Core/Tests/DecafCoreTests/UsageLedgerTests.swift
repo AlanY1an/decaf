@@ -148,3 +148,24 @@ struct UsageLedgerTests {
         #expect(state.days.count == 2)                    // day rollups keep history
     }
 }
+
+@Suite("UsageLedger M5 guards")
+struct UsageLedgerGuardTests {
+
+    @Test func futureRecordConjuresNoActiveBlock() async {
+        let ledger = UsageLedger(timeZone: utc)
+        await ledger.ingest(record(message: "m1", timestamp: at(3, day: 9)))   // two days ahead
+        let snapshot = await ledger.snapshot(now: at(3, day: 7))
+        #expect(snapshot.activeBlock == nil)
+    }
+
+    @Test func staleSessionWaterlinesArePruned() async {
+        let ledger = UsageLedger(timeZone: utc)
+        await ledger.ingest(record(session: "old", message: "m1", timestamp: at(3, day: 1)))
+        await ledger.ingest(record(session: "new", message: "m2", timestamp: at(3, day: 7)))
+        let snapshot = await ledger.snapshot(now: at(4, day: 7))   // day 1 is 6d back... within 48h? no: prune expects >48h
+        #expect(snapshot.sessions.map(\.sessionID) == ["new"])
+        let state = await ledger.state()
+        #expect(state.sessions.map(\.sessionID) == ["new"])
+    }
+}

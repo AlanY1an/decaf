@@ -115,6 +115,9 @@ public actor UsageLedger {
     /// Hour buckets kept this long past `now` (8 d covers the 7-day window).
     private let retention: TimeInterval
     private let dedupRetention: TimeInterval
+    /// Session waterlines older than this are dropped: an ended session's
+    /// context occupancy stops being information and starts being growth.
+    private let sessionRetention: TimeInterval
     private let pricing: PricingTable
 
     private let dayFormatter: DateFormatter
@@ -123,11 +126,13 @@ public actor UsageLedger {
         timeZone: TimeZone = .current,
         retention: TimeInterval = 8 * 86_400,
         dedupRetention: TimeInterval = 48 * 3600,
+        sessionRetention: TimeInterval = 48 * 3600,
         pricing: PricingTable = .builtin
     ) {
         self.timeZone = timeZone
         self.retention = retention
         self.dedupRetention = dedupRetention
+        self.sessionRetention = sessionRetention
         self.pricing = pricing
         self.dayFormatter = Self.makeDayFormatter(timeZone: timeZone)
     }
@@ -140,11 +145,13 @@ public actor UsageLedger {
         timeZone: TimeZone = .current,
         retention: TimeInterval = 8 * 86_400,
         dedupRetention: TimeInterval = 48 * 3600,
+        sessionRetention: TimeInterval = 48 * 3600,
         pricing: PricingTable = .builtin
     ) {
         self.timeZone = timeZone
         self.retention = retention
         self.dedupRetention = dedupRetention
+        self.sessionRetention = sessionRetention
         self.pricing = pricing
         self.dayFormatter = Self.makeDayFormatter(timeZone: timeZone)
         for rollup in state.days {
@@ -257,7 +264,9 @@ public actor UsageLedger {
             blockStart = hour
             blockEnd = hour.addingTimeInterval(Self.blockLength)
         }
-        guard let start = blockStart, now < blockEnd else { return nil }
+        // `start <= now` too: a clock-skewed future record must not conjure a
+        // block that has not begun.
+        guard let start = blockStart, start <= now, now < blockEnd else { return nil }
         var tokens = TokenTotals()
         for (hour, bucket) in hours where hour >= start && hour < blockEnd {
             tokens += bucket
@@ -270,5 +279,7 @@ public actor UsageLedger {
         hours = hours.filter { $0.key > hourFloor }
         let dedupFloor = now.addingTimeInterval(-dedupRetention)
         seen = seen.filter { $0.value > dedupFloor }
+        let sessionFloor = now.addingTimeInterval(-sessionRetention)
+        latestBySession = latestBySession.filter { $0.value.timestamp > sessionFloor }
     }
 }

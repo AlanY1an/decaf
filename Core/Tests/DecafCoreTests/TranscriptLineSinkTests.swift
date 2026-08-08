@@ -1,57 +1,44 @@
-// TranscriptLineSinkTests — plan 09 M3a Task 1: every line the coordinator's
-// tail-read loop yields is forwarded verbatim to the injected sink, from the
-// same single reader (no second IO path). Temp files only.
+// TranscriptLineSinkTests — plan 09 M5: the coordinator forwards transcript
+// PATHS with fresh writes to the injected sink (the usage meter reads the
+// files itself with its own offsets). Temp files only.
 
 import Foundation
 import Testing
 @testable import AgentDetection
 import HookWire
 
-private final class LineCollector: @unchecked Sendable {
+private final class PathCollector: @unchecked Sendable {
     private let lock = NSLock()
-    private var collected: [String] = []
-    var all: [String] {
+    private var collected: [[URL]] = []
+    var all: [[URL]] {
         lock.lock(); defer { lock.unlock() }; return collected
     }
-    func append(_ line: String) {
-        lock.lock(); collected.append(line); lock.unlock()
+    func append(_ paths: [URL]) {
+        lock.lock(); collected.append(paths); lock.unlock()
     }
 }
 
-@Suite("DetectionCoordinator transcript line sink")
-struct TranscriptLineSinkTests {
+@Suite("DetectionCoordinator transcript activity sink")
+struct TranscriptActivitySinkTests {
 
-    @Test func forwardsEveryTailReadLine() async throws {
+    @Test func forwardsPathsOncePerActivityEvent() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("decaf-sink-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let transcript = directory.appendingPathComponent("11111111-aaaa-4bbb-8ccc-2222.jsonl")
+        try Data("{}\n".utf8).write(to: transcript)
 
-        let collector = LineCollector()
+        let collector = PathCollector()
         let coordinator = DetectionCoordinator(
             store: nil,
-            transcriptLineSink: { line, _ in collector.append(line) }
+            transcriptActivitySink: { paths, _ in collector.append(paths) }
         )
 
-        let lineA = #"{"type":"assistant","sessionId":"s","message":{"usage":{"input_tokens":1,"output_tokens":2}}}"#
-        let lineB = "not json at all"
-        try Data((lineA + "\n" + lineB + "\n").utf8).write(to: transcript)
-
+        await coordinator.noteTranscriptActivity(agent: .claudeCode, paths: [transcript])
         await coordinator.noteTranscriptActivity(agent: .claudeCode, paths: [transcript])
 
-        #expect(collector.all == [lineA, lineB])
-
-        // Appending yields only the new line — offsets are shared with the
-        // wait-signal path, so nothing is read twice.
-        let lineC = #"{"type":"assistant"}"#
-        let handle = try FileHandle(forWritingTo: transcript)
-        handle.seekToEndOfFile()
-        handle.write(Data((lineC + "\n").utf8))
-        try handle.close()
-
-        await coordinator.noteTranscriptActivity(agent: .claudeCode, paths: [transcript])
-        #expect(collector.all == [lineA, lineB, lineC])
+        #expect(collector.all == [[transcript], [transcript]])
     }
 
     @Test func nilSinkChangesNothing() async throws {

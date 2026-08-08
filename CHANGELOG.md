@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields; conversation content remains unread.
 - `Scripts/check-statusline.sh`: dependency-whitelist and behavior smoke for
   the new helper (default line, socket frame, chain passthrough, EPIPE).
+- Usage counted while the app was closed is caught up at launch: per-file
+  read positions persist with the rollups in one file, so a restart counts
+  every line exactly once (rotated transcripts start over from the top).
+- Display polish: the 5h reset instant on the Limits row (absolute time,
+  hidden once past), estimated blocks as a percentage of your own largest
+  block ("of personal max" — never of an official limit), per-session
+  `ctx N%` context occupancy on session rows, and menu numbers at most 15 s
+  stale on open.
 
 ## [0.1.0] — Unreleased
 

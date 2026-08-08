@@ -20,6 +20,7 @@
 import DecafCore
 import Foundation
 import HookWire
+import TranscriptSupport
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -97,8 +98,11 @@ public actor DetectionCoordinator {
     /// feature existed, which is also the escape hatch if upstream renames the
     /// tools out from under us.
     private let tailReader: TranscriptTailReader?
-    /// Forwarded copy of every tail-read line (plan 09 M3; nil = no consumer).
-    private let transcriptLineSink: (@Sendable (String, Date) -> Void)?
+    /// Transcript paths with fresh writes, forwarded per event (plan 09 M5;
+    /// nil = no consumer). Paths, not lines: the usage meter reads the files
+    /// itself with its own persisted offsets, so its replay safety never
+    /// depends on this reader's prime-to-end launch policy.
+    private let transcriptActivitySink: (@Sendable ([URL], Date) -> Void)?
     private let waitParser: WaitSignalParser
     /// Per-file parser cursor (carries at most a pending cron job id).
     private var waitCursors: [URL: WaitSignalParser.Cursor] = [:]
@@ -156,15 +160,14 @@ public actor DetectionCoordinator {
         // unable to condemn anything. Injected so tests script it.
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
         userNotifier: (any UserNotifying)? = nil,
-        // Every transcript line the tail-read loop yields, forwarded verbatim
-        // (plan 09 M3): the usage meter shares this single reader instead of
-        // running a second one over the same files. nil costs nothing.
-        transcriptLineSink: (@Sendable (String, Date) -> Void)? = nil
+        // Transcript paths with fresh writes, forwarded once per activity
+        // event (plan 09 M5). nil costs nothing.
+        transcriptActivitySink: (@Sendable ([URL], Date) -> Void)? = nil
     ) {
         self.clock = clock
         self.tailReader = tailReader
         self.waitParser = waitParser
-        self.transcriptLineSink = transcriptLineSink
+        self.transcriptActivitySink = transcriptActivitySink
         self.userNotifier = userNotifier
         self.l2IdleWindow = l2IdleWindow
         self.socketDegradeGrace = socketDegradeGrace
@@ -413,6 +416,10 @@ public actor DetectionCoordinator {
 
         noteFileActivity(agent: agent, at: date)
 
+        if !paths.isEmpty {
+            transcriptActivitySink?(paths, now)
+        }
+
         guard let tailReader, !paths.isEmpty else {
             if applied { reconcile(now: now) }
             return
@@ -425,7 +432,6 @@ public actor DetectionCoordinator {
                 let lines = tailReader.readNewLines(at: url)
                 if lines.isEmpty { break }
                 for line in lines {
-                    transcriptLineSink?(line, now)
                     let result = waitParser.parse(line: line, now: now, cursor: &cursor)
                     guard !result.isEmpty else { continue }
                     // File order is authoritative: a stop later in the file

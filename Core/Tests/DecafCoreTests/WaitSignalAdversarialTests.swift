@@ -27,6 +27,7 @@ import Testing
 @testable import DecafComposition
 @testable import DecafCore
 import HookWire
+import TranscriptSupport
 
 // MARK: - Helpers
 

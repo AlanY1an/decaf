@@ -73,6 +73,9 @@ public final class CompositionRoot: ObservableObject {
     /// "Turn the screen off now" adapter (pmset in production, a fake in tests).
     public let displaySleeper: any DisplaySleeping
 
+    /// Kept for the usage catch-up in `start()` (the coordinator owns the
+    /// callbacks; this reference only answers "which transcript files exist").
+    private let watcher: FSEventsWatcher
     private let batteryMonitor = BatteryMonitor()
     private let lowPowerModeMonitor = LowPowerModeMonitor()
     private let workspaceMonitors = WorkspaceMonitors()
@@ -144,6 +147,7 @@ public final class CompositionRoot: ObservableObject {
     ) {
         self.settings = settings
         self.displaySleeper = displaySleeper
+        self.watcher = watcher
         self.everDetectedAgent = settings.hasEverDetectedAgent
         self.agentAutoKeepAwake = settings.agentAutoKeepAwake
 
@@ -164,11 +168,11 @@ public final class CompositionRoot: ObservableObject {
             watcher: watcher,
             activitySampler: activitySampler,
             userNotifier: userNotifier,
-            // Shared reader: the coordinator's tail-read loop feeds the ledger
-            // (plan 09 M3a). Fire-and-forget; ordering within a file holds
-            // because the loop forwards lines in file order.
-            transcriptLineSink: { line, date in
-                Task { await usageMeter.ingestLine(line, at: date) }
+            // Paths, not lines (plan 09 M5): the meter reads the files itself
+            // with its own persisted offsets, so restart replay safety never
+            // depends on this coordinator's reader.
+            transcriptActivitySink: { paths, date in
+                Task { await usageMeter.noteActivity(paths: paths, at: date) }
             }
         )
     }
@@ -223,6 +227,15 @@ public final class CompositionRoot: ObservableObject {
                 guard let self else { return }
                 await self.route(event)
             }
+        })
+        // Usage catch-up (plan 09 M5): read every known transcript from its
+        // persisted mark once, so tokens spent while the app was closed enter
+        // the ledger exactly once. One-shot; live activity takes over after.
+        let meter = usageMeter
+        let existingTranscripts = watcher.existingTranscriptFiles().values.flatMap { $0 }
+        pumpTasks.append(Task { [weak self] in
+            await meter.start(files: existingTranscripts)
+            await self?.refreshUsageOverview()
         })
         // Usage refresh pump: the ledger moves with every transcript line;
         // 15 s bounds how stale a freshly opened menu can be (plus the

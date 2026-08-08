@@ -10,6 +10,7 @@
 //   sees them).
 
 import Foundation
+import TranscriptSupport
 
 /// Everything the UI needs about usage, in one equatable value.
 public struct UsageOverview: Equatable, Sendable {
@@ -37,6 +38,13 @@ public actor UsageMeter {
     private let ledger: UsageLedger
     private let store: UsageStore?
     private var quota: QuotaState
+    /// The meter's OWN reader (plan 09 M5) — never the detection layer's. Its
+    /// offsets are persisted as `UsageLedgerState.fileMarks` in the same save
+    /// as the rollups, which is what makes restarts exact: a mark and the
+    /// counts behind it always travel together.
+    private let reader = TranscriptTailReader()
+    /// Marks as last persisted/updated, keyed by path.
+    private var marks: [String: UsageLedgerState.FileMark] = [:]
 
     /// Restores the persisted ledger state when the store has one.
     public init(
@@ -48,19 +56,78 @@ public actor UsageMeter {
         self.store = store
         if let state = store?.load() {
             self.ledger = UsageLedger(state: state, timeZone: timeZone, pricing: pricing)
+            for mark in state.fileMarks ?? [] {
+                marks[mark.path] = mark
+            }
         } else {
             self.ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
         }
         self.quota = QuotaState(freshnessWindow: quotaFreshnessWindow)
     }
 
-    /// Parse one transcript line; non-usage lines are free (pre-filter).
+    /// Launch-time catch-up (plan 09 M5): prime every known file from its
+    /// persisted mark, then read each given file to EOF. Files with a valid
+    /// mark yield exactly the lines written while the app was closed; files
+    /// without one (new sessions, rotated files) are read from the top — all
+    /// of it uncounted by construction.
+    public func start(files: [URL], at date: Date = Date()) async {
+        for (path, mark) in marks {
+            reader.prime(
+                URL(fileURLWithPath: path),
+                offset: mark.offset,
+                identity: TranscriptFileStat(
+                    size: mark.size, deviceID: mark.deviceID, inode: mark.inode
+                )
+            )
+        }
+        await noteActivity(paths: files, at: date)
+    }
+
+    /// Fresh writes on these transcripts (from the detection layer's FSEvents
+    /// fan-out). Reads with the meter's own reader, ingests, refreshes marks,
+    /// and persists rollups + marks in one state.
+    public func noteActivity(paths: [URL], at date: Date = Date()) async {
+        var ingestedAnything = false
+        for url in paths {
+            var rounds = 0
+            repeat {
+                let lines = reader.readNewLines(at: url)
+                if lines.isEmpty { break }
+                for line in lines {
+                    guard let record = parser.parse(line: line) else { continue }
+                    if await ledger.ingest(record) { ingestedAnything = true }
+                }
+                rounds += 1
+            } while reader.hasPendingBytes(at: url) && rounds < 8
+            if let mark = reader.currentMark(at: url) {
+                marks[url.path] = UsageLedgerState.FileMark(
+                    path: url.path,
+                    deviceID: mark.stat.deviceID,
+                    inode: mark.stat.inode,
+                    size: mark.stat.size,
+                    offset: mark.offset
+                )
+                ingestedAnything = true   // a moved offset is itself state worth saving
+            }
+        }
+        if ingestedAnything {
+            await persist()
+        }
+    }
+
+    /// Parse one transcript line directly (test seam; production flows through
+    /// `noteActivity`). Does NOT advance marks — line callers own replay.
     public func ingestLine(_ line: String, at date: Date = Date()) async {
         guard let record = parser.parse(line: line) else { return }
         guard await ledger.ingest(record) else { return }
-        if let store {
-            store.save(await ledger.state())
-        }
+        await persist()
+    }
+
+    private func persist() async {
+        guard let store else { return }
+        var state = await ledger.state()
+        state.fileMarks = marks.values.sorted { $0.path < $1.path }
+        store.save(state)
     }
 
     /// One Statusline frame's official numbers.
@@ -91,9 +158,7 @@ public actor UsageMeter {
 
     /// Synchronous persistence drain for app shutdown and tests.
     public func flush() async {
-        if let store {
-            store.save(await ledger.state())
-            store.flush()
-        }
+        await persist()
+        store?.flush()
     }
 }

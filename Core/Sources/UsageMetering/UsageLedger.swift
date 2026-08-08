@@ -98,6 +98,28 @@ public struct UsageLedgerState: Codable, Equatable, Sendable {
     public var sessions: [UsageRecord]
     /// Optional so pre-M5 files keep decoding.
     public var maxBlockTokens: Int?
+    /// Per-transcript-file resume positions (plan 09 M5). Owned by UsageMeter
+    /// but persisted HERE, in the same save as the rollups they justify —
+    /// that shared write is the whole anti-double-count argument: a mark can
+    /// never claim lines the rollups have not counted, or vice versa.
+    /// Optional so pre-M5 files keep decoding.
+    public var fileMarks: [FileMark]?
+
+    public struct FileMark: Codable, Equatable, Sendable {
+        public var path: String
+        public var deviceID: UInt64
+        public var inode: UInt64
+        public var size: UInt64
+        public var offset: UInt64
+
+        public init(path: String, deviceID: UInt64, inode: UInt64, size: UInt64, offset: UInt64) {
+            self.path = path
+            self.deviceID = deviceID
+            self.inode = inode
+            self.size = size
+            self.offset = offset
+        }
+    }
 }
 
 public actor UsageLedger {

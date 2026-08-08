@@ -3,8 +3,9 @@
 // composition root talks to this and nothing else.
 //
 // Ingest paths:
-// - `ingestLine`: transcript lines from the detection layer's tail reader
-//   (shared reader — see DetectionCoordinator.transcriptLineSink).
+// - `start(files:)` / `noteActivity(paths:)`: transcripts, read with the
+//   meter's OWN reader and its own persisted offsets (plan 09 M5). The
+//   detection layer only says WHICH files moved.
 // - `ingestQuota`: Statusline frames from the socket (routed by the
 //   composition root BEFORE detection ingest; the session state machine never
 //   sees them).
@@ -46,6 +47,11 @@ public actor UsageMeter {
     /// cannot be un-added, and the transcripts are still on disk.
     public static let stateVersion = 2
 
+    /// How far back a rebuild recreates. The menu shows today and the trailing
+    /// seven days, so ten days of transcripts is the whole renderable past
+    /// with margin; older files are marked, not read.
+    public static let rebuildHorizon: TimeInterval = 10 * 86_400
+
     private let parser = UsageRecordParser()
     private var ledger: UsageLedger
     private let store: UsageStore?
@@ -73,17 +79,19 @@ public actor UsageMeter {
         self.store = store
         self.timeZone = timeZone
         self.pricing = pricing
-        if let state = store?.load(), state.version >= Self.stateVersion {
-            self.ledger = UsageLedger(state: state, timeZone: timeZone, pricing: pricing)
-            for mark in state.fileMarks ?? [] {
+        let persisted = store?.load()
+        if let persisted, persisted.version >= Self.stateVersion {
+            self.ledger = UsageLedger(state: persisted, timeZone: timeZone, pricing: pricing)
+            for mark in persisted.fileMarks ?? [] {
                 marks[mark.path] = mark
             }
         } else {
             // Either nothing persisted (nothing to rebuild — the transcripts
-            // ARE the history) or a state whose counts and marks cannot be
-            // reconciled. Both start from empty; `start(files:)` fills it.
+            // ARE the history, and a first run reads them all) or a state whose
+            // counts and marks cannot be reconciled (rebuild). Both start from
+            // an empty ledger; `start(files:)` fills it.
             self.ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
-            self.needsRebuild = store?.load() != nil
+            self.needsRebuild = persisted != nil
         }
         self.quota = QuotaState(freshnessWindow: quotaFreshnessWindow)
     }
@@ -109,6 +117,32 @@ public actor UsageMeter {
             ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
             marks.removeAll()
             reader.reset()
+            // A rebuild is bounded by what the UI can actually show. The menu
+            // reports today and the trailing seven days; reading a gigabyte of
+            // months-old transcripts to recreate day rollups nothing renders
+            // would cost a minute of launch IO for nothing. Files outside the
+            // horizon are marked at EOF instead — counted as history we choose
+            // not to recreate, and never re-read later.
+            let horizon = date.addingTimeInterval(-Self.rebuildHorizon)
+            var recent: [URL] = []
+            for url in files {
+                let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? nil
+                if let modified, modified < horizon {
+                    reader.readNewLines(at: url, startAtEnd: true)
+                    if let mark = reader.currentMark(at: url) {
+                        marks[url.path] = UsageLedgerState.FileMark(
+                            path: url.path, deviceID: mark.stat.deviceID,
+                            inode: mark.stat.inode, size: mark.stat.size, offset: mark.offset
+                        )
+                    }
+                } else {
+                    recent.append(url)
+                }
+            }
+            await drain(paths: recent)
+            marks = marks.filter { FileManager.default.fileExists(atPath: $0.key) }
+            await persist()
+            return
         } else {
             for (path, mark) in marks {
                 reader.prime(
@@ -131,7 +165,22 @@ public actor UsageMeter {
     /// fan-out). Reads with the meter's own reader, ingests, refreshes marks,
     /// and persists rollups + marks in one state.
     public func noteActivity(paths: [URL], at date: Date = Date()) async {
-        var ingestedAnything = false
+        let moved = await drain(paths: paths)
+        if moved {
+            await persist()
+        }
+    }
+
+    /// Reads each file to EOF, ingests what parses, and refreshes its mark.
+    /// Returns whether anything moved (so the caller can skip a pointless save).
+    ///
+    /// The round cap exists to bound one call's work, and it is deliberately
+    /// generous: a 50 MB transcript must drain COMPLETELY, or the mark would
+    /// claim a position the counts never reached and the remainder would be
+    /// silently dropped — the one failure mode marks exist to prevent.
+    @discardableResult
+    private func drain(paths: [URL]) async -> Bool {
+        var moved = false
         for url in paths {
             var rounds = 0
             repeat {
@@ -139,10 +188,10 @@ public actor UsageMeter {
                 if lines.isEmpty { break }
                 for line in lines {
                     guard let record = parser.parse(line: line) else { continue }
-                    if await ledger.ingest(record) { ingestedAnything = true }
+                    _ = await ledger.ingest(record)
                 }
                 rounds += 1
-            } while reader.hasPendingBytes(at: url) && rounds < 8
+            } while reader.hasPendingBytes(at: url) && rounds < Self.maxDrainRounds
             if let mark = reader.currentMark(at: url) {
                 marks[url.path] = UsageLedgerState.FileMark(
                     path: url.path,
@@ -151,13 +200,16 @@ public actor UsageMeter {
                     size: mark.stat.size,
                     offset: mark.offset
                 )
-                ingestedAnything = true   // a moved offset is itself state worth saving
+                moved = true
             }
         }
-        if ingestedAnything {
-            await persist()
-        }
+        return moved
     }
+
+    /// 4096 rounds x the reader's 8 MiB per-call budget = 32 GiB, i.e. no real
+    /// transcript is ever left half-read, while a pathological file still
+    /// cannot loop forever.
+    private static let maxDrainRounds = 4096
 
     /// Parse one transcript line directly (test seam; production flows through
     /// `noteActivity`). Does NOT advance marks — line callers own replay.

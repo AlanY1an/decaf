@@ -160,3 +160,39 @@ struct UsageStateMigrationTests {
         #expect(try #require(UsageStore(fileURL: harness.storeURL).load()).fileMarks?.isEmpty == true)
     }
 }
+
+@Suite("Usage rebuild horizon")
+struct UsageRebuildHorizonTests {
+
+    /// A rebuild recreates only what the menu can show. An old transcript is
+    /// marked at EOF rather than counted — and, crucially, is not re-read on
+    /// the NEXT launch either.
+    @Test func oldFilesAreMarkedNotCounted() async throws {
+        let harness = try MarksHarness()
+        defer { harness.cleanUp() }
+        try harness.write([usageLine(message: "old", input: 999)])
+        let longAgo = Date().addingTimeInterval(-40 * 86_400)
+        try FileManager.default.setAttributes(
+            [.modificationDate: longAgo], ofItemAtPath: harness.transcript.path)
+
+        // A version-1 state forces the rebuild path.
+        let store = UsageStore(fileURL: harness.storeURL, debounceInterval: 0)
+        store.save(UsageLedgerState(version: 1, days: [], hours: [], sessions: [],
+                                    maxBlockTokens: nil, fileMarks: nil))
+        store.flush()
+
+        let meter = harness.makeMeter()
+        await meter.start(files: [harness.transcript])
+        await meter.flush()
+
+        #expect(await harness.todayTotal(meter) == 0)
+        let saved = try #require(UsageStore(fileURL: harness.storeURL).load())
+        #expect(saved.fileMarks?.count == 1)
+        #expect(saved.fileMarks?.first?.offset ?? 0 > 0)   // marked at EOF, not zero
+
+        // Next launch resumes from that mark: still nothing counted.
+        let next = harness.makeMeter()
+        await next.start(files: [harness.transcript])
+        #expect(await harness.todayTotal(next) == 0)
+    }
+}

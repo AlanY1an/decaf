@@ -59,18 +59,24 @@ public struct UsageSnapshot: Equatable, Sendable {
     /// price, so `todayCostUSD` understates the equivalent value.
     public var todayHasUnpricedModels: Bool
     public var activeBlock: UsageBlock?
+    /// The biggest 5h-block total ever observed on this machine — the honest
+    /// denominator for an estimated block percentage ("of personal max",
+    /// never of an official limit we do not have).
+    public var personalMaxBlockTokens: Int?
     public var sevenDayTokens: TokenTotals
     /// Most-recent first.
     public var sessions: [SessionWaterline]
 
     public init(
         today: TokenTotals, todayCostUSD: Double?, todayHasUnpricedModels: Bool,
-        activeBlock: UsageBlock?, sevenDayTokens: TokenTotals, sessions: [SessionWaterline]
+        activeBlock: UsageBlock?, personalMaxBlockTokens: Int? = nil,
+        sevenDayTokens: TokenTotals, sessions: [SessionWaterline]
     ) {
         self.today = today
         self.todayCostUSD = todayCostUSD
         self.todayHasUnpricedModels = todayHasUnpricedModels
         self.activeBlock = activeBlock
+        self.personalMaxBlockTokens = personalMaxBlockTokens
         self.sevenDayTokens = sevenDayTokens
         self.sessions = sessions
     }
@@ -90,6 +96,8 @@ public struct UsageLedgerState: Codable, Equatable, Sendable {
     public var days: [DayRollup]
     public var hours: [HourBucket]
     public var sessions: [UsageRecord]
+    /// Optional so pre-M5 files keep decoding.
+    public var maxBlockTokens: Int?
 }
 
 public actor UsageLedger {
@@ -110,6 +118,7 @@ public actor UsageLedger {
     private var days: [DayModelKey: TokenTotals] = [:]
     private var hours: [Date: TokenTotals] = [:]
     private var latestBySession: [String: UsageRecord] = [:]
+    private var maxBlockTokens: Int?
 
     private let timeZone: TimeZone
     /// Hour buckets kept this long past `now` (8 d covers the 7-day window).
@@ -163,6 +172,7 @@ public actor UsageLedger {
         for record in state.sessions {
             latestBySession[record.sessionID] = record
         }
+        maxBlockTokens = state.maxBlockTokens
     }
 
     private static func makeDayFormatter(timeZone: TimeZone) -> DateFormatter {
@@ -230,11 +240,17 @@ public actor UsageLedger {
                 )
             }
 
+        let block = activeBlock(now: now)
+        if let block {
+            maxBlockTokens = max(maxBlockTokens ?? 0, block.tokens.total)
+        }
+
         return UsageSnapshot(
             today: today,
             todayCostUSD: todayCost,
             todayHasUnpricedModels: hasUnpriced,
-            activeBlock: activeBlock(now: now),
+            activeBlock: block,
+            personalMaxBlockTokens: maxBlockTokens,
             sevenDayTokens: sevenDay,
             sessions: sessions
         )
@@ -247,7 +263,8 @@ public actor UsageLedger {
                 .sorted { ($0.day, $0.model) < ($1.day, $1.model) },
             hours: hours.map { UsageLedgerState.HourBucket(hour: $0.key, tokens: $0.value) }
                 .sorted { $0.hour < $1.hour },
-            sessions: latestBySession.values.sorted { $0.timestamp > $1.timestamp }
+            sessions: latestBySession.values.sorted { $0.timestamp > $1.timestamp },
+            maxBlockTokens: maxBlockTokens
         )
     }
 

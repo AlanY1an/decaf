@@ -8,11 +8,13 @@ import UsageMetering
 
 private func overview(
     fiveHourPercent: Double? = nil,
+    fiveHourResetsAt: Date? = nil,
     provenance: QuotaState.Provenance = .estimated,
     today: TokenTotals = TokenTotals(),
     todayCost: Double? = nil,
     hasUnpriced: Bool = false,
-    activeBlock: UsageBlock? = nil
+    activeBlock: UsageBlock? = nil,
+    personalMax: Int? = nil
 ) -> UsageOverview {
     var quota = QuotaState()
     if let fiveHourPercent {
@@ -27,10 +29,11 @@ private func overview(
             todayCostUSD: todayCost,
             todayHasUnpricedModels: hasUnpriced,
             activeBlock: activeBlock,
+            personalMaxBlockTokens: personalMax,
             sevenDayTokens: TokenTotals(),
             sessions: []
         ),
-        quotaFiveHour: fiveHourPercent.map { QuotaState.Window(usedPercentage: $0, resetsAt: nil) },
+        quotaFiveHour: fiveHourPercent.map { QuotaState.Window(usedPercentage: $0, resetsAt: fiveHourResetsAt) },
         quotaSevenDay: nil,
         quotaProvenance: provenance
     )
@@ -99,5 +102,58 @@ struct UsageMenuTests {
         #expect(rows.contains {
             if case .usage(let text) = $0 { return text.contains("official") } else { return false }
         })
+    }
+}
+
+@Suite("Usage menu copy M5")
+struct UsageMenuM5Tests {
+
+    private let now = Date(timeIntervalSince1970: 1_786_500_000)
+
+    @Test func futureResetTimeIsAppended() throws {
+        let resets = now.addingTimeInterval(3600)
+        let line = try #require(UsageCopy.quotaLine(
+            for: overview(fiveHourPercent: 34.0, fiveHourResetsAt: resets,
+                          provenance: .official(fresh: true)),
+            now: now))
+        #expect(line.hasPrefix("Limits: 5h 34% · resets "))
+        #expect(line.hasSuffix("(official)"))
+        #expect(line.contains(MenuTextFormatter.timeString(resets)))
+    }
+
+    @Test func pastResetTimeIsOmitted() {
+        let line = UsageCopy.quotaLine(
+            for: overview(fiveHourPercent: 34.0, fiveHourResetsAt: now.addingTimeInterval(-60),
+                          provenance: .official(fresh: true)),
+            now: now)
+        #expect(line == "Limits: 5h 34% (official)")
+    }
+
+    @Test func blockPercentageUsesPersonalMax() {
+        let block = UsageBlock(start: now, end: now.addingTimeInterval(5 * 3600),
+                               tokens: TokenTotals(input: 2_100_000))
+        let line = UsageCopy.quotaLine(
+            for: overview(activeBlock: block, personalMax: 3_400_000), now: now)
+        #expect(line == "5h block: 62% of personal max (≈2.1M tokens, estimated)")
+    }
+
+    @Test func recordBlockFallsBackToTokensOnly() {
+        let block = UsageBlock(start: now, end: now.addingTimeInterval(5 * 3600),
+                               tokens: TokenTotals(input: 3_400_000))
+        let line = UsageCopy.quotaLine(
+            for: overview(activeBlock: block, personalMax: 3_400_000), now: now)
+        #expect(line == "5h block: ≈3.4M tokens (estimated)")
+    }
+
+    @Test func sessionRowCarriesTheContextWaterline() {
+        let session = AgentSessionSummary(
+            id: "S1", agent: .claudeCode, projectName: "api",
+            phase: .working, startedAt: now.addingTimeInterval(-120))
+        let waterline = SessionWaterline(
+            sessionID: "S1", model: "m", contextTokens: 124_000,
+            contextLimit: 200_000, timestamp: now)
+        let plain = MenuTextFormatter.sessionLine(for: session, now: now)
+        let with = MenuTextFormatter.sessionLine(for: session, now: now, waterline: waterline)
+        #expect(with == plain + " · ctx 62%")
     }
 }

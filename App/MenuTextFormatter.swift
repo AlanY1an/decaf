@@ -96,13 +96,23 @@ enum MenuTextFormatter {
 
     // MARK: Session rows
 
-    static func sessionLine(for session: AgentSessionSummary, now: Date = Date()) -> String {
+    /// `waterline` (plan 09 M5): the session's context occupancy, appended as
+    /// "· ctx 62%" when known. Optional with a nil default so every caller
+    /// without usage data — and every pre-M5 test expectation — is unchanged.
+    static func sessionLine(
+        for session: AgentSessionSummary,
+        now: Date = Date(),
+        waterline: SessionWaterline? = nil
+    ) -> String {
+        let base: String
         switch session.phase {
         case .working:
-            return "\(session.projectName) — working for \(durationText(since: session.startedAt, now: now))"
+            base = "\(session.projectName) — working for \(durationText(since: session.startedAt, now: now))"
         case .graceIdle:
-            return "\(session.projectName) — grace period"
+            base = "\(session.projectName) — grace period"
         }
+        guard let waterline else { return base }
+        return base + " · ctx \(Int((waterline.usedFraction * 100).rounded()))%"
     }
 
     static func overflowLine(hiddenCount: Int) -> String {
@@ -206,12 +216,18 @@ enum UsageCopy {
     }
 
     /// The limits line. Official numbers when we have them (labeled, staleness
-    /// included); otherwise the block estimate; nil when there is nothing
-    /// honest to say.
-    static func quotaLine(for overview: UsageOverview) -> String? {
+    /// included, the 5h reset as an ABSOLUTE time per the menu's R7 rule);
+    /// otherwise the block estimate; nil when there is nothing honest to say.
+    static func quotaLine(for overview: UsageOverview, now: Date = Date()) -> String? {
         var windows: [String] = []
         if let fiveHour = overview.quotaFiveHour {
-            windows.append("5h \(Int(fiveHour.usedPercentage.rounded()))%")
+            var part = "5h \(Int(fiveHour.usedPercentage.rounded()))%"
+            // Only a FUTURE reset instant is information; a past one means the
+            // window already rolled and the percentage is about to be refreshed.
+            if let resetsAt = fiveHour.resetsAt, resetsAt > now {
+                part += " · resets \(MenuTextFormatter.timeString(resetsAt))"
+            }
+            windows.append(part)
         }
         if let sevenDay = overview.quotaSevenDay {
             windows.append("7d \(Int(sevenDay.usedPercentage.rounded()))%")
@@ -226,9 +242,22 @@ enum UsageCopy {
             return "Limits: " + windows.joined(separator: " · ") + " (\(label))"
         }
         if let block = overview.usage.activeBlock {
-            return "5h block: ≈\(tokensText(block.tokens.total)) tokens (estimated)"
+            return blockEstimateLine(block, personalMax: overview.usage.personalMaxBlockTokens)
         }
         return nil
+    }
+
+    /// The estimated-block sentence. With a personal-max on record that is
+    /// LARGER than the current block, the block reads as a percentage of it —
+    /// explicitly "of personal max", never of an official limit we do not
+    /// have. A block that is itself the biggest ever (or the first) has no
+    /// meaningful denominator and stays a plain token count.
+    static func blockEstimateLine(_ block: UsageBlock, personalMax: Int?) -> String {
+        if let personalMax, personalMax > block.tokens.total, personalMax > 0 {
+            let percent = Int((Double(block.tokens.total) / Double(personalMax) * 100).rounded())
+            return "5h block: \(percent)% of personal max (≈\(tokensText(block.tokens.total)) tokens, estimated)"
+        }
+        return "5h block: ≈\(tokensText(block.tokens.total)) tokens (estimated)"
     }
 
     /// Today's totals with the equivalent API value. The "≈" and "value" are

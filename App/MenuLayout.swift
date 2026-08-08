@@ -147,8 +147,16 @@ enum MenuLayout {
         // list. The status line (computed above from the same predicate) has
         // already fallen back to the manual/idle sentence, which is the truth.
         let active = s.holdingAgentSessions
+        // Context waterlines by session id (plan 09 M5) — the ledger's answer
+        // to "how full is this session's window", appended to the row when
+        // known and silently absent when not.
+        let waterlines = Dictionary(
+            uniqueKeysWithValues: (s.usage?.usage.sessions ?? []).map { ($0.sessionID, $0) }
+        )
         for session in active.prefix(MenuTextFormatter.maxSessionRows) {
-            rows.append(.session(MenuTextFormatter.sessionLine(for: session, now: now)))
+            rows.append(.session(MenuTextFormatter.sessionLine(
+                for: session, now: now, waterline: waterlines[session.id]
+            )))
         }
         if active.count > MenuTextFormatter.maxSessionRows {
             rows.append(.overflow(MenuTextFormatter.overflowLine(
@@ -186,7 +194,7 @@ enum MenuLayout {
         // `agentAutoKeepAwake`: the ledger keeps counting while the holds are
         // off, and the numbers stay true.
         if showsAgentControls(for: s), let usage = s.usage {
-            if let quota = UsageCopy.quotaLine(for: usage) {
+            if let quota = UsageCopy.quotaLine(for: usage, now: now) {
                 rows.append(.usage(quota))
             }
             if let today = UsageCopy.todayLine(for: usage) {

@@ -77,7 +77,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Token usage metering (plan 09): a `UsageMetering` module reads the real
+  `usage` counters from Claude Code transcripts — deduplicated by message +
+  request id, rolled up per day/model, with a 5-hour-block and trailing-7-day
+  estimate (ccusage's inference, labeled as an estimate) and a per-session
+  context waterline. Costs are shown as "API-equivalent value" from a static
+  built-in price table; the zero-network promise is unchanged.
+- Official rate limits via an optional statusline bridge: `decaf-statusline`
+  receives Claude Code's status JSON, forwards the official `five_hour` /
+  `seven_day` `used_percentage` over the existing socket, and chains to any
+  status line you already had — its output passes through unchanged, and
+  uninstalling restores your original `statusLine` verbatim. Official numbers
+  degrade to "official, stale" after 10 minutes and the menu says which kind
+  it is showing (`Limits: 5h 34% (official)` vs `(estimated)`).
+- Menu: `Limits:` and `Today:` rows (absent on a Mac that has never run an
+  agent, same rule as every other agent row). Settings › Agents: an install /
+  uninstall row for the statusline bridge.
+- Two new pinned read surfaces (closed enums + pinning tests) keep the privacy
+  contract provable: transcript usage counters and statusline rate-limit
+  fields; conversation content remains unread.
+- `Scripts/check-statusline.sh`: dependency-whitelist and behavior smoke for
+  the new helper (default line, socket frame, chain passthrough, EPIPE).
 
 ## [0.1.0] — Unreleased
 

@@ -152,7 +152,13 @@ private func runChain(command: String, stdinData: Data) -> Data? {
     } catch {
         return nil
     }
-    stdinPipe.fileHandleForWriting.write(stdinData)
+    // POSIX write, not FileHandle.write: a chain command that exits before
+    // reading its stdin turns the pipe dead, and FileHandle.write answers
+    // EPIPE with an ObjC exception Swift cannot catch. SIGPIPE is already
+    // ignored, so the raw syscall just returns -1 and we move on — the chain
+    // may still have produced output worth passing through.
+    let stdinFD = stdinPipe.fileHandleForWriting.fileDescriptor
+    _ = writeAll(stdinData, to: stdinFD)
     try? stdinPipe.fileHandleForWriting.close()
     let output = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()

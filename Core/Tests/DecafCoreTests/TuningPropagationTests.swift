@@ -17,7 +17,7 @@ import Testing
 @Suite @MainActor struct TuningPropagation {
 
     private func makeRoot(gracePeriodMinutes: Int) -> CompositionRoot {
-        let defaults = UserDefaults(suiteName: "io.github.alany1an.decaf.tests.tuning.\(UUID().uuidString)")!
+        let defaults = makeEphemeralDefaults("tuning")
         let settings = SettingsStore(defaults: defaults)
         settings.gracePeriodMinutes = gracePeriodMinutes
         // Never started: no socket, no sweep loop. `applyTuning` is the unit.

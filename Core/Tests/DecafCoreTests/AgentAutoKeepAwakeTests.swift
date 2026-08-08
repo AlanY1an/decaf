@@ -36,7 +36,7 @@ import HookWire
     // MARK: - Harness
 
     private func makeSuite() -> UserDefaults {
-        UserDefaults(suiteName: "io.github.alany1an.decaf.tests.autokeepawake.\(UUID().uuidString)")!
+        makeEphemeralDefaults("autokeepawake")
     }
 
     private func makeRoot(

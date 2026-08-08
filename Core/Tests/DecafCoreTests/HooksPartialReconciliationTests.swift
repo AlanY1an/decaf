@@ -105,7 +105,7 @@ private func waitUntil(
 @Suite @MainActor struct OutdatedProbeReachesThePrecisionRow {
 
     private func makeRoot() -> CompositionRoot {
-        let defaults = UserDefaults(suiteName: "io.github.alany1an.decaf.tests.partial.\(UUID().uuidString)")!
+        let defaults = makeEphemeralDefaults("partial")
 
         // A watch root that EXISTS, under a temp home.
         //

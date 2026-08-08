@@ -168,7 +168,7 @@ import HookWire
 @Suite @MainActor struct FallbackHoldReachesTheSnapshot {
 
     private func makeRoot() -> (root: CompositionRoot, fake: FakePowerAsserter) {
-        let defaults = UserDefaults(suiteName: "io.github.alany1an.decaf.tests.menu.\(UUID().uuidString)")!
+        let defaults = makeEphemeralDefaults("menu")
         let fake = FakePowerAsserter()
         // Never started: no socket bound, no detection loop. `apply` is the real
         // DetectionOutput -> HoldRequest glue and republishes synchronously.

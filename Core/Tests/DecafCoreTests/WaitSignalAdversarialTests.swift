@@ -378,9 +378,7 @@ private final class AdversarialTranscript {
             let sessions = await coordinator.currentHoldingSessions()
             #expect(output.isWaiting, "the fixture must actually be wait-held")
 
-            let defaults = UserDefaults(
-                suiteName: "io.github.alany1an.decaf.tests.adversarial.\(UUID().uuidString)"
-            )!
+            let defaults = makeEphemeralDefaults("adversarial")
             let asserter = FakePowerAsserter()
             let root = CompositionRoot(
                 settings: SettingsStore(defaults: defaults),

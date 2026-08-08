@@ -22,7 +22,7 @@ import HookWire
 @Suite @MainActor struct AgentDetectionLatch {
 
     private func makeSuite() -> UserDefaults {
-        UserDefaults(suiteName: "io.github.alany1an.decaf.tests.latch.\(UUID().uuidString)")!
+        makeEphemeralDefaults("latch")
     }
 
     private func makeRoot(defaults: UserDefaults) -> CompositionRoot {

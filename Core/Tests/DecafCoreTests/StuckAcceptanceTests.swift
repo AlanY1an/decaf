@@ -398,7 +398,7 @@ private func everyFiveMinutes(_ index: Int) -> Bool { index % 10 == 0 }
         let asserter = FakePowerAsserter()
         let root = CompositionRoot(
             settings: SettingsStore(
-                defaults: UserDefaults(suiteName: "io.github.alany1an.decaf.tests.stuck.\(UUID().uuidString)")!
+                defaults: makeEphemeralDefaults("stuck")
             ),
             asserter: asserter,
             displaySleeper: FakeDisplaySleeper(),
@@ -824,7 +824,7 @@ private func everyFiveMinutes(_ index: Int) -> Bool { index % 10 == 0 }
         let asserter = FakePowerAsserter()
         let root = CompositionRoot(
             settings: SettingsStore(
-                defaults: UserDefaults(suiteName: "io.github.alany1an.decaf.tests.manual.\(UUID().uuidString)")!
+                defaults: makeEphemeralDefaults("manual")
             ),
             asserter: asserter,
             displaySleeper: FakeDisplaySleeper(),

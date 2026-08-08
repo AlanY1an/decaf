@@ -52,9 +52,9 @@ import Testing
     }
 
     @Test func settingsStoreFactoryDefaultsAndRoundTrip() throws {
-        let suiteName = "io.github.alany1an.decaf.tests.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
+        // Was `defer { removePersistentDomain }`, which reads as complete and is
+        // not: it empties the domain but leaves an empty plist on disk every run.
+        let defaults = makeEphemeralDefaults("contract")
         let store = SettingsStore(defaults: defaults)
 
         // Factory defaults (plan 04 §5).

@@ -362,8 +362,7 @@ private extension FakePowerAsserter {
 
 @Suite struct DisplayPolicySettingsTests {
     private func makeDefaults() -> UserDefaults {
-        let suite = "io.github.alany1an.decaf.tests.display.\(UUID().uuidString)"
-        return UserDefaults(suiteName: suite)!
+        makeEphemeralDefaults("display")
     }
 
     @Test func factoryDefaultIsAllowSleep() {
@@ -395,7 +394,7 @@ private extension FakePowerAsserter {
         sleeper: FakeDisplaySleeper,
         defaults: UserDefaults
     ) {
-        let defaults = UserDefaults(suiteName: "io.github.alany1an.decaf.tests.display.\(UUID().uuidString)")!
+        let defaults = makeEphemeralDefaults("display")
         let fake = FakePowerAsserter()
         let sleeper = FakeDisplaySleeper()
         // Never started: no socket is bound, no detection runs. Commands

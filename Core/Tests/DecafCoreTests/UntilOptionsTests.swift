@@ -221,7 +221,7 @@ private func date(
     }
 
     private func makeRoot() -> (root: CompositionRoot, fake: FakePowerAsserter) {
-        let defaults = UserDefaults(suiteName: "io.github.alany1an.decaf.tests.until.\(UUID().uuidString)")!
+        let defaults = makeEphemeralDefaults("until")
         let fake = FakePowerAsserter()
         // Never started: no socket bound, no detection running. Commands
         // republish synchronously, which is all these tests need.

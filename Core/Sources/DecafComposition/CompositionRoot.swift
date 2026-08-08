@@ -108,6 +108,10 @@ public final class CompositionRoot: ObservableObject {
     /// Latest usage overview, refreshed on detection outputs, Statusline
     /// frames, and the periodic pump; folded into the snapshot.
     private var usageOverview: UsageOverview?
+    /// Whether a usage store was injected. Gates the launch catch-up: without
+    /// persistence the ledger starts empty every launch, so scanning the whole
+    /// transcript history would cost seconds and buy nothing that survives.
+    private let usagePersistenceEnabled: Bool
 
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
@@ -134,9 +138,14 @@ public final class CompositionRoot: ObservableObject {
         // root and the asserter.
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
-        // Usage metering (plan 09 M3). The default store follows the
-        // SessionsStore precedent (real App Support); tests inject nil.
-        usageStore: UsageStore? = UsageStore(),
+        // Usage metering (plan 09 M3). Defaults to nil — no persistence and
+        // no launch catch-up — for the same reason `userNotifier` does: the
+        // real store lives in the user's Application Support, and this package
+        // is also linked into `swift test`, where a default that writes there
+        // (and reads every transcript under the real ~/.claude to fill it) is
+        // exactly the discipline every other seam here exists to prevent. The
+        // app target injects the real one.
+        usageStore: UsageStore? = nil,
         usageTimeZone: TimeZone = .current,
         // The app's only notification channel (plan 04's zero-notification rule
         // narrowed, REVIEW-DECISIONS 2026-08-06). Defaults to nil — silent —
@@ -148,6 +157,7 @@ public final class CompositionRoot: ObservableObject {
         self.settings = settings
         self.displaySleeper = displaySleeper
         self.watcher = watcher
+        self.usagePersistenceEnabled = usageStore != nil
         self.everDetectedAgent = settings.hasEverDetectedAgent
         self.agentAutoKeepAwake = settings.agentAutoKeepAwake
 
@@ -231,12 +241,14 @@ public final class CompositionRoot: ObservableObject {
         // Usage catch-up (plan 09 M5): read every known transcript from its
         // persisted mark once, so tokens spent while the app was closed enter
         // the ledger exactly once. One-shot; live activity takes over after.
-        let meter = usageMeter
-        let existingTranscripts = watcher.existingTranscriptFiles().values.flatMap { $0 }
-        pumpTasks.append(Task { [weak self] in
-            await meter.start(files: existingTranscripts)
-            await self?.refreshUsageOverview()
-        })
+        if usagePersistenceEnabled {
+            let meter = usageMeter
+            let existingTranscripts = watcher.existingTranscriptFiles().values.flatMap { $0 }
+            pumpTasks.append(Task { [weak self] in
+                await meter.start(files: existingTranscripts)
+                await self?.refreshUsageOverview()
+            })
+        }
         // Usage refresh pump: the ledger moves with every transcript line;
         // 15 s bounds how stale a freshly opened menu can be (plus the
         // event-driven refreshes in `route` and `apply`). Equality-gated

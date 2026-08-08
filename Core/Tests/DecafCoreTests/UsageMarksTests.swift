@@ -102,3 +102,61 @@ struct UsageMarksTests {
         #expect(await harness.todayTotal(second) == 15)
     }
 }
+
+@Suite("Usage state migration")
+struct UsageStateMigrationTests {
+
+    /// The 2026-08-08 double-count: a version-1 state (rollups written by a
+    /// build with no marks) met a marks-aware build, which read every
+    /// transcript from zero and added a second copy on top. The version gate
+    /// must rebuild instead — the same numbers, counted once.
+    @Test func versionOneStateIsRebuiltNotAddedTo() async throws {
+        let harness = try MarksHarness()
+        defer { harness.cleanUp() }
+        try harness.write([usageLine(message: "m1", input: 10), usageLine(message: "m2", input: 20)])
+
+        // A pre-M5 state: rollups already counting those 30 tokens, no marks,
+        // version 1 — exactly what the shipped build left behind.
+        let stale = UsageLedgerState(
+            version: 1,
+            days: [.init(day: "2026-08-07", model: "claude-opus-4-5-20251101",
+                         tokens: TokenTotals(input: 30))],
+            hours: [],
+            sessions: [],
+            maxBlockTokens: nil,
+            fileMarks: nil
+        )
+        let store = UsageStore(fileURL: harness.storeURL, debounceInterval: 0)
+        store.save(stale)
+        store.flush()
+
+        let meter = harness.makeMeter()
+        await meter.start(files: [harness.transcript])
+        // 30, not 60: the stale rollups were discarded and rebuilt from the file.
+        #expect(await harness.todayTotal(meter) == 30)
+
+        // And the rebuilt state is stamped current, so the next launch resumes
+        // from marks instead of rebuilding again.
+        await meter.flush()
+        let saved = try #require(UsageStore(fileURL: harness.storeURL).load())
+        #expect(saved.version == UsageMeter.stateVersion)
+        #expect(saved.fileMarks?.count == 1)
+    }
+
+    @Test func marksForVanishedFilesAreDropped() async throws {
+        let harness = try MarksHarness()
+        defer { harness.cleanUp() }
+        try harness.write([usageLine(message: "m1", input: 10)])
+
+        let meter = harness.makeMeter()
+        await meter.start(files: [harness.transcript])
+        await meter.flush()
+        #expect(try #require(UsageStore(fileURL: harness.storeURL).load()).fileMarks?.count == 1)
+
+        try FileManager.default.removeItem(at: harness.transcript)
+        let next = harness.makeMeter()
+        await next.start(files: [])
+        await next.flush()
+        #expect(try #require(UsageStore(fileURL: harness.storeURL).load()).fileMarks?.isEmpty == true)
+    }
+}

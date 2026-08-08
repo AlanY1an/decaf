@@ -72,9 +72,32 @@ public struct PricingTable: Sendable {
     ])
 }
 
-/// Claude Code sessions run a 200K context window today. The L1 statusline
-/// source (M2) reports exact per-session numbers; this static value is the
-/// L2 estimate's denominator, and the UI labels it as an estimate.
+/// Context-window sizes per model, longest prefix wins — the denominator of
+/// the per-session waterline.
+///
+/// This was a flat 200K until 2026-08-08, which made every current-generation
+/// session read 100% full the moment it passed 200K tokens: the models that
+/// matter today carry a 1M window, and clamping the fraction at 1 turned that
+/// mistake into a confident wrong answer rather than an obvious one. Unknown
+/// models fall back to 200K, the smallest window still shipping, so an
+/// unrecognised model over-reports fullness rather than under-reporting it.
 public enum ModelContextLimits {
-    public static func limit(forModel model: String) -> Int { 200_000 }
+
+    public static let fallbackLimit = 200_000
+
+    private static let entries: [(prefix: String, limit: Int)] = [
+        ("claude-fable-5", 1_000_000),
+        ("claude-mythos", 1_000_000),
+        ("claude-opus-5", 1_000_000),
+        ("claude-opus-4-8", 1_000_000),
+        ("claude-opus-4-7", 1_000_000),
+        ("claude-opus-4-6", 1_000_000),
+        ("claude-sonnet-5", 1_000_000),
+        ("claude-sonnet-4-6", 1_000_000),
+        ("claude-haiku-4-5", 200_000),
+    ].sorted { $0.prefix.count > $1.prefix.count }
+
+    public static func limit(forModel model: String) -> Int {
+        entries.first { model.hasPrefix($0.prefix) }?.limit ?? fallbackLimit
+    }
 }

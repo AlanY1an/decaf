@@ -34,10 +34,27 @@ public struct UsageOverview: Equatable, Sendable {
 
 public actor UsageMeter {
 
+    /// Bumped whenever a persisted state can no longer be trusted to line up
+    /// with the marks beside it. On a lower version the meter DISCARDS the
+    /// rollups and rebuilds them from the transcripts on disk (see `start`).
+    ///
+    /// Version 2 exists because version 1 had no marks: the first launch of a
+    /// marks-aware build read every transcript from offset 0 and added a
+    /// second copy of the whole history on top of counts that were already
+    /// there — the in-memory dedup set is empty after a restart, so nothing
+    /// stopped it. Rebuilding is the only honest repair: the inflated numbers
+    /// cannot be un-added, and the transcripts are still on disk.
+    public static let stateVersion = 2
+
     private let parser = UsageRecordParser()
-    private let ledger: UsageLedger
+    private var ledger: UsageLedger
     private let store: UsageStore?
     private var quota: QuotaState
+    private let timeZone: TimeZone
+    private let pricing: PricingTable
+    /// Set at init when the loaded state predates `stateVersion`; consumed by
+    /// the first `start(files:)`.
+    private var needsRebuild = false
     /// The meter's OWN reader (plan 09 M5) — never the detection layer's. Its
     /// offsets are persisted as `UsageLedgerState.fileMarks` in the same save
     /// as the rollups, which is what makes restarts exact: a mark and the
@@ -54,33 +71,60 @@ public actor UsageMeter {
         quotaFreshnessWindow: TimeInterval = 600
     ) {
         self.store = store
-        if let state = store?.load() {
+        self.timeZone = timeZone
+        self.pricing = pricing
+        if let state = store?.load(), state.version >= Self.stateVersion {
             self.ledger = UsageLedger(state: state, timeZone: timeZone, pricing: pricing)
             for mark in state.fileMarks ?? [] {
                 marks[mark.path] = mark
             }
         } else {
+            // Either nothing persisted (nothing to rebuild — the transcripts
+            // ARE the history) or a state whose counts and marks cannot be
+            // reconciled. Both start from empty; `start(files:)` fills it.
             self.ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
+            self.needsRebuild = store?.load() != nil
         }
         self.quota = QuotaState(freshnessWindow: quotaFreshnessWindow)
     }
 
-    /// Launch-time catch-up (plan 09 M5): prime every known file from its
-    /// persisted mark, then read each given file to EOF. Files with a valid
-    /// mark yield exactly the lines written while the app was closed; files
-    /// without one (new sessions, rotated files) are read from the top — all
-    /// of it uncounted by construction.
+    /// Launch-time catch-up (plan 09 M5).
+    ///
+    /// Normal path: prime every known file from its persisted mark, then read
+    /// each given file to EOF. A file with a mark yields exactly the lines
+    /// written while the app was closed; a file without one is genuinely new
+    /// (a session that started while we were away) and is read from the top —
+    /// uncounted by construction, because the previous run left a mark on
+    /// everything that existed.
+    ///
+    /// Rebuild path (`needsRebuild`): the persisted counts cannot be trusted
+    /// against the files, so they are gone already and this pass recreates
+    /// them — every file from offset 0, into a ledger whose dedup set is
+    /// fresh, which makes ONE full pass exact. History older than the
+    /// transcripts still on disk is lost; that is the price of not shipping
+    /// numbers we know to be wrong.
     public func start(files: [URL], at date: Date = Date()) async {
-        for (path, mark) in marks {
-            reader.prime(
-                URL(fileURLWithPath: path),
-                offset: mark.offset,
-                identity: TranscriptFileStat(
-                    size: mark.size, deviceID: mark.deviceID, inode: mark.inode
+        if needsRebuild {
+            needsRebuild = false
+            ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
+            marks.removeAll()
+            reader.reset()
+        } else {
+            for (path, mark) in marks {
+                reader.prime(
+                    URL(fileURLWithPath: path),
+                    offset: mark.offset,
+                    identity: TranscriptFileStat(
+                        size: mark.size, deviceID: mark.deviceID, inode: mark.inode
+                    )
                 )
-            )
+            }
         }
         await noteActivity(paths: files, at: date)
+        // Marks for files that have since vanished are dead weight in every
+        // future save; a rebuild has none, a normal launch can have many.
+        marks = marks.filter { FileManager.default.fileExists(atPath: $0.key) }
+        await persist()
     }
 
     /// Fresh writes on these transcripts (from the detection layer's FSEvents
@@ -126,6 +170,7 @@ public actor UsageMeter {
     private func persist() async {
         guard let store else { return }
         var state = await ledger.state()
+        state.version = Self.stateVersion
         state.fileMarks = marks.values.sorted { $0.path < $1.path }
         store.save(state)
     }

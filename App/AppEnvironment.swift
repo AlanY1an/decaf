@@ -18,6 +18,7 @@ import SwiftUI
 import AgentDetection
 import DecafCore
 import DecafComposition
+import UsageMetering
 import HookWire
 
 // MARK: - Launch at login (the one ServiceManagement call site)
@@ -482,6 +483,11 @@ final class AppEnvironment {
         // user for nothing — authorization is requested at the first post.
         let root = CompositionRoot(
             settings: settingsStore,
+            // Same reasoning as the notifier: the usage ledger's on-disk home
+            // is the app's Application Support directory, so the production
+            // store is injected here rather than defaulted inside the package
+            // (plan 09 M5).
+            usageStore: UsageStore(),
             userNotifier: SystemUserNotifier()
         )
         let store = AppStateStore(snapshot: root.snapshot)

@@ -53,3 +53,20 @@ struct PricingTableTests {
         #expect(snapshot.todayHasUnpricedModels == true)
     }
 }
+
+@Suite("ModelContextLimits")
+struct ModelContextLimitsTests {
+
+    @Test func currentGenerationModelsGetTheMillionWindow() {
+        #expect(ModelContextLimits.limit(forModel: "claude-fable-5") == 1_000_000)
+        #expect(ModelContextLimits.limit(forModel: "claude-opus-5") == 1_000_000)
+        #expect(ModelContextLimits.limit(forModel: "claude-opus-4-8") == 1_000_000)
+        #expect(ModelContextLimits.limit(forModel: "claude-sonnet-5") == 1_000_000)
+    }
+
+    @Test func haikuAndUnknownModelsKeepTheSmallWindow() {
+        #expect(ModelContextLimits.limit(forModel: "claude-haiku-4-5-20251001") == 200_000)
+        #expect(ModelContextLimits.limit(forModel: "<synthetic>") == 200_000)
+        #expect(ModelContextLimits.limit(forModel: "claude-opus-4-1-20250805") == 200_000)
+    }
+}

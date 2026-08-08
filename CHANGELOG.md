@@ -103,6 +103,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Usage counted while the app was closed is caught up at launch: per-file
   read positions persist with the rollups in one file, so a restart counts
   every line exactly once (rotated transcripts start over from the top).
+- Fixed before release, found by checking the shipped numbers against the
+  transcripts by hand: the first launch of a marks-aware build re-read every
+  transcript from the top and added a second copy of the whole history to
+  counts that were already there (measured: 183M "today" against a true 94M).
+  The persisted state now carries a version, and a state older than the
+  current one is rebuilt from the transcripts instead of added to. Session
+  context percentages were also computed against a flat 200K window, so every
+  current-generation session read `100%` once past 200K; context sizes are now
+  per model (1M for the Opus 5 / Sonnet 5 / Fable 5 generation).
 - Display polish: the 5h reset instant on the Limits row (absolute time,
   hidden once past), estimated blocks as a percentage of your own largest
   block ("of personal max" — never of an official limit), per-session

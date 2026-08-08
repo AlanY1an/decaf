@@ -58,13 +58,21 @@ private struct BridgeRun {
     let elapsed: TimeInterval
 }
 
+/// How far the delivery cases lift the bridge's 90 ms watchdog: enough to
+/// outlast a cold process start on a loaded runner, and far enough inside this
+/// harness's own 5 s limit that the watchdog still guarantees the exit.
+private let deliveryWatchdogMicroseconds: UInt32 = 2_000_000
+
 /// Runs the built decaf-bridge with the given stdin/argv against `socketPath`
 /// (injected via the DECAF_BRIDGE_SOCKET test seam) and waits for exit.
+///
+/// `watchdogMicroseconds` defaults to nil, meaning the shipped 90 ms budget.
 @discardableResult
 private func runBridge(
     stdin stdinData: Data,
     arguments: [String] = [],
-    socketPath: String
+    socketPath: String,
+    watchdogMicroseconds: UInt32? = nil
 ) throws -> BridgeRun {
     // Oversized stdin outlives the bridge's 256 KB read cap; the writer side
     // then hits EPIPE, which must be an error, never a fatal signal.
@@ -75,13 +83,20 @@ private func runBridge(
     process.arguments = arguments
     var environment = ProcessInfo.processInfo.environment
     environment["DECAF_BRIDGE_SOCKET"] = socketPath
-    // Lift the 90 ms watchdog for the duration of the test only. These cases
-    // assert that a frame is DELIVERED; on a cold, loaded CI runner the process
-    // start alone can outlast the shipped budget, so the bridge would _exit(0)
-    // before its socket write and the frame would never arrive — a red test for
-    // a reason unrelated to delivery. The budget itself stays enforced, with no
-    // override, by Scripts/bench-bridge.sh.
-    environment["DECAF_BRIDGE_DEADLINE_US"] = "5000000"
+    // Only the delivery cases lift the watchdog, and only because a cold start
+    // on a loaded CI runner can outlast the shipped 90 ms before the socket
+    // write lands — failing them for a reason unrelated to the delivery they
+    // exist to assert. The budget stays enforced, with no override, by
+    // Scripts/bench-bridge.sh.
+    //
+    // The failure-matrix cases pass nil and keep the shipped budget deliberately:
+    // fast silent exit is exactly what they assert. Overriding them backfired
+    // once — a 5 s deadline collided with this harness's own 5 s limit, so the
+    // harness SIGTERM'd the bridge and exit code 15 broke the exit-0 contract.
+    // Any override must stay well inside that limit and the 1.5 s bound below.
+    if let watchdogMicroseconds {
+        environment["DECAF_BRIDGE_DEADLINE_US"] = String(watchdogMicroseconds)
+    }
     process.environment = environment
 
     let stdinPipe = Pipe()
@@ -322,7 +337,8 @@ private final class ImmediateCloseListener {
         let run = try runBridge(
             stdin: fixtureData(testCase.file),
             arguments: testCase.matcherArgument.map { [$0] } ?? [],
-            socketPath: harness.socketPath
+            socketPath: harness.socketPath,
+            watchdogMicroseconds: deliveryWatchdogMicroseconds
         )
         #expect(run.exitCode == 0)
         #expect(run.stdout.isEmpty, "stdout would be injected as Claude context (plan 02 §1.3)")
@@ -447,7 +463,11 @@ private final class ImmediateCloseListener {
         let harness = try ServerHarness()
         defer { harness.shutdown() }
 
-        let run = try runBridge(stdin: oversizedPayload(), socketPath: harness.socketPath)
+        let run = try runBridge(
+            stdin: oversizedPayload(),
+            socketPath: harness.socketPath,
+            watchdogMicroseconds: deliveryWatchdogMicroseconds
+        )
         #expect(run.exitCode == 0)
         #expect(run.stdout.isEmpty)
         #expect(run.stderr.isEmpty)
@@ -479,7 +499,11 @@ private final class ImmediateCloseListener {
         #expect(await harness.noEventArrives(within: 0.3))
 
         // …and the listener survived both: a real bridge event still arrives.
-        _ = try runBridge(stdin: fixtureData("stop.json"), socketPath: harness.socketPath)
+        _ = try runBridge(
+            stdin: fixtureData("stop.json"),
+            socketPath: harness.socketPath,
+            watchdogMicroseconds: deliveryWatchdogMicroseconds
+        )
         let next = try #require(await harness.nextEvent())
         #expect(next.event == "Stop")
     }
@@ -505,7 +529,11 @@ private final class ImmediateCloseListener {
         try harness.startServer() // unlink → bind → listen, no error
         #expect(harness.server.socketFilePresent)
 
-        _ = try runBridge(stdin: fixtureData("session_start.json"), socketPath: harness.socketPath)
+        _ = try runBridge(
+            stdin: fixtureData("session_start.json"),
+            socketPath: harness.socketPath,
+            watchdogMicroseconds: deliveryWatchdogMicroseconds
+        )
         let wire = try #require(await harness.nextEvent())
         #expect(wire.event == "SessionStart")
     }
@@ -522,7 +550,11 @@ private final class ImmediateCloseListener {
         #expect(harness.server.socketFilePresent)
 
         // The event stream survived the rebuild: frames flow again.
-        _ = try runBridge(stdin: fixtureData("user_prompt_submit.json"), socketPath: harness.socketPath)
+        _ = try runBridge(
+            stdin: fixtureData("user_prompt_submit.json"),
+            socketPath: harness.socketPath,
+            watchdogMicroseconds: deliveryWatchdogMicroseconds
+        )
         let wire = try #require(await harness.nextEvent())
         #expect(wire.event == "UserPromptSubmit")
     }

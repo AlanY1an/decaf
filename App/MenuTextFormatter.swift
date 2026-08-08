@@ -96,23 +96,19 @@ enum MenuTextFormatter {
 
     // MARK: Session rows
 
-    /// `waterline` (plan 09 M5): the session's context occupancy, appended as
-    /// "· ctx 62%" when known. Optional with a nil default so every caller
-    /// without usage data — and every pre-M5 test expectation — is unchanged.
-    static func sessionLine(
-        for session: AgentSessionSummary,
-        now: Date = Date(),
-        waterline: SessionWaterline? = nil
-    ) -> String {
-        let base: String
+    /// The context waterline is deliberately NOT here (removed 2026-08-08).
+    /// `SessionWaterline` still rides the snapshot — the loop-scheduling work
+    /// plan 09 anticipates needs it — but a per-session percentage in a list
+    /// that folds after a few rows tells you a number without telling you
+    /// whose it is. It comes back when there is a surface that can say which
+    /// session it belongs to.
+    static func sessionLine(for session: AgentSessionSummary, now: Date = Date()) -> String {
         switch session.phase {
         case .working:
-            base = "\(session.projectName) — working for \(durationText(since: session.startedAt, now: now))"
+            return "\(session.projectName) — working for \(durationText(since: session.startedAt, now: now))"
         case .graceIdle:
-            base = "\(session.projectName) — grace period"
+            return "\(session.projectName) — grace period"
         }
-        guard let waterline else { return base }
-        return base + " · ctx \(Int((waterline.usedFraction * 100).rounded()))%"
     }
 
     static func overflowLine(hiddenCount: Int) -> String {

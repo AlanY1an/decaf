@@ -114,9 +114,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per model (1M for the Opus 5 / Sonnet 5 / Fable 5 generation).
 - Display polish: the 5h reset instant on the Limits row (absolute time,
   hidden once past), estimated blocks as a percentage of your own largest
-  block ("of personal max" — never of an official limit), per-session
-  `ctx N%` context occupancy on session rows, and menu numbers at most 15 s
-  stale on open.
+  block ("of personal max" — never of an official limit), and menu numbers at
+  most 15 s stale on open.
+- `resets_at` is read as Unix epoch seconds as well as an ISO string. Claude
+  Code sends the number; reading only the string meant the reset instant never
+  arrived and the Limits row silently dropped half its own sentence.
 
 ## [0.1.0] — Unreleased
 

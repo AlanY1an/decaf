@@ -71,3 +71,30 @@ struct StatuslineInputTests {
         }
     }
 }
+
+@Suite("StatuslineInput resets_at shapes")
+struct StatuslineResetsAtTests {
+
+    /// The shape Claude Code actually sends: Unix epoch SECONDS. Read as a
+    /// string this was silently dropped, and the menu lost its reset time.
+    @Test func epochSecondsBecomeAnISOString() throws {
+        let json = #"{"model":{"id":"m"},"rate_limits":{"five_hour":{"used_percentage":74,"resets_at":1786104000},"seven_day":{"used_percentage":80,"resets_at":1786449600}}}"#
+        let input = try #require(StatuslineInput.parse(Data(json.utf8)))
+        #expect(input.quota.fiveHourUsedPercent == 74)
+        #expect(input.quota.fiveHourResetsAt == "2026-08-07T12:00:00Z")
+        #expect(input.quota.sevenDayResetsAt == "2026-08-11T12:00:00Z")
+    }
+
+    @Test func isoStringsStillPassThrough() throws {
+        let json = #"{"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":"2026-08-07T12:00:00Z"}}}"#
+        let input = try #require(StatuslineInput.parse(Data(json.utf8)))
+        #expect(input.quota.fiveHourResetsAt == "2026-08-07T12:00:00Z")
+    }
+
+    @Test func nonsenseResetsAtIsDroppedNotGuessed() throws {
+        let json = #"{"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":false}}}"#
+        let input = try #require(StatuslineInput.parse(Data(json.utf8)))
+        #expect(input.quota.fiveHourUsedPercent == 5)
+        #expect(input.quota.fiveHourResetsAt == nil)
+    }
+}

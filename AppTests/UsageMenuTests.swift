@@ -145,15 +145,4 @@ struct UsageMenuM5Tests {
         #expect(line == "5h block: ≈3.4M tokens (estimated)")
     }
 
-    @Test func sessionRowCarriesTheContextWaterline() {
-        let session = AgentSessionSummary(
-            id: "S1", agent: .claudeCode, projectName: "api",
-            phase: .working, startedAt: now.addingTimeInterval(-120))
-        let waterline = SessionWaterline(
-            sessionID: "S1", model: "m", contextTokens: 124_000,
-            contextLimit: 200_000, timestamp: now)
-        let plain = MenuTextFormatter.sessionLine(for: session, now: now)
-        let with = MenuTextFormatter.sessionLine(for: session, now: now, waterline: waterline)
-        #expect(with == plain + " · ctx 62%")
-    }
 }

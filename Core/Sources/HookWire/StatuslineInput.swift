@@ -56,11 +56,11 @@ public struct StatuslineInput: Equatable, Sendable {
         if let limits = root[RootKey.rateLimits.rawValue] as? [String: Any] {
             if let window = limits[RateLimitsKey.fiveHour.rawValue] as? [String: Any] {
                 quota.fiveHourUsedPercent = finiteDouble(window[WindowKey.usedPercentage.rawValue])
-                quota.fiveHourResetsAt = string(window[WindowKey.resetsAt.rawValue])
+                quota.fiveHourResetsAt = timestamp(window[WindowKey.resetsAt.rawValue])
             }
             if let window = limits[RateLimitsKey.sevenDay.rawValue] as? [String: Any] {
                 quota.sevenDayUsedPercent = finiteDouble(window[WindowKey.usedPercentage.rawValue])
-                quota.sevenDayResetsAt = string(window[WindowKey.resetsAt.rawValue])
+                quota.sevenDayResetsAt = timestamp(window[WindowKey.resetsAt.rawValue])
             }
         }
         return StatuslineInput(
@@ -87,5 +87,23 @@ public struct StatuslineInput: Equatable, Sendable {
         else { return nil }
         let result = number.doubleValue
         return result.isFinite ? result : nil
+    }
+
+    /// `resets_at`, normalised to an ISO 8601 string for the wire.
+    ///
+    /// Claude Code sends it as **Unix epoch seconds** — its own statusline
+    /// schema says so ("resets_at: number // Unix epoch seconds") and its
+    /// model-scoped projection converts with `new Date(resets_at * 1000)`. An
+    /// earlier version of this parser only accepted a string, which meant the
+    /// reset instant silently never arrived and the menu quietly dropped the
+    /// "resets 12:00 PM" half of its own sentence. Both shapes are accepted
+    /// now: a number is converted here, a string is passed through for the
+    /// day upstream changes its mind.
+    private static func timestamp(_ value: Any?) -> String? {
+        if let text = string(value) { return text }
+        guard let seconds = finiteDouble(value), seconds > 0 else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: Date(timeIntervalSince1970: seconds))
     }
 }

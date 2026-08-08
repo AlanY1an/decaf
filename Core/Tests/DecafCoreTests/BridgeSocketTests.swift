@@ -285,7 +285,19 @@ private final class ImmediateCloseListener {
 
 // MARK: - Tests
 
-@Suite struct BridgeSocketTests {
+// `.serialized` at the suite level, not just on the fixture cases below.
+//
+// Every test here spawns a real decaf-bridge against a real socket. The fixture
+// case list was already serialized because running those eight concurrently
+// raced process spawn against the bridge's own deadline — but the other six
+// tests still ran in parallel with them and with each other, so the same
+// contention was never actually removed, just narrowed. On a CI runner with a
+// fraction of this Mac's cores that showed up as delivery failures whose set
+// varied from run to run.
+//
+// Not reproducible locally: under eight CPU spinners this suite still passes in
+// well under a second here, so CI is the only instrument that can confirm it.
+@Suite(.serialized) struct BridgeSocketTests {
 
     // MARK: Happy path: every fixture through the real binary and socket
 

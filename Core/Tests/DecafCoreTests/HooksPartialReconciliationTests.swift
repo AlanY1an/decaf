@@ -79,10 +79,15 @@ import HookWire
 /// Polls until `condition` holds, instead of sleeping a fixed interval.
 ///
 /// `setHooksInstallState` and `setHooksInstalled` hop through a Task before the
-/// coordinator sees them. A fixed `Task.sleep(50 ms)` asks "has 50 ms passed",
-/// which is not the question — on a loaded CI runner the hop had not landed and
-/// the assertions below went red for a reason unrelated to the reconciliation
-/// they exist to check. Polling is also strictly faster on an idle machine.
+/// coordinator sees them, and a fixed `Task.sleep(50 ms)` asks whether 50 ms has
+/// passed rather than whether the hop landed. Polling asks the right question
+/// and is strictly faster on an idle machine.
+///
+/// It is NOT, however, what was failing CI. A 5 s poll here was still red on
+/// every run, which is what ruled timing out: a value that never converges is
+/// not a value that arrives late. The real cause was the watch root in
+/// `makeRoot()` below. Recorded because the wrong diagnosis is easy to reach
+/// twice — a wall-clock sleep in a test looks guilty on sight.
 ///
 /// Deliberately returns rather than asserting, so the caller keeps its own
 /// `#expect` and a timeout still reports the actual precision it settled on.
@@ -101,10 +106,29 @@ private func waitUntil(
 
     private func makeRoot() -> CompositionRoot {
         let defaults = UserDefaults(suiteName: "io.github.alany1an.decaf.tests.partial.\(UUID().uuidString)")!
+
+        // A watch root that EXISTS, under a temp home.
+        //
+        // The default FSEventsWatcher() watches the real ~/.claude, and when
+        // that directory is absent it fires onRootVanished, which the
+        // coordinator turns into setWatchRootExists(false) — so precisionNow
+        // returns .unavailable where these tests expect .fileActivity. That is
+        // invisible on a machine that runs Claude Code and deterministic on one
+        // that does not, which is why this suite passed here and failed on
+        // every CI run. It also meant the suite was reading the author's real
+        // ~/.claude, which nothing in the test tree is supposed to do.
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("decaf-precision-\(UUID().uuidString.prefix(8))")
+        try? FileManager.default.createDirectory(
+            at: home.appendingPathComponent(".claude"),
+            withIntermediateDirectories: true
+        )
+
         return CompositionRoot(
             settings: SettingsStore(defaults: defaults),
             asserter: FakePowerAsserter(),
-            socketPath: NSTemporaryDirectory() + "decaf-partial-\(UUID().uuidString).sock"
+            socketPath: NSTemporaryDirectory() + "decaf-partial-\(UUID().uuidString).sock",
+            watcher: FSEventsWatcher(roots: [.claude(home: home.path)])
         )
     }
 

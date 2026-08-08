@@ -75,6 +75,13 @@ private func runBridge(
     process.arguments = arguments
     var environment = ProcessInfo.processInfo.environment
     environment["DECAF_BRIDGE_SOCKET"] = socketPath
+    // Lift the 90 ms watchdog for the duration of the test only. These cases
+    // assert that a frame is DELIVERED; on a cold, loaded CI runner the process
+    // start alone can outlast the shipped budget, so the bridge would _exit(0)
+    // before its socket write and the frame would never arrive — a red test for
+    // a reason unrelated to delivery. The budget itself stays enforced, with no
+    // override, by Scripts/bench-bridge.sh.
+    environment["DECAF_BRIDGE_DEADLINE_US"] = "5000000"
     process.environment = environment
 
     let stdinPipe = Pipe()

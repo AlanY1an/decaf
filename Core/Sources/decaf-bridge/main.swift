@@ -26,7 +26,22 @@ import HookWire
 // MARK: - Constants (plan 02 §5)
 
 /// Watchdog deadline: 90 ms leaves 10 ms headroom inside the 100 ms budget.
-private let bridgeDeadlineMicroseconds: useconds_t = 90_000
+///
+/// Overridable through DECAF_BRIDGE_DEADLINE_US, a test seam in the same spirit
+/// as DECAF_BRIDGE_SOCKET below. The delivery tests spawn a real bridge, and a
+/// cold process start on a loaded CI runner can burn the whole 90 ms before the
+/// socket write lands — so those tests failed for a reason that has nothing to
+/// do with delivery, which is what they exist to assert. Claude Code never sets
+/// this, so the shipped budget is unchanged, and enforcement of the budget was
+/// never these tests' job anyway: Scripts/bench-bridge.sh measures p50/p99
+/// against BUDGET_MS=100 with no override in its environment.
+private let bridgeDeadlineMicroseconds: useconds_t = {
+    let shipped: useconds_t = 90_000
+    guard let raw = ProcessInfo.processInfo.environment["DECAF_BRIDGE_DEADLINE_US"],
+          let parsed = UInt32(raw), parsed > 0
+    else { return shipped }
+    return useconds_t(parsed)
+}()
 /// Connect timeout, subordinate to the total budget (plan 02 §5).
 private let connectTimeoutMilliseconds: Int32 = 50
 /// SO_SNDTIMEO for the single write, same 50 ms sub-budget.
@@ -213,7 +228,10 @@ private func writeAll(_ data: Data, to fd: Int32) -> Bool {
 // Step 1: never die to SIGPIPE, and never outlive the 90 ms deadline.
 signal(SIGPIPE, SIG_IGN)
 Thread.detachNewThread {
-    usleep(bridgeDeadlineMicroseconds)
+    // Thread.sleep rather than usleep: usleep is undefined at or above one
+    // second, and the test seam above deliberately sets multi-second deadlines.
+    // At the shipped 90 ms the two are interchangeable.
+    Thread.sleep(forTimeInterval: Double(bridgeDeadlineMicroseconds) / 1_000_000)
     _exit(0)
 }
 

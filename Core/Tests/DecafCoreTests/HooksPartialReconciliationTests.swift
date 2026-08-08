@@ -76,6 +76,27 @@ import HookWire
 
 // MARK: - Install state -> precision, through the real composition root
 
+/// Polls until `condition` holds, instead of sleeping a fixed interval.
+///
+/// `setHooksInstallState` and `setHooksInstalled` hop through a Task before the
+/// coordinator sees them. A fixed `Task.sleep(50 ms)` asks "has 50 ms passed",
+/// which is not the question — on a loaded CI runner the hop had not landed and
+/// the assertions below went red for a reason unrelated to the reconciliation
+/// they exist to check. Polling is also strictly faster on an idle machine.
+///
+/// Deliberately returns rather than asserting, so the caller keeps its own
+/// `#expect` and a timeout still reports the actual precision it settled on.
+private func waitUntil(
+    timeout: TimeInterval = 5,
+    _ condition: () async -> Bool
+) async {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if await condition() { return }
+        try? await Task.sleep(nanoseconds: 5_000_000) // 5 ms
+    }
+}
+
 @Suite @MainActor struct OutdatedProbeReachesThePrecisionRow {
 
     private func makeRoot() -> CompositionRoot {
@@ -99,9 +120,8 @@ import HookWire
             HooksInstallState(probe: .broken(.claudeHooks, .entriesOutdated)),
             for: .claudeCode
         )
-        // setHooksInstallState hops through a Task; drain it.
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        // setHooksInstallState hops through a Task; wait for it to land.
+        await waitUntil { await coordinator.currentOutput().precision[.claudeCode] == .hooksPartial }
 
         #expect(await coordinator.currentOutput().precision[.claudeCode] == .hooksPartial)
     }
@@ -112,13 +132,11 @@ import HookWire
         await coordinator.setWatchRootExists(true, for: .claudeCode)
 
         root.setHooksInstalled(true, for: .claudeCode)
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await waitUntil { await coordinator.currentOutput().precision[.claudeCode] == .hooks }
         #expect(await coordinator.currentOutput().precision[.claudeCode] == .hooks)
 
         root.setHooksInstalled(false, for: .claudeCode)
-        await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await waitUntil { await coordinator.currentOutput().precision[.claudeCode] == .fileActivity }
         #expect(await coordinator.currentOutput().precision[.claudeCode] == .fileActivity)
     }
 }

@@ -214,7 +214,7 @@ $(printf '%s\n' "${IDENTITY_LIST:-  (none)}" | sed 's/^/         /')"
 elif [ -z "$DEVELOPER_ID_LINES" ]; then
     blocker "NO 'Developer ID Application' CERTIFICATE IN THE KEYCHAIN.
        This is the one prerequisite with an unbounded lead time: it needs a paid
-       Apple Developer Program membership (docs/launch/README-REVIEW.md §3 item 1
+       Apple Developer Program membership (dev-docs/launch/README-REVIEW.md §3 item 1
        — enrollment can take 24 hours to two weeks), then Xcode →
        Settings → Accounts → Manage Certificates → + → Developer ID Application.
        Without it there is no signature, so no notarization, so a clean Mac shows

@@ -12,8 +12,8 @@
 #
 # so the shipped icon and the icon in the README can never disagree.
 #
-# Everything is regenerated from docs/launch/icon-concepts/svg/<KEY>-*.svg via
-# docs/launch/icon-concepts/make-appicon.py; see docs/launch/icon-pipeline.md
+# Everything is regenerated from dev-docs/launch/icon-concepts/svg/<KEY>-*.svg via
+# dev-docs/launch/icon-concepts/make-appicon.py; see dev-docs/launch/icon-pipeline.md
 # for why the artwork is inset to 80.5% and why all ten sizes are kept.
 #
 # Rebuild after running this — actool compiles the set into Contents/Resources
@@ -36,7 +36,7 @@ case "$KEY" in
     *) usage ;;
 esac
 
-CONCEPTS="$ROOT/docs/launch/icon-concepts"
+CONCEPTS="$ROOT/dev-docs/launch/icon-concepts"
 DEST="$ROOT/App/Resources/Assets.xcassets/AppIcon.appiconset"
 README_ICON="$ROOT/docs/assets/icon-256.png"
 

@@ -60,14 +60,14 @@
                                  set-appicon.sh used to provide.
 
                                  DECISION 4 IS CLOSED. It replaces direction B,
-                                 which docs/launch/README-REVIEW.md §2 had always
+                                 which dev-docs/launch/README-REVIEW.md §2 had always
                                  argued against on 16 px evidence: B binarises
                                  into the transport control for "next track", and
                                  an icon that is legible as the WRONG thing is
                                  worse than one that is merely soft. The seven
                                  rounds behind the choice, and every rejected
                                  candidate with the reason, are archived in
-                                 docs/logo/.
+                                 dev-docs/logo/.
 
                                  What the new artwork costs, stated plainly: it
                                  goes soft by 16 px, which is the normal fate of
@@ -248,7 +248,7 @@
                            declares .macOS(.v14) and project.yml sets
                            deploymentTarget 14.0.
                            Do NOT cite SettingsLink — it appears only in
-                           docs/plan/04-ui-ux.md, never in the source — nor
+                           dev-docs/plan/04-ui-ux.md, never in the source — nor
                            MenuBarExtra or SMAppService, which are macOS 13.
     CI                     .github/workflows/ci.yml has TWO jobs: `core`
                            (swift build + swift test on the Core package) and
@@ -430,7 +430,7 @@ Decaf's whole job is telling those apart.
 
 - **Holds while a turn is in flight.** Prompt submitted → hold. Turn finished → release, after a short grace window (3 minutes by default; the choices are 1, 2, 3, 5 and 10).
 - **Releases whenever the agent is waiting on you.** An idle REPL is not work, and neither is an unanswered permission prompt — both are the agent handing the floor back to you, and neither is worth a night of battery. (A prompt gets a five-minute window first, so answering it three seconds later and carrying on never costs you a wake.)
-- **Holds through a long silent tool call.** A 20-minute build writes nothing and prints nothing, but the process is live and the network is in flight. Four independent witnesses have to agree a `working` record has gone quiet before Decaf lets go of it. And if that tool call is the one that asked you for permission: Claude Code emits no hook event when you click "allow", so Decaf treats the tool's own completion as the proof — the first tool that reports in after a prompt puts the session straight back to working. (One gap, stated rather than buried: between the five-minute window running out and that completion arriving, a very long approved tool is unprotected. It cannot be fixed by lengthening the window, which is also how long an *unanswered* prompt would keep your Mac awake. See `docs/plan/02-detection.md` §1.1c.)
+- **Holds through a long silent tool call.** A 20-minute build writes nothing and prints nothing, but the process is live and the network is in flight. Four independent witnesses have to agree a `working` record has gone quiet before Decaf lets go of it. And if that tool call is the one that asked you for permission: Claude Code emits no hook event when you click "allow", so Decaf treats the tool's own completion as the proof — the first tool that reports in after a prompt puts the session straight back to working. (One gap, stated rather than buried: between the five-minute window running out and that completion arriving, a very long approved tool is unprotected. It cannot be fixed by lengthening the window, which is also how long an *unanswered* prompt would keep your Mac awake. See [`docs/architecture.md`](docs/architecture.md).)
 - **Holds through declared waits.** If the agent has scheduled its own wake-up — a `/loop` with a 30-minute gap, a cron job, a monitor with a timeout — Decaf reads that record and holds until then instead of sleeping through it. See [Wait-signal awareness](#wait-signal-awareness).
 - **Manual hold when you just want one.** 5/15/30 minutes, 1/2/5 hours, "Until 6:00 PM", or indefinitely.
 - **Gets out of the way.** Low Power Mode and fast user switching release every hold, manual ones included — neither has an override. The battery gate releases holds too, and it does not spare a manual one: a manual hold that is *already running* when the battery falls past the threshold is suspended along with everything else. The one exception is narrow and deliberate — starting a manual hold *while* the gate is already engaged is treated as an informed override, so that hold proceeds; the override is then cleared the moment the manual hold ends, expires, the Mac sleeps, or the battery recovers past the threshold (23 % at the default). And a sleep you asked for always wins: Decaf holds `PreventUserIdleSystemSleep` (plus `PreventUserIdleDisplaySleep`, and only if you ask it to keep the screen on), and both block *idle* sleep only — closing the lid or choosing Sleep from the Apple menu is never something this app can override.
@@ -556,7 +556,7 @@ This was measured on this machine, not reasoned about. Real `/loop`, 420-second 
 
 The last transcript write was around 22:56, and 300 seconds later is the file-activity idle window expiring — so the release at 23:01:16 is the mechanism working exactly as designed, and wrong here.
 <!-- ACCURACY (softened 2026-08-06): the previous draft said the release landed
-     "exactly 300 seconds after the last transcript write". docs/plan/08-wait-signals.md:31
+     "exactly 300 seconds after the last transcript write". dev-docs/plan/08-wait-signals.md:31
      records the last write as approximately 22:56 ("约 22:56"), and the sampler
      ran at 20 s resolution, so "exactly" is a precision the measurement does
      not have. The 6-sample gap is likewise recorded as ≈1 min 40 s. -->
@@ -686,7 +686,7 @@ Power assertions die with the process, so quitting or deleting the app can never
 - [ ] Automatic updates (Sparkle)
 - [ ] Clamshell mode, with a privileged helper and a loud warning
 <!-- ACCURACY (softened 2026-08-06): the previous draft pinned the Codex line to
-     "0.144+". That boundary is real in docs/plan/03-integrations.md §"版本判定",
+     "0.144+". That boundary is real in dev-docs/plan/03-integrations.md §"版本判定",
      but it is a design note about unshipped work and an upstream version line
      that can move. Nothing in the source implements it, so the README must not
      print the number as if it were a supported threshold. -->
@@ -707,7 +707,7 @@ Their names do appear in the source, as agent kinds the socket protocol and the 
 **How is this different from KeepingYouAwake or Amphetamine?**
 Those are switches, and good ones. They keep your Mac awake because you told them to, until you tell them to stop. Decaf decides — it holds while the agent is working, and lets go the moment the agent is waiting on you. If a switch is what you want, KeepingYouAwake is a well-maintained one and you should use it. (Decaf is also that switch when you want it to be: manual holds, durations and "Until" are all there.)
 <!-- ACCURACY (2026-08-06): dropped "6.8k stars". The figure came from
-     docs/launch/research-teardowns.md, which recorded 6,810 on 2026-08-06, but
+     dev-docs/launch/research-teardowns.md, which recorded 6,810 on 2026-08-06, but
      a star count in a README is a number nobody will ever update and that
      nothing in this repo can verify. -->
 
@@ -724,7 +724,7 @@ SwiftUI's `openSettings` and two-parameter `onChange(of:)`, plus the Swift concu
      open the settings window (App/MenuContentView.swift, whose own comment
      marks it "macOS 14+"), and the two-parameter `onChange(of:_:)` closure form
      (App/SettingsView.swift, App/OnboardingWindow.swift). `SettingsLink` is
-     specified in docs/plan/04-ui-ux.md but is NOT in the source and must not be
+     specified in dev-docs/plan/04-ui-ux.md but is NOT in the source and must not be
      cited; neither may MenuBarExtra or SMAppService, which are macOS 13.
      Core/Package.swift declares .macOS(.v14) and project.yml sets
      deploymentTarget 14.0, so the floor is real either way. -->

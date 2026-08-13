@@ -32,6 +32,7 @@ decision is made against evidence rather than against the 1024.
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -44,14 +45,63 @@ README_HERO = ROOT / "docs/assets/icon-256.png"
 CANVAS = 1024
 
 
-def squircle_mask(size: int) -> Image.Image:
-    """Rasterise render.py's squircle through sips, and use it as the alpha."""
-    sys.path.insert(0, str(ROOT / "docs/launch/icon-concepts"))
-    import render as r1  # noqa: E402
+def squircle_path(size: float, radius: float, smoothing: float = 0.6) -> str:
+    """Continuous-corner rounded rect — the iOS/macOS icon silhouette.
 
+    A shortened circular arc joined to the straight edges by two cubic
+    segments, rather than the plain quarter-circle an SVG `rx` would give.
+
+    Inlined rather than imported. The exploration harness this was taken from
+    now lives under dev-docs/, which is gitignored, and a script that installs
+    the shipped icon must not stop working on a fresh clone because a local
+    scratch directory is missing.
+    """
+    budget = size / 2.0
+    if (1 + smoothing) * radius > budget:
+        radius = budget / (1 + smoothing)
+    p = (1 + smoothing) * radius
+
+    arc_measure = 90.0 * (1 - smoothing)
+    arc = math.sin(math.radians(arc_measure / 2)) * radius * math.sqrt(2)
+    alpha = (90.0 - arc_measure) / 2
+    p3p4 = radius * math.tan(math.radians(alpha / 2))
+    c = p3p4 * math.cos(math.radians(alpha))
+    d = c * math.tan(math.radians(alpha))
+    b = (p - arc - c - d) / 3
+    a = 2 * b
+    r = radius
+    ab, abc = a + b, a + b + c
+
+    def n(v: float) -> str:
+        return f"{v:.3f}"
+
+    return " ".join([
+        f"M {n(size - p)} 0",
+        f"c {n(a)} 0 {n(ab)} 0 {n(abc)} {n(d)}",
+        f"a {n(r)} {n(r)} 0 0 1 {n(arc)} {n(arc)}",
+        f"c {n(d)} {n(c)} {n(d)} {n(b + c)} {n(d)} {n(abc)}",
+        f"L {n(size)} {n(size - p)}",
+        f"c 0 {n(a)} 0 {n(ab)} {n(-d)} {n(abc)}",
+        f"a {n(r)} {n(r)} 0 0 1 {n(-arc)} {n(arc)}",
+        f"c {n(-c)} {n(d)} {n(-(b + c))} {n(d)} {n(-abc)} {n(d)}",
+        f"L {n(p)} {n(size)}",
+        f"c {n(-a)} 0 {n(-ab)} 0 {n(-abc)} {n(-d)}",
+        f"a {n(r)} {n(r)} 0 0 1 {n(-arc)} {n(-arc)}",
+        f"c {n(-d)} {n(-c)} {n(-d)} {n(-(b + c))} {n(-d)} {n(-abc)}",
+        f"L 0 {n(p)}",
+        f"c 0 {n(-a)} 0 {n(-ab)} {n(d)} {n(-abc)}",
+        f"a {n(r)} {n(r)} 0 0 1 {n(arc)} {n(-arc)}",
+        f"c {n(c)} {n(-d)} {n(b + c)} {n(-d)} {n(abc)} {n(-d)}",
+        "Z",
+    ])
+
+
+def squircle_mask(size: int) -> Image.Image:
+    """Rasterise the squircle through sips, and use it as the alpha."""
+    path = squircle_path(CANVAS, CANVAS * 0.2237)
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
-           f'viewBox="0 0 {r1.CANVAS} {r1.CANVAS}">'
-           f'<path d="{r1.SQUIRCLE}" fill="#FFFFFF"/></svg>')
+           f'viewBox="0 0 {CANVAS} {CANVAS}">'
+           f'<path d="{path}" fill="#FFFFFF"/></svg>')
     tmp_svg = ROOT / "build" / "_squircle.svg"
     tmp_png = ROOT / "build" / "_squircle.png"
     tmp_svg.parent.mkdir(parents=True, exist_ok=True)
@@ -77,6 +127,17 @@ def main() -> int:
     if src.width != src.height:
         print(f"error: artwork must be square, got {src.width}x{src.height}", file=sys.stderr)
         return 1
+    # Refuse to upscale. Feeding this script its own 256 px README output once
+    # blew the whole ladder up from a quarter-size source and every slot came
+    # out soft — the run reported success throughout, because resizing up is
+    # not an error to PIL. Anything under 1024 is a mistake worth stopping for.
+    if src.width < CANVAS:
+        print(f"error: {src_path.name} is {src.width}px; artwork must be at least "
+              f"{CANVAS}px or every icon slot is an upscale.\n"
+              f"       Pass --allow-upscale only if you genuinely mean it.",
+              file=sys.stderr)
+        if "--allow-upscale" not in sys.argv:
+            return 1
     print(f"source      {src_path.name}  {src.width}x{src.height}")
 
     master = src.resize((CANVAS, CANVAS), Image.LANCZOS)

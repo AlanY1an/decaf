@@ -1,5 +1,5 @@
 // swift-tools-version: 6.0
-// Package manifest for DecafCore — see docs/plan/06-engineering.md §1/§2.
+// Package manifest for DecafCore — see dev-docs/plan/06-engineering.md §1/§2.
 //
 // Dependency discipline (review decision R4, plan 06 §2):
 // - HookWire depends on Foundation only (wire protocol shared by app and bridge).

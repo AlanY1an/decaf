@@ -558,6 +558,37 @@ ok "exported $EXPORTED_APP"
 # ==========================================================================
 # Plain UDZO disk image, no create-dmg, no background art (plan 06 §6 step 4).
 
+# The app is notarized and stapled FIRST, on its own, so the copy that goes
+# into the image already carries its ticket.
+#
+# 0.1.0 shipped without this and the defect was invisible from here: the DMG
+# was stapled, `spctl` said "accepted", and the release looked complete. But
+# the app inside it had been copied before the stapling step ran, so what
+# landed in /Applications had no ticket. Gatekeeper still passed it — by
+# asking Apple over the network. A ticket exists precisely so that check can
+# happen offline, and without one a first launch with no connection can be
+# refused.
+#
+# It costs a second notarization submission. There is no way around that: a
+# ticket cannot be stapled before the thing is notarized, and notarizing the
+# image cannot retroactively put a ticket inside it.
+step "notarize + staple the app itself"
+if [ "$DRY_RUN" -eq 1 ] || [ "$NOTARY_OK" -eq 0 ] || [ -z "$SIGN_IDENTITY" ]; then
+    skip "dry run or no credentials — the app ships without its own ticket"
+else
+    APP_ZIP="$OUT_DIR/$APP_NAME-app.zip"
+    rm -f "$APP_ZIP"
+    ditto -c -k --keepParent "$EXPORTED_APP" "$APP_ZIP"
+    xcrun notarytool submit "$APP_ZIP" \
+        --keychain-profile "$NOTARY_PROFILE" --wait 2>&1 | sed 's/^/    /'
+    xcrun stapler staple "$EXPORTED_APP" | sed 's/^/    /'
+    xcrun stapler validate "$EXPORTED_APP" >/dev/null 2>&1 \
+        || die "the app still has no stapled ticket after notarization.
+   The image must not be built from an unstapled app — that is the 0.1.0 defect."
+    rm -f "$APP_ZIP"
+    ok "app carries its own notarization ticket"
+fi
+
 step "hdiutil create — $DMG_NAME"
 rm -rf "$DMG_STAGE" "$DMG_PATH"
 mkdir -p "$DMG_STAGE"
@@ -632,11 +663,29 @@ if [ "$DRY_RUN" -eq 1 ] || [ "$NOTARY_OK" -eq 0 ] || [ -z "$SIGN_IDENTITY" ]; th
     info "  spctl --assess --type execute -vv '$EXPORTED_APP'"
 else
     xcrun stapler staple "$DMG_PATH"      | sed 's/^/    /'
-    xcrun stapler staple "$EXPORTED_APP"  | sed 's/^/    /'
     xcrun stapler validate "$DMG_PATH"    | sed 's/^/    /'
     # Both checks, because they fail independently: a stapled DMG can still hold
     # an app Gatekeeper refuses (plan 06 §6 step 6).
     spctl --assess --type execute -vv "$EXPORTED_APP" 2>&1 | sed 's/^/    /'
+
+    # The check that would have caught the 0.1.0 defect, and the only one that
+    # can: mount the finished image and validate the app THAT USERS GET, rather
+    # than the export directory it was copied from. Every check above passed on
+    # the broken build, because none of them looked inside.
+    MOUNT_POINT="$(mktemp -d)"
+    hdiutil attach "$DMG_PATH" -mountpoint "$MOUNT_POINT" -nobrowse -quiet
+    if xcrun stapler validate "$MOUNT_POINT/$APP_NAME.app" >/dev/null 2>&1; then
+        ok "the app inside the image carries its ticket"
+    else
+        hdiutil detach "$MOUNT_POINT" -quiet || true
+        die "the app INSIDE the DMG has no stapled ticket.
+   Gatekeeper would still pass it by asking Apple over the network, so this
+   does not show up in spctl — but a first launch with no connection can be
+   refused. The app must be stapled before the image is built."
+    fi
+    hdiutil detach "$MOUNT_POINT" -quiet || true
+    rmdir "$MOUNT_POINT" 2>/dev/null || true
+
     ok "stapled and assessed"
     # The DMG changed when the ticket was stapled, so the checksum must be taken
     # after this step — a sha256 computed earlier would not match what users get.

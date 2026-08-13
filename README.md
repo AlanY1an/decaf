@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/icon-256.png" alt="Decaf app icon" width="180" height="180">
+<img src="docs/assets/icon-256.png" alt="Decaf app icon" width="160" height="160">
 
 # Decaf
 
@@ -8,12 +8,9 @@
 
 Keeps your Mac awake while Claude Code is actually working — and lets it sleep the moment the agent is done, or is only waiting on you.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menubar-icons-dark.png">
-  <img src="docs/assets/menubar-icons-light.png" alt="Four menu bar icon states: idle, manual hold, agents working with a session count, and paused by a safety protection" width="480">
-</picture>
+Every other keep-awake app is a switch you have to remember to turn off. This one puts itself down.
 
-<sub>Four states. The Mac sleeps normally in the first one.</sub>
+<img src="docs/assets/menu-hooks.png" alt="The Decaf menu: Claude Code working with three sessions, each listed with its own state, above manual hold controls and display options" width="360">
 
 <p>
   <a href="https://github.com/AlanY1an/decaf/releases/latest"><img src="https://img.shields.io/badge/Download-.dmg-brightgreen?style=flat-square" alt="Download"></a>
@@ -29,27 +26,6 @@ Keeps your Mac awake while Claude Code is actually working — and lets it sleep
 
 ---
 
-## The problem
-
-You start a long agent run, walk away, and come back to find it stopped ten minutes in because the Mac slept.
-
-Keep-awake apps are switches: on, or off. Leave it on and your laptop stays awake all night because a terminal is open. Leave it off and you have to remember.
-
-The AI-aware ones hold while the agent *process* is alive. Better — and still wrong in the case that matters: **an agent sitting at its prompt looks exactly like an agent thinking hard.** One should let your Mac sleep. The other must not.
-
-Telling those apart is the whole product.
-
-## What it does
-
-- **Stays awake while a turn is running**, and lets go a few minutes after it finishes.
-- **Lets your Mac sleep when the agent is waiting on you.** An idle prompt is not work.
-- **Doesn't give up on a long, quiet job.** A 20-minute build looks idle and isn't.
-- **Survives self-paced loops.** When an agent schedules its own wake-up, Decaf waits with it instead of sleeping through the gap.
-- **Works as a plain switch too.** Hold for 30 minutes, until 6 PM, or indefinitely.
-- **Knows when to get out of the way.** Low Power Mode, fast user switching and a low battery all release it. Closing the lid always wins.
-
-Claude Code only, today. Codex and opencode are on the roadmap.
-
 ## Install
 
 ```sh
@@ -58,7 +34,28 @@ brew install --cask AlanY1an/decaf/decaf
 
 Or download the DMG from [the latest release](https://github.com/AlanY1an/decaf/releases/latest). Requires **macOS 14 or later**.
 
-It works out of the box. On first launch it offers to install hooks into Claude Code, which makes it precise to the exact turn rather than to about five minutes — one click, optional, and reversible.
+It works out of the box. On first launch it offers to install hooks into Claude Code, which sharpens detection from about five minutes to the exact turn — one click, optional, and reversible.
+
+## What it does
+
+- [x] **Stays awake while a turn is running**, and lets go a few minutes after it finishes
+- [x] **Lets your Mac sleep when the agent is waiting on you** — an idle prompt is not work
+- [x] **Doesn't give up on a long, quiet job** — a 20-minute build looks idle and isn't
+- [x] **Survives self-paced loops** — when an agent schedules its own wake-up, Decaf waits with it instead of sleeping through the gap
+- [x] **Works as a plain switch too** — hold for 30 minutes, until 6 PM, or indefinitely
+- [x] **Gets out of the way** — Low Power Mode, fast user switching and a low battery all release it; closing the lid always wins
+- [x] **Shows token usage and rate limits**, every number labelled official or estimated
+- [ ] Codex and opencode
+- [ ] Scheduled time windows ("keep awake 9–6 on weekdays")
+- [ ] Automatic updates
+- [ ] Clamshell mode, with a loud warning
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menubar-icons-dark.png">
+  <img src="docs/assets/menubar-icons-light.png" alt="Four menu bar icon states: idle, manual hold, agents working with a session count, and paused by a safety protection" width="440">
+</picture>
+
+<sub>Four menu bar states. The Mac sleeps normally in the first one.</sub>
 
 ## Privacy
 
@@ -72,7 +69,7 @@ You see exactly what it will write before it writes anything:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/consent-sheet-dark.png">
-  <img src="docs/assets/consent-sheet-light.png" alt="The install consent sheet, listing the files Decaf will write and previewing the exact JSON it merges into ~/.claude/settings.json" width="520">
+  <img src="docs/assets/consent-sheet-light.png" alt="The install consent sheet, listing the files Decaf will write and previewing the exact JSON it merges into ~/.claude/settings.json" width="500">
 </picture>
 
 ## Settings
@@ -88,30 +85,13 @@ Six, and no more.
 | **Default manual duration** and **"Until" time** | What the one-click hold does. |
 | **Launch at login** | |
 
-## Uninstall
-
-```sh
-brew uninstall --cask AlanY1an/decaf/decaf
-```
-
-If you installed hooks, use **Settings → Agents → Uninstall Hooks** first — it removes Decaf's entries and leaves everything else untouched.
-
-Power assertions die with the process, so quitting or deleting Decaf can never leave your Mac unable to sleep.
-
-## Roadmap
-
-- [x] Claude Code — precise detection, zero-config fallback, self-paced loops
-- [x] Manual holds, display policy, battery gate
-- [x] Token usage and rate limits, every number labelled official or estimated
-- [ ] Codex, opencode
-- [ ] Scheduled time windows
-- [ ] Automatic updates
-- [ ] Clamshell mode, with a loud warning
-
-## FAQ
+## Questions
 
 **Why "Decaf" if it does `caffeinate`'s job?**
-Because the job is knowing when to *stop*. Everything in this category is named for the stimulant, and every one of them is a switch you have to remember to turn off. Decaf puts itself down. The subtitle keeps the word `caffeinate` because that is the command you already know — but the app deliberately does not share the name, so it can never shadow `/usr/bin/caffeinate`.
+Because the job is knowing when to *stop*. Everything in this category is named for the stimulant, and every one of them is a switch you have to remember to turn off. The subtitle keeps the word `caffeinate` because that is the command you already know — but the app deliberately does not share the name, so it can never shadow `/usr/bin/caffeinate`.
+
+**Does it read my conversations?**
+No. It reads timestamps, session ids and token counters, and nothing else — see [Privacy](#privacy) above. The parsers are closed enums with tests pinning their fields, so widening them is a failing build rather than something a code review has to catch.
 
 **How is this different from KeepingYouAwake or Amphetamine?**
 Those are switches, and good ones. Decaf decides. If a switch is what you want, KeepingYouAwake is well maintained and you should use it. (Decaf is also that switch when you want it to be.)
@@ -119,11 +99,17 @@ Those are switches, and good ones. Decaf decides. If a switch is what you want, 
 **Do I have to install the hooks?**
 No. Without them it watches for file activity instead — roughly five minutes of resolution rather than instant — and the menu tells you which one is running.
 
-**Why isn't it on the Mac App Store?**
-The sandbox makes what Decaf does impossible, not merely inconvenient. Permanent, not a backlog item.
+**Does it work with the lid closed?**
+No. Clamshell keep-awake needs a privileged helper and carries a real heat risk on a closed laptop. It is on the roadmap and will ship with a warning you cannot miss, or not at all.
 
 **Will it drain my battery?**
 It can only prevent sleep, and it stops below 20%. The default lets your Mac sleep whenever the agent isn't working — for most people that is less awake time than a switch they forgot about.
+
+**Why isn't it on the Mac App Store?**
+The sandbox makes what Decaf does impossible, not merely inconvenient. Permanent, not a backlog item.
+
+**How do I uninstall it?**
+`brew uninstall --cask AlanY1an/decaf/decaf`, or drag it out of Applications. If you installed hooks, use **Settings → Agents → Uninstall Hooks** first — it removes Decaf's entries and leaves everything else untouched. Power assertions die with the process, so quitting or deleting Decaf can never leave your Mac unable to sleep.
 
 ## Contributing
 

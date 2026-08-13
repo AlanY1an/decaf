@@ -135,6 +135,68 @@ The parser reads exactly five fields and is pinned by a test that fails if a
 sixth is ever added. Conversation content — prompts, reasons — is never read,
 stored or logged.
 
+Guard rails, in order: the extension is **capped at one hour**, so a parse bug
+costs an hour of sleep rather than a night; **every safety gate still applies**,
+and a declared wait is never an exemption; and **unparseable input is silently
+ignored**, falling back to the ordinary grace period, because these are
+upstream-internal tool names that can vanish in any release.
+
+#### The measurement this came from
+
+Reasoning said a loop would survive. Measurement said otherwise. A real `/loop`
+with a 420-second gap, no hooks installed, `pmset -g assertions` sampled every
+20 seconds by an independent process:
+
+```
+22:54:55 – 23:00:56   held       (19 samples)
+23:01:16 – 23:02:56   NOT held   ← 1 min 40 s with sleep allowed
+23:03:08              held again (the next iteration woke it)
+```
+
+The last transcript write was around 22:56, and 300 seconds later is
+`l2IdleWindow` expiring — so the release was the mechanism working exactly as
+designed, and wrong.
+
+The answer was already on disk. At **22:55:47**, five and a half minutes before
+the release, the agent had written `ScheduleWakeup { delaySeconds: 420 }` into
+its own transcript. It had said when it would be back, and the app discarded it.
+
+One methodological note worth keeping: the first attempt at this measurement
+sampled once per loop iteration, which samples exactly when activity has just
+happened and therefore could never observe the gap. The instrument must not be
+synchronised with the thing it measures.
+
+---
+
+## The read surfaces, in full
+
+Every place Decaf reads someone else's file is a closed Swift enum with a test
+pinning its cases, so widening one is a failing build rather than something a
+review has to catch.
+
+**Hook payloads** (`decaf-bridge`): `session_id`, `hook_event_name`, `cwd`, the
+matcher tag from argv, and the resolved pid. Five fields, nothing else.
+
+**Transcripts, for detection**: `sessionId`, `timestamp`, `isSidechain`, record
+and block `type`, tool `name`, and — only for the four scheduling tools —
+`delaySeconds`, `timeout_ms`, `stop`, `cron`, `id`.
+
+**Transcripts, for usage**: from assistant records only — `sessionId`,
+`timestamp`, `isSidechain`, `requestId`, `message.id`, `model`, and the four
+`usage` counters.
+
+**Status JSON** (`decaf-statusline`): `session_id`, `model.id`,
+`model.display_name`, and `rate_limits.five_hour` / `.seven_day` →
+`used_percentage`, `resets_at`.
+
+One exception, deliberately narrow: to match a cancelled cron job to the wait
+it created, the single tool-result line following a `CronCreate` is read, and
+only a hex job id matched by an anchored regex is kept. Every other tool result
+is skipped, because tool results carry arbitrary output.
+
+Diagnostics are an enum of cases such as `lineNotJSON` and `unknownTool` — a
+log line is structurally incapable of carrying a transcript excerpt.
+
 ---
 
 ## The socket

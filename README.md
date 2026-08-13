@@ -35,18 +35,18 @@ You start a long agent run, walk away, and come back to find it stopped ten minu
 
 Keep-awake apps are switches: on, or off. Leave it on and your laptop stays awake all night because a terminal is open. Leave it off and you have to remember.
 
-The AI-aware ones hold while the agent *process* exists. Better — and still wrong in the case that matters: **an agent sitting at its prompt looks exactly like an agent thinking hard.** One should let your Mac sleep. The other must not.
+The AI-aware ones hold while the agent *process* is alive. Better — and still wrong in the case that matters: **an agent sitting at its prompt looks exactly like an agent thinking hard.** One should let your Mac sleep. The other must not.
 
 Telling those apart is the whole product.
 
 ## What it does
 
-- **Holds while a turn is in flight.** Prompt submitted → hold. Turn done → release after a grace period (3 minutes by default).
-- **Releases when the agent is waiting on you.** An idle prompt is not work. Neither is an unanswered permission dialog — though that gets a five-minute window first, so answering it and carrying on never costs you a wake.
-- **Holds through long silent tool calls.** A 20-minute build writes nothing, but it is working. Four independent witnesses must agree a session has gone quiet before the hold drops.
-- **Holds through declared waits.** If the agent scheduled its own wake-up — a `/loop` with a 30-minute gap, a cron job — Decaf reads that and holds until then. [Why that matters ↓](#declared-waits)
-- **Manual holds too.** 5/15/30 minutes, 1/2/5 hours, "Until 6:00 PM", or indefinitely.
-- **Gets out of the way.** Low Power Mode, fast user switching and the battery gate release every hold. Closing the lid or choosing Sleep always wins — Decaf blocks *idle* sleep only.
+- **Stays awake while a turn is running**, and lets go a few minutes after it finishes.
+- **Lets your Mac sleep when the agent is waiting on you.** An idle prompt is not work.
+- **Doesn't give up on a long, quiet job.** A 20-minute build looks idle and isn't.
+- **Survives self-paced loops.** When an agent schedules its own wake-up, Decaf waits with it instead of sleeping through the gap.
+- **Works as a plain switch too.** Hold for 30 minutes, until 6 PM, or indefinitely.
+- **Knows when to get out of the way.** Low Power Mode, fast user switching and a low battery all release it. Closing the lid always wins.
 
 Claude Code only, today. Codex and opencode are on the roadmap.
 
@@ -58,46 +58,22 @@ brew install --cask AlanY1an/decaf/decaf
 
 Or download the DMG from [the latest release](https://github.com/AlanY1an/decaf/releases/latest). Requires **macOS 14 or later**.
 
-On first launch Decaf offers to install hooks into Claude Code. One click, optional, reversible.
-
-## How it knows
-
-| Layer | Precision | Setup |
-| --- | --- | --- |
-| **Hooks** | Turn-precise — the exact instant a turn starts, ends, or asks you something. | One click. Adds entries to `~/.claude/settings.json`. |
-| **File activity** | ~5 minutes. Watches writes under `~/.claude`. | None. This is the default. |
-| **CPU sampling** | Never a reason to hold on its own; one of the witnesses that decide a session has gone stale. | None. |
-
-The menu always says which layer is running, and never claims a precision it does not have. Hook installs are a deep merge — your existing hooks survive, and uninstall removes only what Decaf added.
-
-<a name="declared-waits"></a>
-## Declared waits
-
-An autonomous loop is where a keep-awake app earns its place or is useless. Between iterations, a `/loop` with a 7-minute gap looks exactly like an idle agent — and if the Mac sleeps in the gap, the timer never fires. The loop stalls silently until you touch the trackpad.
-
-Measured on a real run, no hooks, `pmset -g assertions` sampled every 20 seconds: the hold released 300 seconds after the last transcript write, and the Mac was sleepable for **1 minute 40 seconds** before the next iteration woke it.
-
-The answer was already on disk. Five and a half minutes before that release, the agent had written `ScheduleWakeup { delaySeconds: 420 }` into its own transcript — it had said when it would be back, and the app threw it away.
-
-Decaf now reads it. Four scheduling tools are recognised, the declared deadline extends the hold, and three guard rails apply: capped at one hour, every safety gate still wins, and unparseable input is silently ignored rather than trusted.
+It works out of the box. On first launch it offers to install hooks into Claude Code, which makes it precise to the exact turn rather than to about five minutes — one click, optional, and reversible.
 
 ## Privacy
 
 Decaf watches `~/.claude`. That deserves a straight answer.
 
-- **No network requests.** No telemetry, no analytics, no update check — there is no `URLSession` anywhere in the source.
-- **It never reads your conversation.** The transcript parser reads a fixed list of identifiers, timestamps and token counters. `prompt`, `reason` and every other conversational field are never read, stored or logged. Each read surface is a closed Swift enum pinned by a test, so widening it is a failing build rather than a review oversight.
-- **Nothing logged can carry content.** Diagnostics are an enum of cases like `lineNotJSON` — a log line is structurally incapable of holding a transcript excerpt.
-- **It writes only** to `~/Library/Application Support/Decaf/`, plus its own entries in `~/.claude/settings.json` if you install hooks. Both are reversible from Settings.
+- **It makes no network requests.** No telemetry, no analytics, not even an update check.
+- **It never reads your conversation.** It reads timestamps, ids and token counts — never a prompt, never a reply. That limit is enforced by the code's structure and pinned by tests, not by good intentions.
+- **It writes only** to its own folder, plus its hook entries in `~/.claude/settings.json` if you let it. Both are reversible from Settings.
 
-You see all of that before any of it happens, and the file list on the sheet is generated by the same code that does the writing:
+You see exactly what it will write before it writes anything:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/consent-sheet-dark.png">
   <img src="docs/assets/consent-sheet-light.png" alt="The install consent sheet, listing the files Decaf will write and previewing the exact JSON it merges into ~/.claude/settings.json" width="520">
 </picture>
-
-Full field lists are in [`docs/architecture.md`](docs/architecture.md).
 
 ## Settings
 
@@ -107,9 +83,9 @@ Six, and no more.
 | --- | --- |
 | **Auto keep awake for agents** | On by default. Off means Decaf ignores agents entirely. |
 | **Release grace period** | How long to hold after a turn ends. 1–10 minutes, default 3. |
-| **Display while keeping awake** | Screen sleeps normally (default) or stays on. Plus a **Turn Off Display Now** action. |
-| **Battery threshold** | Stop holding below this. Off / 10 / 20 / 30 %, default 20. |
-| **Default manual duration** and **"Until" time** | What the one-click manual hold does. |
+| **Display while keeping awake** | Screen sleeps normally, or stays on. Plus **Turn Off Display Now**. |
+| **Battery threshold** | Stop holding below this. Default 20%. |
+| **Default manual duration** and **"Until" time** | What the one-click hold does. |
 | **Launch at login** | |
 
 ## Uninstall
@@ -118,39 +94,38 @@ Six, and no more.
 brew uninstall --cask AlanY1an/decaf/decaf
 ```
 
-If you installed hooks, use **Settings → Agents → Uninstall Hooks** first — it removes Decaf's entries and leaves everything else intact. If the app is already gone, delete `~/Library/Application Support/Decaf/` and any entry in `~/.claude/settings.json` whose command path contains `Application Support/Decaf`.
+If you installed hooks, use **Settings → Agents → Uninstall Hooks** first — it removes Decaf's entries and leaves everything else untouched.
 
 Power assertions die with the process, so quitting or deleting Decaf can never leave your Mac unable to sleep.
 
 ## Roadmap
 
-- [x] Claude Code — hooks, file-activity fallback, declared waits
+- [x] Claude Code — precise detection, zero-config fallback, self-paced loops
 - [x] Manual holds, display policy, battery gate
-- [x] Token usage and rate-limit display, every number labelled official or estimated
-- [ ] Codex — native hooks, `notify` fallback
-- [ ] opencode — plugin
+- [x] Token usage and rate limits, every number labelled official or estimated
+- [ ] Codex, opencode
 - [ ] Scheduled time windows
 - [ ] Automatic updates
-- [ ] Clamshell mode, with a privileged helper and a loud warning
+- [ ] Clamshell mode, with a loud warning
 
 ## FAQ
 
 **Why "Decaf" if it does `caffeinate`'s job?**
-Because the job is knowing when to *stop*. Every app in this category is named for the stimulant, and every one is a switch you must remember to flip off. Decaf puts itself down. The subtitle still says `caffeinate` because that is the command you know — but the app deliberately does not share the name, so nothing here can ever shadow `/usr/bin/caffeinate`.
+Because the job is knowing when to *stop*. Everything in this category is named for the stimulant, and every one of them is a switch you have to remember to turn off. Decaf puts itself down. The subtitle keeps the word `caffeinate` because that is the command you already know — but the app deliberately does not share the name, so it can never shadow `/usr/bin/caffeinate`.
 
 **How is this different from KeepingYouAwake or Amphetamine?**
-Those are switches, and good ones. Decaf decides. If a switch is what you want, KeepingYouAwake is well maintained and you should use it. (Decaf is also that switch when you want it: manual holds are all there.)
+Those are switches, and good ones. Decaf decides. If a switch is what you want, KeepingYouAwake is well maintained and you should use it. (Decaf is also that switch when you want it to be.)
 
-**Can I use it without installing hooks?**
-Yes, and that is the default. You lose turn precision — about five minutes of resolution instead of instant — and the menu says so.
+**Do I have to install the hooks?**
+No. Without them it watches for file activity instead — roughly five minutes of resolution rather than instant — and the menu tells you which one is running.
 
 **Why isn't it on the Mac App Store?**
-The sandbox forbids inspecting other processes and forbids the socket-plus-helper layout the hook bridge needs. Permanent, not a backlog item.
+The sandbox makes what Decaf does impossible, not merely inconvenient. Permanent, not a backlog item.
 
 **Will it drain my battery?**
-It can only prevent sleep, and it stops below 20 %. The default mode lets your Mac sleep whenever the agent is not working — for most people, less awake time than a switch they forgot to turn off.
+It can only prevent sleep, and it stops below 20%. The default lets your Mac sleep whenever the agent isn't working — for most people that is less awake time than a switch they forgot about.
 
-## Building from source
+## Contributing
 
 ```sh
 git clone https://github.com/AlanY1an/decaf.git
@@ -159,9 +134,7 @@ Scripts/bootstrap.sh
 swift test --package-path Core
 ```
 
-The logic lives in `Core/` as a plain Swift package with no AppKit dependency, which is why it can be tested at all: **642 tests** over the power engine, the session state machine, the transcript parsers and the installer, plus 105 in the app layer. `Decaf.xcodeproj` is generated from `project.yml` and not committed — edit the manifest.
-
-Architecture notes: [`docs/architecture.md`](docs/architecture.md).
+How it all works: [`docs/architecture.md`](docs/architecture.md).
 
 ## License
 

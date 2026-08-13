@@ -10,7 +10,10 @@ Keeps your Mac awake while Claude Code is actually working — and lets it sleep
 
 Every other keep-awake app is a switch you have to remember to turn off. This one puts itself down.
 
-<img src="docs/assets/menu-hooks.png" alt="The Decaf menu: Claude Code working with three sessions, each listed with its own state, above manual hold controls and display options" width="360">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menu-hero-dark.png">
+  <img src="docs/assets/menu-hero-light.png" alt="The Decaf menu: Claude Code working with three sessions, each listed with its own state, above manual hold controls and display options" width="400">
+</picture>
 
 <p>
   <a href="https://github.com/AlanY1an/decaf/releases/latest"><img src="https://img.shields.io/badge/Download-.dmg-brightgreen?style=flat-square" alt="Download"></a>

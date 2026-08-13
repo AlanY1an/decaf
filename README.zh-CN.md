@@ -10,7 +10,10 @@ Claude Code 真正在干活的时候不让 Mac 休眠——活干完了,或者�
 
 别的防休眠工具都是开关,你得记得关掉。这个会自己放下。
 
-<img src="docs/assets/menu-hooks.png" alt="Decaf 的菜单:Claude Code 工作中、三个会话各自列出状态,下面是手动保持和屏幕选项" width="360">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menu-hero-dark.png">
+  <img src="docs/assets/menu-hero-light.png" alt="Decaf 的菜单:Claude Code 工作中、三个会话各自列出状态,下面是手动保持和屏幕选项" width="400">
+</picture>
 
 <p>
   <a href="https://github.com/AlanY1an/decaf/releases/latest"><img src="https://img.shields.io/badge/Download-.dmg-brightgreen?style=flat-square" alt="下载"></a>

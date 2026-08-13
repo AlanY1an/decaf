@@ -8,6 +8,11 @@ CLAUDE.local.md
 .claude/
 .codex/
 
+# Planning, research, review notes and the icon exploration. Kept out of the
+# repository on purpose: docs/ carries facts about the code, and everything
+# that is process rather than fact lives here, local to each worktree.
+dev-docs/
+
 # generated
 Decaf.xcodeproj/
 .build/
@@ -17,6 +22,8 @@ Decaf.xcodeproj/
 build/
 *.dmg
 DerivedData/
+__pycache__/
+*.pyc
 
 # docs/assets/render/build.sh re-copies App/*.swift here on every run; the
 # repo keeps only the harness itself, never a second copy of the app sources.

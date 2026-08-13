@@ -1,73 +1,3 @@
-<!--
-  Drafted 2026-08-06 from the actual git history (51 commits, 300403d..e8dd80c),
-  not from the plans. One thing still needs an author decision before this file
-  can be published:
-
-    1. The release date on the 0.1.0 heading. Replace the word "Unreleased"
-       with an ISO date on tag day (AUTHOR DECISION 7 — launch date).
-
-  The GitHub owner and repo name are no longer open: the link references at the
-  bottom point at AlanY1an/decaf, frozen on 2026-08-07 with the
-  Caffeinate → Decaf rename.
-
-  THREE THINGS TO DO ON THIS MAC, ONCE, IN THIS ORDER. Not changelog entries —
-  the former name never shipped, so you are the only person who will ever do
-  this. Verified against the machine on 2026-08-07; the order matters, and
-  doing step 3 first is what breaks detection silently.
-
-  1. QUIT THE PRE-RENAME BUILD THAT IS STILL RUNNING. As of 2026-08-07 12:28 a
-     Debug Caffeinate.app out of DerivedData (started 11:39) was still alive,
-     still holding a real PreventUserIdleSystemSleep assertion named
-     "Caffeinate" in `pmset -g assertions`, still bound to
-     `.../Caffeinate/agent.sock`, and still being fed by your hooks — the old
-     `caff-bridge` binary has not gone anywhere, so every hook still fires and
-     still lands in the OLD app. That is why nothing looks broken yet. Quit it
-     (and delete its DerivedData) before running the renamed build, or two
-     copies will hold assertions against each other.
-
-  2. REPAIR THE HOOKS from the new build: Settings → Agents → "Repair Hooks…".
-     Your eight entries in ~/.claude/settings.json still point at the retired
-     `.../Caffeinate/bin/caff-bridge`. Once step 1 removes the process that was
-     answering them, those commands deliver into nothing — and Claude Code does
-     not report a hook that fails, so detection would fall back to file activity
-     without a word. The probe now names this (`entriesFromRetiredName`) and
-     repair rewrites the commands in place, keeping your own hooks untouched.
-
-  3. ONLY THEN, remove the retired directory:
-
-       rm -rf ~/Library/Application\ Support/Caffeinate
-
-     Deliberately not automated. It holds `backups/` — the installer's copies of
-     YOUR ~/.claude/settings.json — and deleting a user's backups on their
-     behalf is not a thing an app gets to do. The rest of it is inert once
-     step 2 is done: `sessions.json` is live state rebuilt within one turn,
-     `agent.sock` is a socket with nothing on it, and `integrations.json` is a
-     manifest the app no longer needs (it repairs from the markers in
-     settings.json instead). Look in `backups/` first, then remove it.
-
-  The test counts (553 in 78 suites for Core, 93 in 15 suites for the app
-  bundle — both re-run 2026-08-07 after the rename) come from
-  `swift test --package-path Core` and `xcodebuild … test`, and they move with
-  almost every commit — Core read 556/88 and then 568/89 on 2026-08-06.
-  Re-run both and update the numbers on tag day.
-
-  A verification pass on 2026-08-06 re-traced every claim here to the source and
-  corrected three: the low-battery gate does NOT spare an already-running manual
-  hold (only one started under the gate is an override); the settings.json
-  contract is semantic, not byte, equality; and the process scan's codex /
-  opencode match really did hold the Mac in the optional "while an agent is
-  running" mode. On 2026-08-07 that mode, the process scan and the permission
-  prompt's indefinite hold were all deleted — this file has been rewritten to
-  describe the shipping behaviour, not the path to it. The same corrections are
-  in README.md.
-
-  Why 0.1.0 has no "Fixed" section even though 14 `fix(...)` commits exist:
-  every one of them repaired code that had never been released, so no user has
-  ever met those bugs. Listing them would imply a 0.0.x that shipped. Keep this
-  file about what a reader can observe between releases — from 0.2.0 onward
-  every user-visible fix belongs under "Fixed".
--->
-
 # Changelog
 
 All notable changes to Decaf will be documented in this file.
@@ -75,52 +5,7 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- Token usage metering (plan 09): a `UsageMetering` module reads the real
-  `usage` counters from Claude Code transcripts — deduplicated by message +
-  request id, rolled up per day/model, with a 5-hour-block and trailing-7-day
-  estimate (ccusage's inference, labeled as an estimate) and a per-session
-  context waterline. Costs are shown as "API-equivalent value" from a static
-  built-in price table; the zero-network promise is unchanged.
-- Official rate limits via an optional statusline bridge: `decaf-statusline`
-  receives Claude Code's status JSON, forwards the official `five_hour` /
-  `seven_day` `used_percentage` over the existing socket, and chains to any
-  status line you already had — its output passes through unchanged, and
-  uninstalling restores your original `statusLine` verbatim. Official numbers
-  degrade to "official, stale" after 10 minutes and the menu says which kind
-  it is showing (`Limits: 5h 34% (official)` vs `(estimated)`).
-- Menu: `Limits:` and `Today:` rows (absent on a Mac that has never run an
-  agent, same rule as every other agent row). Settings › Agents: an install /
-  uninstall row for the statusline bridge.
-- Two new pinned read surfaces (closed enums + pinning tests) keep the privacy
-  contract provable: transcript usage counters and statusline rate-limit
-  fields; conversation content remains unread.
-- `Scripts/check-statusline.sh`: dependency-whitelist and behavior smoke for
-  the new helper (default line, socket frame, chain passthrough, EPIPE).
-- Usage counted while the app was closed is caught up at launch: per-file
-  read positions persist with the rollups in one file, so a restart counts
-  every line exactly once (rotated transcripts start over from the top).
-- Fixed before release, found by checking the shipped numbers against the
-  transcripts by hand: the first launch of a marks-aware build re-read every
-  transcript from the top and added a second copy of the whole history to
-  counts that were already there (measured: 183M "today" against a true 94M).
-  The persisted state now carries a version, and a state older than the
-  current one is rebuilt from the transcripts instead of added to. Session
-  context percentages were also computed against a flat 200K window, so every
-  current-generation session read `100%` once past 200K; context sizes are now
-  per model (1M for the Opus 5 / Sonnet 5 / Fable 5 generation).
-- Display polish: the 5h reset instant on the Limits row (absolute time,
-  hidden once past), estimated blocks as a percentage of your own largest
-  block ("of personal max" — never of an official limit), and menu numbers at
-  most 15 s stale on open.
-- `resets_at` is read as Unix epoch seconds as well as an ISO string. Claude
-  Code sends the number; reading only the string meant the reset instant never
-  arrived and the Limits row silently dropped half its own sentence.
-
-## [0.1.0] — Unreleased
+## [0.1.0] - 2026-08-13
 
 First release. A menu bar app that keeps a Mac awake while Claude Code is
 working, and lets it sleep when the agent is only waiting on you.
@@ -209,6 +94,47 @@ Requires macOS 14 or later.
   no AppKit dependency, and the app bundle is a logic-test target with no test
   host, which is what makes both testable without launching anything.
 
+- Token usage metering (plan 09): a `UsageMetering` module reads the real
+  `usage` counters from Claude Code transcripts — deduplicated by message +
+  request id, rolled up per day/model, with a 5-hour-block and trailing-7-day
+  estimate (ccusage's inference, labeled as an estimate) and a per-session
+  context waterline. Costs are shown as "API-equivalent value" from a static
+  built-in price table; the zero-network promise is unchanged.
+- Official rate limits via an optional statusline bridge: `decaf-statusline`
+  receives Claude Code's status JSON, forwards the official `five_hour` /
+  `seven_day` `used_percentage` over the existing socket, and chains to any
+  status line you already had — its output passes through unchanged, and
+  uninstalling restores your original `statusLine` verbatim. Official numbers
+  degrade to "official, stale" after 10 minutes and the menu says which kind
+  it is showing (`Limits: 5h 34% (official)` vs `(estimated)`).
+- Menu: `Limits:` and `Today:` rows (absent on a Mac that has never run an
+  agent, same rule as every other agent row). Settings › Agents: an install /
+  uninstall row for the statusline bridge.
+- Two new pinned read surfaces (closed enums + pinning tests) keep the privacy
+  contract provable: transcript usage counters and statusline rate-limit
+  fields; conversation content remains unread.
+- `Scripts/check-statusline.sh`: dependency-whitelist and behavior smoke for
+  the new helper (default line, socket frame, chain passthrough, EPIPE).
+- Usage counted while the app was closed is caught up at launch: per-file
+  read positions persist with the rollups in one file, so a restart counts
+  every line exactly once (rotated transcripts start over from the top).
+- Fixed before release, found by checking the shipped numbers against the
+  transcripts by hand: the first launch of a marks-aware build re-read every
+  transcript from the top and added a second copy of the whole history to
+  counts that were already there (measured: 183M "today" against a true 94M).
+  The persisted state now carries a version, and a state older than the
+  current one is rebuilt from the transcripts instead of added to. Session
+  context percentages were also computed against a flat 200K window, so every
+  current-generation session read `100%` once past 200K; context sizes are now
+  per model (1M for the Opus 5 / Sonnet 5 / Fable 5 generation).
+- Display polish: the 5h reset instant on the Limits row (absolute time,
+  hidden once past), estimated blocks as a percentage of your own largest
+  block ("of personal max" — never of an official limit), and menu numbers at
+  most 15 s stale on open.
+- `resets_at` is read as Unix epoch seconds as well as an ISO string. Claude
+  Code sends the number; reading only the string meant the reset instant never
+  arrived and the Limits row silently dropped half its own sentence.
+
 ### Known limitations
 
 - **A tool approved and running longer than five minutes has a gap before the
@@ -231,6 +157,4 @@ scheduled time windows; automatic updates (Sparkle), so a DMG installed at
 0.1.0 has no update channel; clamshell / lid-closed keep-awake; and any
 Mac App Store build, which the sandbox makes permanently impossible.
 
-<!-- Owner and repo frozen 2026-08-07; keep in step with the same links in README.md. -->
-[Unreleased]: https://github.com/AlanY1an/decaf/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.1.0

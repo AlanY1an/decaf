@@ -4,7 +4,15 @@ import Foundation
 import Testing
 import DecafCore
 import UsageMetering
-@testable import Decaf
+// No `@testable import Decaf`. DecafAppTests is a logic bundle with no
+// TEST_HOST (project.yml explains why at length), so there is no Decaf module
+// to import; MenuLayout and MenuTextFormatter are compiled into this bundle
+// directly through the target's `sources` list.
+//
+// The import resolved locally anyway, against a Decaf.swiftmodule left in
+// DerivedData by an earlier app build, so the suite passed here and failed on
+// CI's clean checkout. A local green that depends on stale build products is
+// not a green.
 
 private func overview(
     fiveHourPercent: Double? = nil,

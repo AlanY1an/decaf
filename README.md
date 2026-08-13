@@ -48,59 +48,54 @@
   not exist at all. A broken <img> is obvious; a WRONG one is not, which is
   why the first entry is the dangerous one.
 
-    docs/assets/icon-256.png     PRESENT (256x256, RGBA, full-bleed) but
-                                 UNRATIFIED. VERIFIED 2026-08-07 by regenerating
-                                 it rather than eyeballing it: re-running the
-                                 direction-B pipeline into a temp dir
-                                 (make-appicon.py on B-steady-cursor.svg, then
-                                 the same two PIL lines set-appicon.sh uses)
-                                 reproduces this exact file, sha256
-                                 7afc65b0…63c4, byte for byte — and `diff -r`
-                                 of the regenerated appiconset against the
-                                 shipped one is empty. So the README hero and
-                                 the shipped icon provably come from one source.
-                                 (They are not the same bytes as each other, and
-                                 should not be: the hero is full-bleed, the
-                                 appiconset is inset to 80.5 % to match Finder's
-                                 grid. set-appicon.sh:79 says so.)
-                                 It is a render of icon direction
-                                 B (the steady cursor), and the same direction
-                                 is what the app itself now ships:
-                                 App/Resources/Assets.xcassets/AppIcon.appiconset/
-                                 is direction B, and a Debug build carries it
-                                 (Assets.car lists all ten AppIcon entries;
-                                 Contents/Resources/AppIcon.icns is 47,382
-                                 bytes of direction-B artwork, opened and
-                                 looked at, not assumed).
+    docs/assets/icon-256.png     PRESENT and now RATIFIED. Replaced 2026-08-13:
+                                 a white porcelain cup and saucer at a slight
+                                 three-quarter angle, the coffee inside carrying
+                                 an amber-to-pink-to-violet gradient, on a deep
+                                 plum tile. Generated artwork, installed by
+                                 Scripts/install-appicon-png.py, which writes the
+                                 ten-slot appiconset and THIS file together — so
+                                 the shipped icon and the README hero still
+                                 cannot drift apart, the guarantee
+                                 set-appicon.sh used to provide.
 
-                                 AUTHOR DECISION 4 IS STILL OPEN, and note the
-                                 disagreement: docs/launch/README-REVIEW.md §2
-                                 (决定 4) recommends direction A on 16 px
-                                 legibility evidence — A is the only one of the
-                                 four whose 16 px binarisation survives as a
-                                 clean ring, and B "糊成一团" in that same cell.
-                                 B is in place as a REVERSIBLE PLACEHOLDER so
-                                 the build is not blocked on the decision; it
-                                 is not the review's recommendation and must
-                                 not be mistaken for a settled choice.
+                                 DECISION 4 IS CLOSED. It replaces direction B,
+                                 which docs/launch/README-REVIEW.md §2 had always
+                                 argued against on 16 px evidence: B binarises
+                                 into the transport control for "next track", and
+                                 an icon that is legible as the WRONG thing is
+                                 worse than one that is merely soft. The seven
+                                 rounds behind the choice, and every rejected
+                                 candidate with the reason, are archived in
+                                 docs/logo/.
 
-                                 Switching costs one command, verified by
-                                 round trip on 2026-08-06 (B -> A -> C -> D ->
-                                 B restored every file byte-for-byte):
+                                 What the new artwork costs, stated plainly: it
+                                 goes soft by 16 px, which is the normal fate of
+                                 a detailed render. It blurs rather than reading
+                                 as something else, so the failure mode is mild —
+                                 but a separately drawn 16/32 px variant is the
+                                 standard fix and has NOT been done.
+
+                                 Two things about it remain unverified: it has
+                                 never been through Icon Composer, so how the
+                                 deep tile behaves under macOS 26's Liquid Glass
+                                 pass is unknown; and the subject sits smaller in
+                                 its tile than its Dock neighbours do (19 % top
+                                 margin against Music's or Calendar's near-full
+                                 bleed).
+
+                                 To replace it:
+
+                                     python3 Scripts/install-appicon-png.py <art.png>
+
+                                 or, to go back to one of the four original
+                                 concept directions:
 
                                      Scripts/set-appicon.sh <A|B|C|D>
 
-                                 That script rewrites the appiconset AND this
-                                 PNG from the same source, so the shipped icon
-                                 and the README hero cannot drift apart.
-                                 Rebuild afterwards — actool compiles the set
-                                 at build time, so an existing bundle keeps
-                                 showing the old icon.
-
-                                 This image renders fine and looks finished,
-                                 which still makes it the single most likely
-                                 thing to ship by accident: a broken <img>
-                                 announces itself, a wrong one does not.
+                                 Rebuild afterwards either way — actool compiles
+                                 the set at build time, so an existing bundle
+                                 keeps showing the old icon.
 
     docs/assets/states.webp      STILL MISSING, and now the only missing one.
                                  The four-state screenshot strip; still the
@@ -281,7 +276,11 @@
     xcodebuild ... build               BUILD SUCCEEDED, and the bundle carries
                                        the icon: CFBundleIconName=AppIcon,
                                        Assets.car lists all ten AppIcon
-                                       entries, AppIcon.icns is direction B
+                                       entries. AppIcon.icns itself carries only
+                                       four slots (16, 16@2x, 128, 128@2x) —
+                                       that is this project's actool behaviour,
+                                       confirmed by the Release export showing
+                                       the same four; the rest live in Assets.car
     Scripts/check-bridge.sh            all checks passed (system libs only,
                                        116,984 bytes, a real hook frame
                                        delivered over an isolated temp socket,
@@ -306,11 +305,12 @@
 <div align="center">
 
 <!--
-  ASSET 1 — app icon. See block 2 above: the file present today is direction B
-  and AUTHOR DECISION 4 is still open. Re-export a 256x256 PNG here from the
-  chosen direction. An explicit export (rather than referencing the asset
-  catalog) is required because the Icon Composer pipeline produces a .icon
-  bundle, not a loose PNG GitHub can render.
+  ASSET 1 — app icon. Settled 2026-08-13; see block 2 above. This PNG and the
+  shipped appiconset are written together by
+  Scripts/install-appicon-png.py, so re-exporting by hand is never needed —
+  running that script updates both. An explicit PNG (rather than a reference
+  into the asset catalog) is still required because the Icon Composer pipeline
+  produces a .icon bundle, not a loose file GitHub can render.
 -->
 <img src="docs/assets/icon-256.png" alt="Decaf app icon" width="200" height="200">
 

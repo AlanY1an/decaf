@@ -28,6 +28,7 @@ import os
 import DecafCore
 import AgentDetection
 import HookWire
+import UsageMetering
 
 @MainActor
 public final class CompositionRoot: ObservableObject {
@@ -66,9 +67,15 @@ public final class CompositionRoot: ObservableObject {
     public let manualHold: ManualHoldController
     public let socketServer: HookSocketServer
     public let coordinator: DetectionCoordinator
+    /// Token ledger + official quota (plan 09). Fed from the coordinator's
+    /// transcript line sink and from Statusline frames routed in `route(_:)`.
+    public let usageMeter: UsageMeter
     /// "Turn the screen off now" adapter (pmset in production, a fake in tests).
     public let displaySleeper: any DisplaySleeping
 
+    /// Kept for the usage catch-up in `start()` (the coordinator owns the
+    /// callbacks; this reference only answers "which transcript files exist").
+    private let watcher: FSEventsWatcher
     private let batteryMonitor = BatteryMonitor()
     private let lowPowerModeMonitor = LowPowerModeMonitor()
     private let workspaceMonitors = WorkspaceMonitors()
@@ -98,6 +105,13 @@ public final class CompositionRoot: ObservableObject {
     /// detection output (see `apply(output:sessions:)`) and therefore not read
     /// from UserDefaults each time.
     private var agentAutoKeepAwake: Bool
+    /// Latest usage overview, refreshed on detection outputs, Statusline
+    /// frames, and the periodic pump; folded into the snapshot.
+    private var usageOverview: UsageOverview?
+    /// Whether a usage store was injected. Gates the launch catch-up: without
+    /// persistence the ledger starts empty every launch, so scanning the whole
+    /// transcript history would cost seconds and buy nothing that survives.
+    private let usagePersistenceEnabled: Bool
 
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
@@ -124,6 +138,15 @@ public final class CompositionRoot: ObservableObject {
         // root and the asserter.
         stuckThreshold: TimeInterval = StuckDetectionDefaults.stuckThreshold,
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
+        // Usage metering (plan 09 M3). Defaults to nil — no persistence and
+        // no launch catch-up — for the same reason `userNotifier` does: the
+        // real store lives in the user's Application Support, and this package
+        // is also linked into `swift test`, where a default that writes there
+        // (and reads every transcript under the real ~/.claude to fill it) is
+        // exactly the discipline every other seam here exists to prevent. The
+        // app target injects the real one.
+        usageStore: UsageStore? = nil,
+        usageTimeZone: TimeZone = .current,
         // The app's only notification channel (plan 04's zero-notification rule
         // narrowed, REVIEW-DECISIONS 2026-08-06). Defaults to nil — silent —
         // because the concrete `UNUserNotificationCenter` adapter needs an
@@ -133,6 +156,8 @@ public final class CompositionRoot: ObservableObject {
     ) {
         self.settings = settings
         self.displaySleeper = displaySleeper
+        self.watcher = watcher
+        self.usagePersistenceEnabled = usageStore != nil
         self.everDetectedAgent = settings.hasEverDetectedAgent
         self.agentAutoKeepAwake = settings.agentAutoKeepAwake
 
@@ -143,6 +168,8 @@ public final class CompositionRoot: ObservableObject {
         self.engine = PowerStateEngine(asserter: asserter, tuning: tuning)
         self.manualHold = ManualHoldController(engine: engine)
         self.socketServer = HookSocketServer(socketPath: socketPath)
+        let usageMeter = UsageMeter(store: usageStore, timeZone: usageTimeZone)
+        self.usageMeter = usageMeter
         self.coordinator = DetectionCoordinator(
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
@@ -150,7 +177,13 @@ public final class CompositionRoot: ObservableObject {
             store: sessionsStore,
             watcher: watcher,
             activitySampler: activitySampler,
-            userNotifier: userNotifier
+            userNotifier: userNotifier,
+            // Paths, not lines (plan 09 M5): the meter reads the files itself
+            // with its own persisted offsets, so restart replay safety never
+            // depends on this coordinator's reader.
+            transcriptActivitySink: { paths, date in
+                Task { await usageMeter.noteActivity(paths: paths, at: date) }
+            }
         )
     }
 
@@ -198,10 +231,32 @@ public final class CompositionRoot: ObservableObject {
             await coordinator.setSocketHealthy(server.isListening)
             await coordinator.start()
         })
-        // Socket frames -> registry.
-        pumpTasks.append(Task {
+        // Socket frames -> registry (hook frames) or quota state (Statusline).
+        pumpTasks.append(Task { [weak self] in
             for await event in server.events {
-                await coordinator.ingest(event)
+                guard let self else { return }
+                await self.route(event)
+            }
+        })
+        // Usage catch-up (plan 09 M5): read every known transcript from its
+        // persisted mark once, so tokens spent while the app was closed enter
+        // the ledger exactly once. One-shot; live activity takes over after.
+        if usagePersistenceEnabled {
+            let meter = usageMeter
+            let existingTranscripts = watcher.existingTranscriptFiles().values.flatMap { $0 }
+            pumpTasks.append(Task { [weak self] in
+                await meter.start(files: existingTranscripts)
+                await self?.refreshUsageOverview()
+            })
+        }
+        // Usage refresh pump: the ledger moves with every transcript line;
+        // 15 s bounds how stale a freshly opened menu can be (plus the
+        // event-driven refreshes in `route` and `apply`). Equality-gated
+        // republish keeps an idle machine's pump free.
+        pumpTasks.append(Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15 * 1_000_000_000)
+                await self?.refreshUsageOverview()
             }
         })
         // Detection outputs -> engine requests + snapshot.
@@ -227,6 +282,37 @@ public final class CompositionRoot: ObservableObject {
 
         republish()
         return .started
+    }
+
+    // MARK: - Socket frame routing (plan 09 M3a)
+
+    /// Statusline frames feed the quota state and MUST NOT reach the session
+    /// state machine — they are not hook events, and `SessionRegistry` would
+    /// otherwise be asked to normalize a name it has no business seeing.
+    /// Everything else keeps the existing path. Internal so tests drive it
+    /// with real frames.
+    func route(_ event: WireEvent) async {
+        if event.event == WireEvent.statuslineEventName {
+            if let quota = event.quota {
+                await usageMeter.ingestQuota(
+                    fiveHourPercent: quota.fiveHourUsedPercent,
+                    fiveHourResetsAt: quota.fiveHourResetsAt,
+                    sevenDayPercent: quota.sevenDayUsedPercent,
+                    sevenDayResetsAt: quota.sevenDayResetsAt
+                )
+            }
+            await refreshUsageOverview()
+            return
+        }
+        await coordinator.ingest(event)
+    }
+
+    /// Pulls a fresh overview and republishes when it changed.
+    func refreshUsageOverview() async {
+        let overview = await usageMeter.overview()
+        guard overview != usageOverview else { return }
+        usageOverview = overview
+        republish()
     }
 
     /// Routes `reopen-ui` frames to `onReopenUIRequest` and answers on the main
@@ -483,6 +569,9 @@ public final class CompositionRoot: ObservableObject {
         fallbackAgents = fallbacks.sorted { $0.rawValue < $1.rawValue }
         precision = output.precision
         republish()
+        // Detection outputs coincide with transcript activity, so this is the
+        // cheap moment to fold fresh usage numbers into the snapshot too.
+        Task { [weak self] in await self?.refreshUsageOverview() }
     }
 
     // MARK: - Snapshot assembly (R11 seam 2)
@@ -519,7 +608,8 @@ public final class CompositionRoot: ObservableObject {
             effectiveDisplayPolicy: engine.effectiveDisplayPolicy,
             selectedDisplayPolicy: settings.defaultDisplayPolicy,
             hasEverDetectedAgent: everDetectedAgent,
-            agentAutoKeepAwake: agentAutoKeepAwake
+            agentAutoKeepAwake: agentAutoKeepAwake,
+            usage: usageOverview
         )
         // The latch, closed here rather than at each of the places evidence
         // arrives: `hasLiveAgentEvidence` is defined on the snapshot, so this

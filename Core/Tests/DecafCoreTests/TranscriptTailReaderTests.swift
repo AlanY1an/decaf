@@ -5,6 +5,7 @@
 
 import Foundation
 import Testing
+import TranscriptSupport
 
 @testable import AgentDetection
 

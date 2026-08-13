@@ -27,6 +27,8 @@ targets:
         product: DecafComposition
       - package: DecafCore
         product: HookWire
+      - package: DecafCore
+        product: UsageMetering
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.alany1an.decaf
@@ -49,18 +51,22 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSApplicationCategoryType: public.app-category.utilities
         NSHumanReadableCopyright: "© 2026 AlanY1an. MIT License."
-    postBuildScripts:                  # decaf-bridge is a Core package executable product;
-      - name: Embed decaf-bridge        # build and embed it into Contents/Helpers (plan 06 §3)
-        basedOnDependencyAnalysis: false  # must run every build to keep the embedded bridge fresh
-        script: |
+    postBuildScripts:                  # decaf-bridge and decaf-statusline are Core package
+      - name: Embed helper binaries     # executable products; build and embed them into
+        basedOnDependencyAnalysis: false  # Contents/Helpers (plan 06 §3, plan 09 M3b).
+        script: |                         # must run every build to keep the embedded copies fresh
           set -euo pipefail
           swift build -c release --package-path "$SRCROOT/Core" --product decaf-bridge
+          swift build -c release --package-path "$SRCROOT/Core" --product decaf-statusline
           HELPERS_DIR="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
           mkdir -p "$HELPERS_DIR"
           cp "$SRCROOT/Core/.build/release/decaf-bridge" "$HELPERS_DIR/"
+          cp "$SRCROOT/Core/.build/release/decaf-statusline" "$HELPERS_DIR/"
           if [ "${CODE_SIGNING_ALLOWED:-YES}" = "YES" ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
             codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
               "$HELPERS_DIR/decaf-bridge"
+            codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
+              "$HELPERS_DIR/decaf-statusline"
           fi
     scheme:
       # So `xcodebuild -scheme Decaf test` runs the app-layer tests. The app

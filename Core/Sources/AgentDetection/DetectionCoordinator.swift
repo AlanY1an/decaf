@@ -20,6 +20,7 @@
 import DecafCore
 import Foundation
 import HookWire
+import TranscriptSupport
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -97,6 +98,11 @@ public actor DetectionCoordinator {
     /// feature existed, which is also the escape hatch if upstream renames the
     /// tools out from under us.
     private let tailReader: TranscriptTailReader?
+    /// Transcript paths with fresh writes, forwarded per event (plan 09 M5;
+    /// nil = no consumer). Paths, not lines: the usage meter reads the files
+    /// itself with its own persisted offsets, so its replay safety never
+    /// depends on this reader's prime-to-end launch policy.
+    private let transcriptActivitySink: (@Sendable ([URL], Date) -> Void)?
     private let waitParser: WaitSignalParser
     /// Per-file parser cursor (carries at most a pending cron job id).
     private var waitCursors: [URL: WaitSignalParser.Cursor] = [:]
@@ -153,11 +159,15 @@ public actor DetectionCoordinator {
         // measurement, and a `nil` sampler makes the predicate permanently
         // unable to condemn anything. Injected so tests script it.
         activitySampler: (any ProcessActivitySampling)? = ProcessActivitySampler(),
-        userNotifier: (any UserNotifying)? = nil
+        userNotifier: (any UserNotifying)? = nil,
+        // Transcript paths with fresh writes, forwarded once per activity
+        // event (plan 09 M5). nil costs nothing.
+        transcriptActivitySink: (@Sendable ([URL], Date) -> Void)? = nil
     ) {
         self.clock = clock
         self.tailReader = tailReader
         self.waitParser = waitParser
+        self.transcriptActivitySink = transcriptActivitySink
         self.userNotifier = userNotifier
         self.l2IdleWindow = l2IdleWindow
         self.socketDegradeGrace = socketDegradeGrace
@@ -405,6 +415,10 @@ public actor DetectionCoordinator {
         }
 
         noteFileActivity(agent: agent, at: date)
+
+        if !paths.isEmpty {
+            transcriptActivitySink?(paths, now)
+        }
 
         guard let tailReader, !paths.isEmpty else {
             if applied { reconcile(now: now) }

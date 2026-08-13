@@ -77,7 +77,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+- Token usage metering (plan 09): a `UsageMetering` module reads the real
+  `usage` counters from Claude Code transcripts — deduplicated by message +
+  request id, rolled up per day/model, with a 5-hour-block and trailing-7-day
+  estimate (ccusage's inference, labeled as an estimate) and a per-session
+  context waterline. Costs are shown as "API-equivalent value" from a static
+  built-in price table; the zero-network promise is unchanged.
+- Official rate limits via an optional statusline bridge: `decaf-statusline`
+  receives Claude Code's status JSON, forwards the official `five_hour` /
+  `seven_day` `used_percentage` over the existing socket, and chains to any
+  status line you already had — its output passes through unchanged, and
+  uninstalling restores your original `statusLine` verbatim. Official numbers
+  degrade to "official, stale" after 10 minutes and the menu says which kind
+  it is showing (`Limits: 5h 34% (official)` vs `(estimated)`).
+- Menu: `Limits:` and `Today:` rows (absent on a Mac that has never run an
+  agent, same rule as every other agent row). Settings › Agents: an install /
+  uninstall row for the statusline bridge.
+- Two new pinned read surfaces (closed enums + pinning tests) keep the privacy
+  contract provable: transcript usage counters and statusline rate-limit
+  fields; conversation content remains unread.
+- `Scripts/check-statusline.sh`: dependency-whitelist and behavior smoke for
+  the new helper (default line, socket frame, chain passthrough, EPIPE).
+- Usage counted while the app was closed is caught up at launch: per-file
+  read positions persist with the rollups in one file, so a restart counts
+  every line exactly once (rotated transcripts start over from the top).
+- Fixed before release, found by checking the shipped numbers against the
+  transcripts by hand: the first launch of a marks-aware build re-read every
+  transcript from the top and added a second copy of the whole history to
+  counts that were already there (measured: 183M "today" against a true 94M).
+  The persisted state now carries a version, and a state older than the
+  current one is rebuilt from the transcripts instead of added to. Session
+  context percentages were also computed against a flat 200K window, so every
+  current-generation session read `100%` once past 200K; context sizes are now
+  per model (1M for the Opus 5 / Sonnet 5 / Fable 5 generation).
+- Display polish: the 5h reset instant on the Limits row (absolute time,
+  hidden once past), estimated blocks as a percentage of your own largest
+  block ("of personal max" — never of an official limit), and menu numbers at
+  most 15 s stale on open.
+- `resets_at` is read as Unix epoch seconds as well as an ISO string. Claude
+  Code sends the number; reading only the string meant the reset instant never
+  arrived and the Limits row silently dropped half its own sentence.
 
 ## [0.1.0] — Unreleased
 

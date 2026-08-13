@@ -21,6 +21,7 @@
 import Foundation
 import DecafCore
 import HookWire
+import UsageMetering
 
 // MARK: - Manual presets (plan 04 §3)
 
@@ -95,6 +96,12 @@ enum MenuTextFormatter {
 
     // MARK: Session rows
 
+    /// The context waterline is deliberately NOT here (removed 2026-08-08).
+    /// `SessionWaterline` still rides the snapshot — the loop-scheduling work
+    /// plan 09 anticipates needs it — but a per-session percentage in a list
+    /// that folds after a few rows tells you a number without telling you
+    /// whose it is. It comes back when there is a surface that can say which
+    /// session it belongs to.
     static func sessionLine(for session: AgentSessionSummary, now: Date = Date()) -> String {
         switch session.phase {
         case .working:
@@ -185,6 +192,84 @@ enum MenuTextFormatter {
 /// It also settles the multi-window question for free: both are opened from the
 /// same menu, so at most one can ever be wanted, and one controller that
 /// retargets an already-open window is the behaviour a user expects anyway.
+// MARK: - Usage rows (plan 09 M3c)
+
+/// Copy for the menu's usage lines. Provenance is always in the sentence:
+/// an official number says so, an estimate says so, and the two are never
+/// mixed into one unlabeled figure (plan 09 诚实规则).
+enum UsageCopy {
+
+    /// 843 → "843", 12_400 → "12.4K", 3_400_000 → "3.4M".
+    static func tokensText(_ count: Int) -> String {
+        switch count {
+        case ..<1000:
+            return "\(count)"
+        case ..<1_000_000:
+            return String(format: "%.1fK", Double(count) / 1000)
+        default:
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+    }
+
+    /// The limits line. Official numbers when we have them (labeled, staleness
+    /// included, the 5h reset as an ABSOLUTE time per the menu's R7 rule);
+    /// otherwise the block estimate; nil when there is nothing honest to say.
+    static func quotaLine(for overview: UsageOverview, now: Date = Date()) -> String? {
+        var windows: [String] = []
+        if let fiveHour = overview.quotaFiveHour {
+            var part = "5h \(Int(fiveHour.usedPercentage.rounded()))%"
+            // Only a FUTURE reset instant is information; a past one means the
+            // window already rolled and the percentage is about to be refreshed.
+            if let resetsAt = fiveHour.resetsAt, resetsAt > now {
+                part += " · resets \(MenuTextFormatter.timeString(resetsAt))"
+            }
+            windows.append(part)
+        }
+        if let sevenDay = overview.quotaSevenDay {
+            windows.append("7d \(Int(sevenDay.usedPercentage.rounded()))%")
+        }
+        if !windows.isEmpty {
+            let label: String
+            switch overview.quotaProvenance {
+            case .official(fresh: true): label = "official"
+            case .official(fresh: false): label = "official, stale"
+            case .estimated: label = "estimated"
+            }
+            return "Limits: " + windows.joined(separator: " · ") + " (\(label))"
+        }
+        if let block = overview.usage.activeBlock {
+            return blockEstimateLine(block, personalMax: overview.usage.personalMaxBlockTokens)
+        }
+        return nil
+    }
+
+    /// The estimated-block sentence. With a personal-max on record that is
+    /// LARGER than the current block, the block reads as a percentage of it —
+    /// explicitly "of personal max", never of an official limit we do not
+    /// have. A block that is itself the biggest ever (or the first) has no
+    /// meaningful denominator and stays a plain token count.
+    static func blockEstimateLine(_ block: UsageBlock, personalMax: Int?) -> String {
+        if let personalMax, personalMax > block.tokens.total, personalMax > 0 {
+            let percent = Int((Double(block.tokens.total) / Double(personalMax) * 100).rounded())
+            return "5h block: \(percent)% of personal max (≈\(tokensText(block.tokens.total)) tokens, estimated)"
+        }
+        return "5h block: ≈\(tokensText(block.tokens.total)) tokens (estimated)"
+    }
+
+    /// Today's totals with the equivalent API value. The "≈" and "value" are
+    /// load-bearing: a subscription user is not billed these dollars.
+    static func todayLine(for overview: UsageOverview) -> String? {
+        let today = overview.usage.today
+        guard today.total > 0 else { return nil }
+        var line = "Today: \(tokensText(today.total)) tokens"
+        if let cost = overview.usage.todayCostUSD {
+            let suffix = overview.usage.todayHasUnpricedModels ? "+" : ""
+            line += String(format: " · ≈$%.2f%@ API value", cost, suffix)
+        }
+        return line
+    }
+}
+
 enum CustomHoldKind: Equatable, CaseIterable {
     /// "Keep For… ▸ Custom…" — type a duration.
     case duration

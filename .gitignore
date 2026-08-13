@@ -1,3 +1,13 @@
+# AI-agent guidance and configuration: kept local to each worktree, never
+# published (project choice — the repo's shared knowledge lives in docs/).
+AGENTS.md
+AGENTS.override.md
+CLAUDE.md
+CLAUDE.local.md
+.agents/
+.claude/
+.codex/
+
 # generated
 Decaf.xcodeproj/
 .build/

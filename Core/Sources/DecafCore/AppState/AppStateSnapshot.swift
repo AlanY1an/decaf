@@ -5,6 +5,7 @@
 
 import Foundation
 import HookWire
+import UsageMetering
 
 /// Why holding is currently suspended by a safety gate, with display context
 /// (review decision R12: the low-battery case carries percent + active threshold).
@@ -119,6 +120,10 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// go immediately (see `CompositionRoot.setAgentAutoKeepAwake`).
     public var agentAutoKeepAwake: Bool
 
+    /// Token usage + quota overview (plan 09). nil until the first refresh —
+    /// the UI renders the section only when it has something honest to show.
+    public var usage: UsageOverview?
+
     /// Whether "Turn Off Display Now" may run. Holding the display assertion
     /// and blanking the display fight each other (the screen would wake right
     /// back up), so the action is unavailable exactly while `.keepOn` is in
@@ -195,7 +200,8 @@ public struct AppStateSnapshot: Equatable, Sendable {
         effectiveDisplayPolicy: DisplayPolicy = .allowSleep,
         selectedDisplayPolicy: DisplayPolicy = .allowSleep,
         hasEverDetectedAgent: Bool = false,
-        agentAutoKeepAwake: Bool = true
+        agentAutoKeepAwake: Bool = true,
+        usage: UsageOverview? = nil
     ) {
         self.manual = manual
         self.agentSessions = agentSessions
@@ -207,5 +213,6 @@ public struct AppStateSnapshot: Equatable, Sendable {
         self.selectedDisplayPolicy = selectedDisplayPolicy
         self.hasEverDetectedAgent = hasEverDetectedAgent
         self.agentAutoKeepAwake = agentAutoKeepAwake
+        self.usage = usage
     }
 }

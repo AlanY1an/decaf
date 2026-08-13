@@ -55,7 +55,8 @@ struct MenuContentView: View {
             case .status(let text),
                  .session(let text),
                  .overflow(let text),
-                 .precisionDetail(let text):
+                 .precisionDetail(let text),
+                 .usage(let text):
                 // `Text` in a `.menu` renders as a disabled item (plan 04 §2).
                 Text(text)
 

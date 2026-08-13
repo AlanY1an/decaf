@@ -89,6 +89,9 @@ public final class ClaudeCodeIntegration: AgentIntegration, @unchecked Sendable 
         public var homeDirectory: String
         /// Copy source: `Decaf.app/Contents/Helpers/decaf-bridge`.
         public var bundledBridgePath: String
+        /// Copy source for the statusline bridge; defaults to the sibling of
+        /// `bundledBridgePath` named `decaf-statusline` (plan 09 M3b).
+        public var bundledStatuslinePath: String
         /// Version of the bundled bridge; recorded in the manifest and compared
         /// on every app launch for the silent re-copy.
         public var bridgeVersion: String
@@ -99,12 +102,15 @@ public final class ClaudeCodeIntegration: AgentIntegration, @unchecked Sendable 
         public init(
             homeDirectory: String,
             bundledBridgePath: String,
+            bundledStatuslinePath: String? = nil,
             bridgeVersion: String,
             shellPath: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh",
             now: @escaping () -> Date = Date.init
         ) {
             self.homeDirectory = homeDirectory
             self.bundledBridgePath = bundledBridgePath
+            self.bundledStatuslinePath = bundledStatuslinePath
+                ?? (bundledBridgePath as NSString).deletingLastPathComponent + "/decaf-statusline"
             self.bridgeVersion = bridgeVersion
             self.shellPath = shellPath
             self.now = now
@@ -335,6 +341,93 @@ public final class ClaudeCodeIntegration: AgentIntegration, @unchecked Sendable 
             createdFiles: []
         )
         try uninstall(record)
+    }
+
+    // MARK: - Statusline bridge (plan 09 M3b)
+
+    /// Deliberately NOT recorded in the install manifest: the `statusLine`
+    /// slot is self-describing (marker-based `isOurs`), the chain sidecar is
+    /// the only extra state, and widening `InstallRecord`'s schema would force
+    /// a manifest migration for a feature the file can answer on its own.
+
+    /// True when settings.json's statusLine slot holds our command.
+    public func statuslineInstalled() -> Bool {
+        let settings = (try? editor.readJSONObject(atPath: paths.claudeSettingsFile)) ?? nil
+        return settings.map(StatuslineSettingsEditor.isOurs) ?? false
+    }
+
+    public func plannedStatuslineChanges() -> [PlannedChange] {
+        [
+            PlannedChange(
+                path: paths.statuslineBinary,
+                kind: fileSystem.fileExists(atPath: paths.statuslineBinary) ? .modify : .create,
+                preview: "Copy of the decaf-statusline helper from the Decaf app bundle. "
+                    + "Claude Code's status line runs it; it reads the official rate-limit "
+                    + "numbers and passes your existing status line through unchanged."
+            ),
+            PlannedChange(
+                path: paths.claudeSettingsFile,
+                kind: fileSystem.fileExists(atPath: paths.claudeSettingsFile) ? .modify : .create,
+                preview: "statusLine → \(StatuslineSettingsEditor.quotedCommand) "
+                    + "(your current statusLine, if any, is preserved and chained to)"
+            ),
+        ]
+    }
+
+    /// Install: copy the binary, swap the statusLine slot, persist the chain
+    /// sidecar. Same write discipline as hooks: parse first, abort untouched
+    /// on invalid JSON, rotating backup before the write.
+    public func installStatusline() throws {
+        let existingSettings = try editor.readJSONObject(atPath: paths.claudeSettingsFile)
+
+        guard fileSystem.fileExists(atPath: configuration.bundledStatuslinePath) else {
+            throw IntegrationError.bundledBridgeMissing(path: configuration.bundledStatuslinePath)
+        }
+        try fileSystem.createDirectory(atPath: paths.binDirectory)
+        try fileSystem.copyItem(atPath: configuration.bundledStatuslinePath, toPath: paths.statuslineBinary)
+
+        let result = StatuslineSettingsEditor.install(into: existingSettings ?? [:])
+
+        // The sidecar first, so a crash between the two writes leaves a chain
+        // file with no consumer (harmless) rather than our command with no
+        // chain (the user's statusline goes dark). Never overwrite a captured
+        // chain with nothing: a re-install over our own entry captures nil.
+        if let captured = result.capturedPrevious {
+            try editor.writeJSONObject(
+                StatuslineSettingsEditor.chainFilePayload(previous: captured),
+                toPath: paths.statuslineChainFile
+            )
+        } else if !fileSystem.fileExists(atPath: paths.statuslineChainFile) {
+            try editor.writeJSONObject(
+                StatuslineSettingsEditor.chainFilePayload(previous: nil),
+                toPath: paths.statuslineChainFile
+            )
+        }
+
+        if existingSettings != nil {
+            _ = try editor.backUp(fileAtPath: paths.claudeSettingsFile)
+        }
+        try fileSystem.createDirectory(atPath: paths.claudeConfigDirectory)
+        try editor.writeJSONObject(result.settings, toPath: paths.claudeSettingsFile)
+    }
+
+    /// Uninstall: restore the chained statusline (or drop the key), remove the
+    /// sidecar and the binary. A foreign statusLine is never touched.
+    public func uninstallStatusline() throws {
+        if let settings = try editor.readJSONObject(atPath: paths.claudeSettingsFile),
+           StatuslineSettingsEditor.isOurs(settings) {
+            let previous = (try? editor.readJSONObject(atPath: paths.statuslineChainFile))
+                .flatMap { $0?["previous"] as? [String: Any] }
+            _ = try editor.backUp(fileAtPath: paths.claudeSettingsFile)
+            let restored = StatuslineSettingsEditor.uninstall(from: settings, restoring: previous)
+            try editor.writeJSONObject(restored, toPath: paths.claudeSettingsFile)
+        }
+        if fileSystem.fileExists(atPath: paths.statuslineChainFile) {
+            try? fileSystem.removeItem(atPath: paths.statuslineChainFile)
+        }
+        if fileSystem.fileExists(atPath: paths.statuslineBinary) {
+            try? fileSystem.removeItem(atPath: paths.statuslineBinary)
+        }
     }
 
     // MARK: - Bridge version upkeep (app-launch path)

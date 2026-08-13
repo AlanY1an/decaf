@@ -267,6 +267,25 @@ public final class TranscriptTailReader {
         return lines
     }
 
+    /// The file's identity + resume offset as last read, or nil for a file
+    /// this reader has never tracked (plan 09 M5 usage marks).
+    public func currentMark(at url: URL) -> (stat: TranscriptFileStat, offset: UInt64)? {
+        let state = states[url.standardizedFileURL]
+        guard let identity = state?.identity else { return nil }
+        return (identity, state?.offset ?? 0)
+    }
+
+    /// Seeds a file's resume position from a persisted mark (plan 09 M5).
+    /// Safe against rotation by construction: `readNewLines` re-checks the
+    /// identity on every read, and a file that no longer matches `identity`
+    /// resets to offset 0 there.
+    public func prime(_ url: URL, offset: UInt64, identity: TranscriptFileStat) {
+        var fresh = FileState()
+        fresh.offset = offset
+        fresh.identity = identity
+        states[url.standardizedFileURL] = fresh
+    }
+
     /// Launch helper: record each existing file's EOF without reading it, so a
     /// cold start never replays 30 MB of history.
     public func primeToEnd(_ urls: [URL]) {

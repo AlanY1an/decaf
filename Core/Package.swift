@@ -21,7 +21,9 @@ let package = Package(
         .library(name: "AgentDetection", targets: ["AgentDetection"]),
         .library(name: "DecafComposition", targets: ["DecafComposition"]),
         .library(name: "HookWire", targets: ["HookWire"]),
+        .library(name: "UsageMetering", targets: ["UsageMetering"]),
         .executable(name: "decaf-bridge", targets: ["decaf-bridge"]),
+        .executable(name: "decaf-statusline", targets: ["decaf-statusline"]),
         .executable(name: "decaf-smoke", targets: ["decaf-smoke"]),
     ],
     targets: [
@@ -30,11 +32,23 @@ let package = Package(
         ),
         .target(
             name: "DecafCore",
-            dependencies: ["HookWire"]
+            dependencies: ["HookWire", "UsageMetering"]
+        ),
+        // Strict-JSON helpers shared by transcript readers (AgentDetection's
+        // wait-signal parser and UsageMetering's usage parser). `package`
+        // access: visible inside this package, invisible to the app target.
+        .target(
+            name: "TranscriptSupport"
+        ),
+        // Usage metering (plan 09): transcript token ledger. Depends ONLY on
+        // TranscriptSupport — no DecafCore/AgentDetection coupling.
+        .target(
+            name: "UsageMetering",
+            dependencies: ["TranscriptSupport"]
         ),
         .target(
             name: "AgentDetection",
-            dependencies: ["DecafCore", "HookWire"]
+            dependencies: ["DecafCore", "HookWire", "TranscriptSupport"]
         ),
         // The composition root (plan 01 PR-6) must see both the engine
         // (DecafCore) and the detection layer (AgentDetection), and
@@ -42,10 +56,16 @@ let package = Package(
         // in its own target on top of both rather than inside DecafCore.
         .target(
             name: "DecafComposition",
-            dependencies: ["DecafCore", "AgentDetection", "HookWire"]
+            dependencies: ["DecafCore", "AgentDetection", "HookWire", "UsageMetering"]
         ),
         .executableTarget(
             name: "decaf-bridge",
+            dependencies: ["HookWire"]
+        ),
+        // Statusline-to-socket bridge (plan 09 M2): same R4 discipline as
+        // decaf-bridge — HookWire only.
+        .executableTarget(
+            name: "decaf-statusline",
             dependencies: ["HookWire"]
         ),
         .executableTarget(
@@ -54,7 +74,7 @@ let package = Package(
         ),
         .testTarget(
             name: "DecafCoreTests",
-            dependencies: ["DecafCore", "AgentDetection", "DecafComposition", "HookWire"],
+            dependencies: ["DecafCore", "AgentDetection", "DecafComposition", "HookWire", "UsageMetering", "TranscriptSupport"],
             exclude: ["Fixtures"] // loaded via #filePath, not Bundle.module
         ),
     ],

@@ -174,6 +174,9 @@ public struct IntegrationPaths: Equatable, Sendable {
     public var appSupportDirectory: String { homeDirectory + "/Library/Application Support/Decaf" }
     public var binDirectory: String { appSupportDirectory + "/bin" }
     public var bridgeBinary: String { binDirectory + "/decaf-bridge" }
+    public var statuslineBinary: String { binDirectory + "/decaf-statusline" }
+    /// The chain sidecar decaf-statusline reads (plan 09 M2/M3).
+    public var statuslineChainFile: String { appSupportDirectory + "/statusline-chain.json" }
     public var backupsDirectory: String { appSupportDirectory + "/backups" }
     public var manifestFile: String { appSupportDirectory + "/integrations.json" }
     public var claudeConfigDirectory: String { homeDirectory + "/.claude" }

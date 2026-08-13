@@ -575,6 +575,14 @@ Decaf watches `~/.claude`. That deserves a straight answer rather than a badge.
 
 - **It makes no network requests.** None. There is no telemetry, no crash reporter, no analytics, and no update check — there is no `URLSession` anywhere in the source. <!-- NOTE: narrow this to "the only network request is Sparkle's update check" the day Sparkle is integrated (V1.x, plan 06 §7). -->
 - **It never reads your conversation.** The transcript parser looks at exactly these fields: `sessionId`, `timestamp`, `isSidechain`, the record and block `type`, the tool `name`, and — only for the four scheduling tools above — `delaySeconds`, `timeout_ms`, `stop`, `cron`, `id`. (It walks the `message` → `content` → `input` containers to reach them, and reads no other leaf inside any of them.) Those last five are a Swift enum with a test pinning its cases, so widening the tool-input surface is a failing build rather than a code-review oversight. `prompt`, `reason` and every other conversational field are never read, never stored, never logged.
+<!-- ACCURACY (added 2026-08-08 with usage metering): the paragraph below names
+     the TWO additional pinned read surfaces the feature introduced. Every key
+     list is a CaseIterable enum with a pinning test — UsageRecordParserTests
+     `readSurfaceIsExactlyThePinnedKeys` and StatuslineInputTests likewise —
+     verified against UsageRecordParser.swift / StatuslineInput.swift on the
+     date of writing. Keep the lists in sync with those enums or delete the
+     claim. -->
+- **Usage metering reads counters, not words.** The token ledger reads, from assistant records only: `sessionId`, `timestamp`, `isSidechain`, `requestId`, `message` → `id`, `model`, and the four `usage` counters (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`). The optional statusline helper reads, from Claude Code's own status JSON: `session_id`, `model` → `id` / `display_name`, and `rate_limits` → `five_hour` / `seven_day` → `used_percentage` / `resets_at`. Each of those key lists is a closed Swift enum pinned by its own test, same discipline as above. `content`, `workspace`, `cost` and every other field are never read.
 <!-- ACCURACY (narrowed 2026-08-06): the previous draft said the whole field
      list "is a Swift enum with a test pinning its cases". Only the five `input`
      keys are — WaitSignalParser.InputKey, pinned by
@@ -584,7 +592,7 @@ Decaf watches `~/.claude`. That deserves a straight answer rather than a badge.
      no pinning test. The sentence now says which half is pinned. -->
 - **One exception, and it is narrow.** To match a cancelled cron job to the wait it created, Decaf reads the single tool result line directly following a `CronCreate`, and keeps only a hex job id matched by an anchored regex (`^Scheduled .*job ([0-9a-f]{6,64})`). Every other tool result is skipped, because tool results contain arbitrary output. If the regex does not match, the pairing is abandoned and the hold falls back to the conservative cap.
 - **Nothing is logged with content in it.** Diagnostics are a closed enum of cases like `lineNotJSON` and `unknownTool` — a log line is structurally incapable of carrying a transcript excerpt.
-- **The only files it writes** are under `~/Library/Application Support/Decaf/` (session state, a copy of the hook helper, and a rotating one-deep backup of any config file it edits) and, if you install hooks, its own entries in `~/.claude/settings.json`.
+- **The only files it writes** are under `~/Library/Application Support/Decaf/` (session state, the token ledger's `usage.json` — counters and model names only, no text —, copies of its two helper binaries, the `statusline-chain.json` record of the status line it wraps, and a rotating one-deep backup of any config file it edits) and, in `~/.claude/settings.json`, its own hook entries if you install hooks and the `statusLine` command if you install the usage statusline. Both installs are reversible from Settings → Agents; the statusline uninstall restores your original `statusLine` value.
 
 And you are shown that, in full, before any of it happens — installing hooks is gated on this sheet, and the file list on it is generated from the same code that does the writing, not from copy:
 
@@ -671,6 +679,7 @@ Power assertions die with the process, so quitting or deleting the app can never
 
 - [x] Claude Code — hooks, file-activity fallback, wait signals
 - [x] Manual holds, display policy, battery gate
+- [x] Token usage & rate-limit display — real `usage` counters from transcripts, official 5-hour/weekly percentages via an optional statusline bridge that chains to your existing status line; every number labeled official or estimated
 - [ ] Codex — native hooks where the installed version supports them, `notify` fallback below that
 - [ ] opencode — plugin
 - [ ] Scheduled time windows ("keep awake 9–6 on weekdays")

@@ -28,7 +28,7 @@ body:
     id: usage_support
     attributes:
       label: Usage support summary (optional)
-      description: "For usage issues in the development preview: open Usage Statistics, click the read-status line, then Copy support summary. It includes app/macOS versions and import status, without token totals, usage dates, paths or conversations. Paste it here if useful."
+      description: "For usage issues in v0.2.0 or later: open Usage Statistics, click the read-status line, then Copy support summary. It includes app/macOS versions and import status, without token totals, usage dates, paths or conversations. Paste it here if useful."
       render: text
   - type: textarea
     id: behavior

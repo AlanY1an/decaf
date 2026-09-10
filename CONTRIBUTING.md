@@ -6,7 +6,7 @@ Small, specific contributions are welcome. You do not need to write Swift to hel
 
 Use [the issue chooser](https://github.com/AlanY1an/decaf/issues/new/choose) for bugs, ideas or first-day feedback. Include your macOS version, Decaf version or commit, and whether you use Claude Code, Codex or both.
 
-For usage issues, the development preview offers **Usage Statistics → read-status line → Copy support summary**. It copies app/macOS versions, selected sources and import status; token totals, usage dates, file paths, session IDs, conversations and raw errors are excluded. Paste it into the optional support-summary field if useful. Copying never sends it anywhere.
+For usage issues, v0.2.0 and later offer **Usage Statistics → read-status line → Copy support summary**. It copies app/macOS versions, selected sources and import status; token totals, usage dates, file paths, session IDs, conversations and raw errors are excluded. Paste it into the optional support-summary field if useful. Copying never sends it anywhere.
 
 A useful bug report says what you expected, what happened, and the shortest way to reproduce it. Share synthetic or redacted examples instead of full session logs, project paths, prompts or credentials.
 

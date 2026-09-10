@@ -72,7 +72,7 @@ private struct MarketingHero: View {
                 Spacer(minLength: 0)
                 VStack(alignment: .leading, spacing: 7) {
                     Text("github.com/AlanY1an/decaf").font(.system(size: 12, design: .monospaced))
-                    Text("Development preview · Example data").font(.system(size: 11)).foregroundStyle(p.secondary)
+                    Text("Native macOS app · Example data").font(.system(size: 11)).foregroundStyle(p.secondary)
                 }
             }.frame(width: 480)
             VStack(spacing: 18) {
@@ -117,7 +117,7 @@ private struct MarketingWalkthrough: View {
                     Text(titles[step]).font(.custom("Georgia", size: 44)).fixedSize(horizontal: false, vertical: true)
                     Text(subtitles[step]).font(.system(size: 18)).lineSpacing(8).foregroundStyle(p.secondary)
                     Spacer()
-                    Text("Native UI walkthrough · Example data\nDevelopment preview · github.com/AlanY1an/decaf")
+                    Text("Staged UI walkthrough · Example data\ngithub.com/AlanY1an/decaf")
                         .font(.system(size: 11)).lineSpacing(6).foregroundStyle(p.secondary)
                 }.frame(width: 450)
                 Group {

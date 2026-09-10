@@ -72,8 +72,15 @@ jobs:
       - name: Build
         run: swift build --package-path Core
 
-      - name: Test
-        run: swift test --package-path Core
+      # These tests spawn a real, deadline-bounded bridge. Suite-level
+      # serialization only orders their own cases; hundreds of unrelated
+      # parallel tests can still starve them on hosted runners. Run the same
+      # assertions in a separate invocation without relaxing the deadlines.
+      - name: Test Core
+        run: swift test --package-path Core --skip BridgeSocketTests
+
+      - name: Test bridge integration in isolation
+        run: swift test --package-path Core --skip-build --filter BridgeSocketTests
 
   app:
     name: App — project generation, build, bridge discipline

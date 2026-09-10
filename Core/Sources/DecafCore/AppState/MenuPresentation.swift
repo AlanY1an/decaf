@@ -116,35 +116,33 @@ public enum MenuCopy {
         }
 
         let active = s.holdingAgentSessions
+        let fallbacks = s.holdingFallbackAgents
         if !active.isEmpty {
             let graceEnds = active.compactMap { session -> Date? in
                 if case .graceIdle(let until) = session.phase { return until }
                 return nil
             }
-            if graceEnds.count == active.count, let latest = graceEnds.max() {
+            if fallbacks.isEmpty, graceEnds.count == active.count, let latest = graceEnds.max() {
                 // The grace deadline is when sleep becomes allowed, and it is
                 // the one number in this menu a user would act on.
                 return "Just finished · Sleep allowed after \(timeString(latest))"
             }
-            let name = active[0].agent.displayName
-            return active.count == 1
-                ? "\(name) working"
-                : "\(name) working · \(active.count) sessions"
         }
 
-        // File-activity detection, the zero-config default. Same sentence as a
-        // single hooks-tracked session, because it states the same fact — an
-        // agent is busy and sleep is blocked. How well we know it is the job of
-        // the precision line directly below this one ("Detection: file activity
-        // (approximate)"), which is shown in exactly this mode; saying it twice
-        // in the status line would make the headline about our plumbing instead
-        // of about the user's Mac.
-        let fallbacks = s.holdingFallbackAgents
-        if let agent = fallbacks.first {
-            let name = agent.displayName
-            return fallbacks.count == 1
-                ? "\(name) working"
-                : "\(name) working · \(fallbacks.count) agents"
+        // Hooks for one tool must not hide another tool's file activity.
+        // Name each working agent once, in a stable order, without inventing
+        // session counts for fallback activity. Grace-only agents have finished.
+        let workingAgents = Set(active.filter { $0.phase == .working }.map(\.agent))
+            .union(fallbacks)
+        let agents = AgentKind.allCases.filter { workingAgents.contains($0) }
+        if agents.count > 1 {
+            return "\(agents.map(\.displayName).joined(separator: " + ")) working"
+        }
+        if let agent = agents.first {
+            let count = active.filter { $0.agent == agent }.count
+            return count > 1
+                ? "\(agent.displayName) working · \(count) sessions"
+                : "\(agent.displayName) working"
         }
 
         if let manual = s.manual {
@@ -202,6 +200,11 @@ public enum MenuCopy {
     }
 
     public static func precisionNote(for s: AppStateSnapshot) -> PrecisionNote? {
+        let active = Set(s.holdingAgentSessions.map { $0.agent }).union(s.holdingFallbackAgents)
+        if s.precision[.codex] == .fileActivity, active.isEmpty || active.contains(.codex) {
+            return PrecisionNote(detail: "Codex: task logs (approximate)",
+                                 actionTitle: "Agent detection settings…")
+        }
         switch summaryPrecision(for: s) {
         case .fileActivity:
             return PrecisionNote(

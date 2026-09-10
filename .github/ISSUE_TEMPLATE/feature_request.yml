@@ -1,0 +1,18 @@
+name: Feature idea / 功能建议
+description: Describe a workflow Decaf could help with.
+title: "[Idea] "
+body:
+  - type: textarea
+    id: situation
+    attributes:
+      label: What are you trying to do?
+      description: Describe a real situation and what is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: What would help?
+      description: A small example, sketch or suggested behavior is welcome.
+    validations:
+      required: true

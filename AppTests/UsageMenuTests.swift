@@ -101,14 +101,14 @@ struct UsageMenuTests {
         // Never seen an agent: no usage rows, whatever the data says.
         let fresh = AppStateSnapshot(usage: usage)
         #expect(!MenuLayout.topRows(for: fresh, now: Date()).contains {
-            if case .usage = $0 { return true } else { return false }
+            if case .dailyUsage = $0 { return true } else { return false }
         })
 
         // Seen one: the rows appear.
         let seasoned = AppStateSnapshot(hasEverDetectedAgent: true, usage: usage)
         let rows = MenuLayout.topRows(for: seasoned, now: Date())
         #expect(rows.contains {
-            if case .usage(let text) = $0 { return text.contains("official") } else { return false }
+            if case .dailyUsage(_, let sections) = $0 { return sections.flatMap(\.lines).contains { $0.contains("official") } } else { return false }
         })
     }
 }
@@ -153,4 +153,23 @@ struct UsageMenuM5Tests {
         #expect(line == "5h block: ≈3.4M tokens (estimated)")
     }
 
+}
+
+@Suite("Daily usage menu")
+struct DailyUsageMenuTests {
+    @Test func headlineCombinesAgentsWithoutCombiningLimits() {
+        var combined = overview(fiveHourPercent: 50, provenance: .official(fresh: true), today: TokenTotals(input: 1000))
+        combined.codexUsage = overview(today: TokenTotals(input: 2000)).usage
+        #expect(UsageCopy.dailyMenuTitle(for: combined) == "Today: 3.0K tokens")
+        let sections = UsageCopy.detailSections(for: combined, now: Date())
+        #expect(sections[0].lines == ["Claude Code: 1.0K tokens", "Codex: 2.0K tokens"])
+        #expect(sections.contains { $0.title == "Claude Code limits" && $0.lines.contains("Limits: 5h 50% (official)") })
+        #expect(!sections.contains { $0.title.contains("Codex limits") })
+    }
+    @Test func zeroDayIsVisibleAndEstimatedBlocksAreNotTheHeadline() {
+        let empty = overview()
+        #expect(UsageCopy.dailyMenuTitle(for: empty) == "Today: 0 tokens")
+        let rows = MenuLayout.topRows(for: AppStateSnapshot(hasEverDetectedAgent: true, usage: empty), now: Date())
+        #expect(rows.contains { if case .dailyUsage("Today: 0 tokens", _) = $0 { return true }; return false })
+    }
 }

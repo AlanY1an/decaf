@@ -142,6 +142,8 @@ public final class TranscriptTailReader {
     private struct FileState {
         /// Bytes of this file already consumed (buffered partial included).
         var offset: UInt64 = 0
+        /// Last complete line boundary, including discarded oversized lines.
+        var completeOffset: UInt64 = 0
         /// Identity of the file the offset belongs to.
         var identity: TranscriptFileStat?
         /// Trailing bytes of an incomplete line, carried to the next read.
@@ -154,6 +156,7 @@ public final class TranscriptTailReader {
     }
 
     private var states: [URL: FileState] = [:]
+    private var successfulReads: Set<URL> = []
 
     private let opener: TranscriptFileOpening
     private let chunkBytes: Int
@@ -196,6 +199,7 @@ public final class TranscriptTailReader {
     @discardableResult
     public func readNewLines(at url: URL, startAtEnd: Bool = false) -> [String] {
         let key = url.standardizedFileURL
+        successfulReads.remove(key)
 
         guard let handle = opener.openForReading(url) else {
             // Could not open. Deliberately KEEP the bookkeeping.
@@ -225,6 +229,7 @@ public final class TranscriptTailReader {
             var fresh = FileState()
             fresh.identity = current
             fresh.offset = startAtEnd ? current.size : 0
+            fresh.completeOffset = fresh.offset
             return fresh
         }()
 
@@ -242,6 +247,7 @@ public final class TranscriptTailReader {
         state.pendingBytes = false
         guard state.offset < current.size else {
             states[key] = state
+            successfulReads.insert(key)
             return []
         }
 
@@ -257,6 +263,9 @@ public final class TranscriptTailReader {
         while consumed < budget {
             let want = min(chunkBytes, budget - consumed)
             guard let chunk = try? handle.read(upToCount: want), !chunk.isEmpty else { break }
+            if let newline = chunk.lastIndex(of: Self.newline) {
+                state.completeOffset = state.offset + UInt64(consumed + chunk.distance(from: chunk.startIndex, to: newline) + 1)
+            }
             consumed += chunk.count
             ingest(chunk, into: &state, lines: &lines)
         }
@@ -264,7 +273,14 @@ public final class TranscriptTailReader {
         state.offset &+= UInt64(consumed)
         state.pendingBytes = state.offset < current.size
         states[key] = state
+        if consumed == budget { successfulReads.insert(key) }
         return lines
+    }
+
+    /// False after an open/stat/seek/read failure. A retained resume mark alone
+    /// cannot establish that the latest read succeeded.
+    public func lastReadSucceeded(at url: URL) -> Bool {
+        successfulReads.contains(url.standardizedFileURL)
     }
 
     /// The file's identity + resume offset as last read, or nil for a file
@@ -272,7 +288,9 @@ public final class TranscriptTailReader {
     public func currentMark(at url: URL) -> (stat: TranscriptFileStat, offset: UInt64)? {
         let state = states[url.standardizedFileURL]
         guard let identity = state?.identity else { return nil }
-        return (identity, state?.offset ?? 0)
+        // A fresh reader has neither the partial buffer nor the oversize-line
+        // resynchronization state. Replay from the last complete-line boundary.
+        return (identity, state?.completeOffset ?? 0)
     }
 
     /// Seeds a file's resume position from a persisted mark (plan 09 M5).
@@ -282,6 +300,7 @@ public final class TranscriptTailReader {
     public func prime(_ url: URL, offset: UInt64, identity: TranscriptFileStat) {
         var fresh = FileState()
         fresh.offset = offset
+        fresh.completeOffset = offset
         fresh.identity = identity
         states[url.standardizedFileURL] = fresh
     }
@@ -325,11 +344,13 @@ public final class TranscriptTailReader {
     /// Drops all bookkeeping for one file (e.g. its session ended).
     public func forget(_ url: URL) {
         states.removeValue(forKey: url.standardizedFileURL)
+        successfulReads.remove(url.standardizedFileURL)
     }
 
     /// Drops all bookkeeping.
     public func reset() {
         states.removeAll()
+        successfulReads.removeAll()
     }
 
     // MARK: Line splitting

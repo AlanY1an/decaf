@@ -1,130 +1,81 @@
 <div align="center">
 
-<img src="docs/assets/icon-256.png" alt="Decaf 应用图标" width="160" height="160">
+<img src="docs/assets/icon-256.png" alt="Decaf 应用图标" width="80" height="80">
 
 # Decaf
 
-**把 `caffeinate` 命令做成会自己判断的菜单栏应用。**
+**Agent 干活时，让 Mac 保持唤醒；一天结束，留下一张 token 咖啡小票。**
 
-Claude Code 真正在干活的时候不让 Mac 休眠——活干完了,或者只是在等你回话,立刻放行。
+原生 macOS 菜单栏工具：自动检测 Agent，统一统计 Claude Code + Codex 的每日／每月用量。
 
-别的防休眠工具都是开关,你得记得关掉。这个会自己放下。
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menu-hero-dark.png">
-  <img src="docs/assets/menu-hero-light.png" alt="Decaf 的菜单:Claude Code 工作中、三个会话各自列出状态,下面是手动保持和屏幕选项" width="400">
-</picture>
-
-<p>
-  <a href="https://github.com/AlanY1an/decaf/releases/latest"><img src="https://img.shields.io/badge/Download-.dmg-brightgreen?style=flat-square" alt="下载"></a>
-  <img src="https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square" alt="需要 macOS 14 或更新版本">
-  <a href="https://github.com/AlanY1an/homebrew-decaf"><img src="https://img.shields.io/badge/Homebrew-tap-orange?style=flat-square" alt="Homebrew tap"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="MIT 许可证"></a>
-  <a href="https://github.com/AlanY1an/decaf/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/AlanY1an/decaf/ci.yml?style=flat-square&label=CI" alt="CI 状态"></a>
-</p>
-
-<a href="README.md">English</a>
+[开始使用](#开始使用) · [三个用途](#三个用途) · [使用指南](docs/usage.zh-CN.md) · [English](README.md)
 
 </div>
 
----
-
-## 安装
-
-```sh
-brew install --cask AlanY1an/decaf/decaf
-```
-
-或者从 [最新 release](https://github.com/AlanY1an/decaf/releases/latest) 下载 DMG。需要 **macOS 14 或更新版本**。
-
-装完即用。首次启动时它会问要不要往 Claude Code 里装 hooks——装了之后精度从「大约五分钟」变成「精确到回合」。一次点击,可选,可撤销。
-
-## 它做什么
-
-- [x] **一个回合在跑就保持唤醒**,结束几分钟后放手
-- [x] **agent 在等你的时候让 Mac 睡** —— 空闲的提示符不是干活
-- [x] **不会放弃安静的长任务** —— 一个跑 20 分钟的构建看着像闲着,其实不是
-- [x] **扛得住自动循环** —— agent 自己安排了下次唤醒时,Decaf 陪它一起等,而不是在间隙里睡过去
-- [x] **也能当普通开关用** —— 保持 30 分钟、到下午 6 点、或者无限期
-- [x] **该让路时让路** —— 低电量模式、快速用户切换、电量过低都会释放;合盖永远优先
-- [x] **显示 token 用量和速率限制**,每个数字都标注「官方」还是「估算」
-- [ ] Codex 和 opencode
-- [ ] 定时时间窗(「工作日 9 点到 6 点保持唤醒」)
-- [ ] 自动更新
-- [ ] 合盖模式,会有醒目警告
-
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menubar-icons-dark.png">
-  <img src="docs/assets/menubar-icons-light.png" alt="菜单栏图标的四种状态:空闲、手动保持、agent 工作中并显示会话数、被安全保护暂停" width="440">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-hero-dark.png">
+  <img src="docs/assets/readme-hero-light.png" alt="Decaf 自动检测 Agent 并保持唤醒，统一统计 Claude Code 与 Codex 的每日和每月 token" width="960">
 </picture>
 
-<sub>菜单栏的四种状态。第一种下 Mac 正常休眠。</sub>
+<sub>真实统计界面与菜单状态摘录，使用示例数据编排。</sub>
 
-## 隐私
+> **v0.2.0 新增：** Codex 支持、每日／每月统计和 Your brew。已经在用 Decaf？[两步升级 →](docs/usage.zh-CN.md#更新)
 
-Decaf 监视 `~/.claude`,这件事值得一个直接的回答。
+## 三个用途
 
-- **不发任何网络请求。** 没有遥测、没有分析,连更新检查都没有。
-- **绝不读你的对话。** 它读时间戳、标识符和 token 计数——不读提示词,也不读回复。这条边界由代码结构本身保证并有测试钉住,不是靠自觉。
-- **只写**自己的文件夹,以及你允许之后 `~/.claude/settings.json` 里它自己那几条。两者都能在设置里撤销。
+- **自动防休眠。** 检测到 Agent 活动就保持唤醒，活动结束后按对应缓冲时间释放。两个工具各自保活，一个结束不影响另一个；也支持手动定时和电量保护。
+- **统一 token 统计。** Claude Code + Codex 每日、自然月和历史用量，合计或分工具查看，并能检查缓存明细和导入状态。
+- **留下自己的记录。** Your brew 个人页与月卡，在本机预览、复制或保存；月卡默认隐藏 token 数字。[详细使用指南 →](docs/usage.zh-CN.md)
 
-而且**在写任何东西之前**,你会先看到它到底要写什么:
+<details>
+<summary>16 秒真实操作：运行 Agent → 月度统计 → 保存卡片</summary>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/consent-sheet-dark.png">
-  <img src="docs/assets/consent-sheet-light.png" alt="安装同意弹窗,列出 Decaf 会写入的文件,并预览将要合并进 ~/.claude/settings.json 的确切 JSON" width="500">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme-hero-light.png">
+  <img src="docs/assets/decaf-live-demo.gif" alt="真实操作录屏：运行 Codex、查看月度统计、保存月卡；历史用量为示例数据" width="840">
 </picture>
 
-## 设置
+实际运行 Codex，打开真实菜单和月度统计，再通过原生保存窗口导出 PNG。录制使用隔离演示程序，月度历史为示例数据；只剪掉操作间的停顿。Codex 的文件活动缓冲可能在任务结束后继续保活。[查看 MP4](docs/assets/decaf-live-demo.mp4)。
 
-六项,不多不少。
+</details>
 
-| | |
-| --- | --- |
-| **为 agent 自动保持唤醒** | 默认开。关掉后完全不管 agent。 |
-| **释放宽限期** | 回合结束后再保持多久。1–10 分钟,默认 3。 |
-| **保持唤醒时的屏幕** | 正常休眠,或保持常亮。另有**立即关闭屏幕**。 |
-| **电量门限** | 低于此电量停止保持。默认 20%。 |
-| **默认手动时长** 和 **「直到」时刻** | 一键保持的行为。 |
-| **登录时启动** | |
+## 开始使用
 
-## 常见问题
+需要 **macOS 14 或更新版本**。
 
-**既然干的是 `caffeinate` 的活,为什么叫 Decaf(低因)?**
-因为这活的关键是**知道什么时候停**。这个品类里的东西全都以兴奋剂命名,而且每一个都是你必须记得关掉的开关。副标题保留 `caffeinate` 这个词,因为那是你熟悉的命令;但应用本身刻意不叫这个名字,这样它永远不可能遮蔽 `/usr/bin/caffeinate`。
+1. **装好它。**
 
-**它会读我的对话吗?**
-不会。它只读时间戳、会话标识和 token 计数,别的都不读——见上面的[隐私](#隐私)。解析器是闭合枚举并有测试钉住字段,所以想扩大读取范围会**直接构建失败**,而不是指望代码评审发现。
+   ```sh
+   brew install --cask AlanY1an/decaf/decaf
+   ```
 
-**和 KeepingYouAwake、Amphetamine 有什么区别?**
-那些是开关,而且是好开关。Decaf 是**做判断**的。如果你要的就是一个开关,KeepingYouAwake 维护得很好,你应该用它。(需要的时候 Decaf 也可以是那个开关。)
+   也可以[下载 DMG](https://github.com/AlanY1an/decaf/releases/latest)。
 
-**必须装 hooks 吗?**
-不必。不装的话它改看文件活动——分辨率大约五分钟而不是即时——菜单里会明说当前跑的是哪种。
+2. **找到杯子。** 从「应用程序」打开 Decaf，看菜单栏。Claude Code hooks 可选，Settings 会先展示安装改动。
+3. **跑一个任务。** 在杯子菜单里看检测状态；点 **Today: … tokens…** 看两个工具的用量，再用 **Daily / Monthly** 切换范围。[首次使用指南 →](docs/usage.zh-CN.md)
 
-**合盖能用吗?**
-不能。合盖防休眠需要一个特权 helper,而且在合上的笔记本上有真实的发热风险。它在路线图上,要么带着无法忽视的警告发布,要么不做。
+<details>
+<summary>附加功能：Your brew 个人页和月卡</summary>
 
-**会耗电吗?**
-它只能阻止休眠,而且低于 20% 就停手。默认设置下 agent 不干活时 Mac 就正常休眠——对多数人来说,这比一个忘了关的开关更省电。
+从杯子菜单打开 **Your brew…**，选一个月份，加个可选昵称和咖啡印章，再看看自己的月卡。默认不显示 token 数字。
 
-**为什么不上 Mac App Store?**
-沙盒让 Decaf 做的事**不可能实现**,不是「不太方便」。这是永久决定,不是待办事项。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/profile-previous-month-card-dark.png">
+  <img src="docs/assets/profile-previous-month-card-light.png" alt="Your brew 月卡：咖啡印章、有记录的活动，以及 Claude Code 和 Codex，隐藏 token 数字" width="360">
+</picture>
 
-**怎么卸载?**
-`brew uninstall --cask AlanY1an/decaf/decaf`,或者把它从「应用程序」里拖走。如果装过 hooks,**先**用 设置 → Agents → **卸载 Hooks**——它只移除 Decaf 的条目,其余原样不动。电源断言随进程消亡,所以**退出或删除 Decaf 绝不可能让你的 Mac 从此无法休眠**。
+<sub>昵称与数据均为示例。<a href="docs/usage.zh-CN.md#your-brew">看看个人页和卡片选项 →</a></sub>
 
-## 参与开发
+</details>
 
-```sh
-git clone https://github.com/AlanY1an/decaf.git
-cd decaf
-Scripts/bootstrap.sh
-swift test --package-path Core
-```
+## 数据留在你这里
 
-它到底怎么工作的:[`docs/architecture.md`](docs/architecture.md)(英文)。
+Decaf 解析已有的本地日志，应用不发网络请求。用量包含缓存 token，只覆盖这台 Mac 可用的记录，缺失的历史不会凭空补齐。这是有记录的 token，不是账号账单，也不是生产力分数。[数据来源与边界 →](docs/usage.zh-CN.md#数据留在哪里)
 
-## 许可证
+保活会遵守电量等安全限制；合盖仍然允许休眠。Codex 检测属于近似判断。[检测方式 →](docs/usage.zh-CN.md#功能与边界)
 
-MIT,见 [LICENSE](LICENSE)。
+## 一起把它做得好用
+
+用 Claude Code、Codex 或两个一起，试一个正常的工作日：首次导入看懂了吗？Mac 该醒的时候醒着吗？明天还想打开吗？[留个简短反馈 →](https://github.com/AlanY1an/decaf/issues/new?template=feedback.yml)
+
+欢迎代码、文档和无障碍改进。[参与开发](CONTRIBUTING.md) · [报告问题](https://github.com/AlanY1an/decaf/issues/new/choose) · [卸载](docs/usage.zh-CN.md#卸载) · [MIT](LICENSE)

@@ -27,6 +27,7 @@ struct MenuContentView: View {
     let toggleGate: ManualToggleGate
     let tabRouter: SettingsTabRouter
     let customHold: CustomHoldPresenter
+    let usageStatistics: UsageStatisticsPresenter
 
     @Environment(\.openSettings) private var openSettings
 
@@ -59,6 +60,11 @@ struct MenuContentView: View {
                  .usage(let text):
                 // `Text` in a `.menu` renders as a disabled item (plan 04 §2).
                 Text(text)
+
+            case .dailyUsage(let title, _):
+                Button(title + "…") { usageStatistics.present() }
+                    .keyboardShortcut("u", modifiers: [.command, .shift])
+                    .help("Open daily and monthly usage · ⇧⌘U")
 
             case .precisionAction(let title):
                 Button(title) {
@@ -222,11 +228,21 @@ struct MenuContentView: View {
 
         // openSettings (macOS 14+) + explicit activation so the window fronts
         // (plan 04 §3 / risk 4).
+        if !MenuLayout.showsAgentControls(for: snapshot) || snapshot.usage == nil {
+            Button("Usage Statistics…") { usageStatistics.present() }
+                .keyboardShortcut("u", modifiers: [.command, .shift])
+        }
+
+        Button("Your brew…") { usageStatistics.present(page: .profile) }
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+
         Button("Settings…") {
             NSApp.activate(ignoringOtherApps: true)
             openSettings()
         }
         .keyboardShortcut(",")
+
+        Button("Updates…") { UpdateGuidePresenter.shared.present() }
 
         Button("Quit Decaf") {
             NSApp.terminate(nil)

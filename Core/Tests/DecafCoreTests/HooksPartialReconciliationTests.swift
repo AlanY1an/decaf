@@ -230,7 +230,7 @@ private func waitUntil(
         )
         #expect(MenuCopy.summaryPrecision(for: snapshot) == .fileActivity)
         #expect(MenuCopy.precisionNote(for: snapshot)?.detail
-            == "Detection: file activity (approximate)")
+            == "Codex: task logs (approximate)")
     }
 
     /// And the same shape one layer up: a partial-hooks fallback holder is not

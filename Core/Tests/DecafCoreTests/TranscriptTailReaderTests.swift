@@ -145,6 +145,19 @@ private final class FakeHandle: TranscriptFileHandleProtocol {
         #expect(reader.offset(at: url) == UInt64(body.utf8.count))
     }
 
+    @Test func persistedMarkDoesNotResumeInsideAnOversizedLine() throws {
+        let dir = try TempTranscriptDir()
+        let url = try dir.write("oversized.jsonl", "ok\n" + String(repeating: "x", count: 80))
+        let reader = TranscriptTailReader(maxLineBytes: 32)
+        #expect(reader.readNewLines(at: url) == ["ok"])
+        let mark = try #require(reader.currentMark(at: url))
+        #expect(mark.offset == 3)
+        try dir.append("oversized.jsonl", "{\"fake\":1}\ngood\n")
+        let resumed = TranscriptTailReader(maxLineBytes: 32)
+        resumed.prime(url, offset: mark.offset, identity: mark.stat)
+        #expect(resumed.readNewLines(at: url) == ["good"])
+    }
+
     // MARK: Partial lines
 
     @Test func partialTrailingLineIsBufferedUntilItsNewlineArrives() throws {

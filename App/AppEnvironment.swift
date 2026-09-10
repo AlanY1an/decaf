@@ -126,6 +126,12 @@ final class UISettings: ObservableObject {
             onChange?()
         }
     }
+    @Published var menuBarClickAction: MenuBarClickAction {
+        didSet { backing.menuBarClickAction = menuBarClickAction }
+    }
+    @Published var showMenuBarTokens: Bool {
+        didSet { backing.showMenuBarTokens = showMenuBarTokens }
+    }
     @Published var hasCompletedOnboarding: Bool {
         didSet {
             backing.hasCompletedOnboarding = hasCompletedOnboarding
@@ -135,6 +141,12 @@ final class UISettings: ObservableObject {
 
     init(backing: SettingsStore) {
         self.backing = backing
+        // Resolve and persist before onboarding completes so a new install's
+        // default cannot flip from menu to toggle when Done is pressed.
+        let clickAction = backing.menuBarClickAction
+        self.menuBarClickAction = clickAction
+        backing.menuBarClickAction = clickAction
+        self.showMenuBarTokens = backing.showMenuBarTokens
         self.defaultManualMode = backing.defaultManualMode
         self.untilTimeMinutes = backing.untilTimeMinutes
         self.defaultDisplayPolicy = backing.defaultDisplayPolicy
@@ -175,6 +187,7 @@ enum SettingsTab: Hashable {
     case general
     case agents
     case safety
+    case profile
 }
 
 @MainActor
@@ -254,6 +267,7 @@ protocol AgentIntegrationsProviding: AnyObject {
     /// on that meant no menu bar icon at all for the first ten seconds after
     /// launch, for every nvm/fnm/volta/asdf user.
     func probeClaudeCode() async -> ClaudeCodeStatus
+    func probeCodex() async -> CodexStatus
     func plannedChanges() -> [PlannedChangeSummary]
     func installClaudeCodeHooks() throws
     func uninstallClaudeCodeHooks() throws
@@ -277,6 +291,8 @@ final class AgentIntegrationsModel: ObservableObject {
     /// otherwise show it (onboarding step 2, the Agents hero) say "looking"
     /// instead, so nobody is told to install Claude Code while we are still
     /// looking for the copy they already have.
+    @Published private(set) var codexStatus: CodexStatus = .notFound
+    @Published private(set) var isCodexProbing = false
     @Published private(set) var isProbing = false
     @Published private(set) var lastError: String?
 
@@ -300,10 +316,13 @@ final class AgentIntegrationsModel: ObservableObject {
             return
         }
         isProbing = true
+        isCodexProbing = true
         probeTask = Task { [weak self] in
             guard let self else { return }
-            let status = await self.provider.probeClaudeCode()
-            self.claudeStatus = status
+            async let claude = self.provider.probeClaudeCode()
+            self.codexStatus = await self.provider.probeCodex()
+            self.isCodexProbing = false
+            self.claudeStatus = await claude
             self.probeTask = nil
             self.isProbing = false
             if self.probeQueued {
@@ -416,6 +435,12 @@ final class ClaudeIntegrationsProvider: AgentIntegrationsProviding {
         return status
     }
 
+    func probeCodex() async -> CodexStatus {
+        let status = await Task.detached(priority: .userInitiated) { CodexStatus.probe() }.value
+        if status.agentDetected { root.noteAgentDetected(.codex) }
+        return status
+    }
+
     func plannedChanges() -> [PlannedChangeSummary] {
         integration.plannedChanges().map { change in
             PlannedChangeSummary(
@@ -469,6 +494,8 @@ final class AppEnvironment {
     /// Opens the "Custom…" panel for either manual submenu. Owned here, like
     /// every other thing a menu row needs and a menu row must not construct.
     let customHold: CustomHoldPresenter
+    let usageStatistics: UsageStatisticsPresenter
+    let brewProfile: BrewProfileStore
 
     private let claudeIntegration: ClaudeCodeIntegration
     private var bridge: StatusItemBridge?
@@ -477,12 +504,15 @@ final class AppEnvironment {
 
     private init() {
         let settingsStore = SettingsStore()
+        let watcher = FSEventsWatcher()
         // The app bundle is the only place `UNUserNotificationCenter.current()`
         // is legal, so the notifier is injected from here rather than defaulted
         // inside the package (see SystemUserNotifier). Constructing it asks the
         // user for nothing — authorization is requested at the first post.
         let root = CompositionRoot(
             settings: settingsStore,
+            watcher: watcher,
+            codexOwnerProbe: CodexLogOwnerProbe(activityRoots: watcher.codexActivityRoots),
             // Same reasoning as the notifier: the usage ledger's on-disk home
             // is the app's Application Support directory, so the production
             // store is injected here rather than defaulted inside the package
@@ -517,6 +547,9 @@ final class AppEnvironment {
         )
         self.toggleGate = ManualToggleGate(store: store, commands: root)
         self.customHold = CustomHoldPresenter(commands: root)
+        let brewProfile = BrewProfileStore(defaults: .standard)
+        self.brewProfile = brewProfile
+        self.usageStatistics = UsageStatisticsPresenter(store: store, profile: brewProfile)
 
         // Root snapshot → UI store (the UI's single data channel).
         //
@@ -616,17 +649,19 @@ final class AppEnvironment {
     /// gracefully — when introspection fails, clicks simply open the menu.
     func startStatusItemBridge() {
         guard bridge == nil else { return }
-        let bridge = StatusItemBridge { [weak self] in
-            self?.toggleGate.requestToggle()
-        }
+        let bridge = StatusItemBridge(
+            clickAction: { [weak self] in self?.settings.menuBarClickAction ?? .openMenu },
+            onToggle: { [weak self] in self?.toggleGate.requestToggle() }
+        )
         bridge.start()
         self.bridge = bridge
 
-        store.$snapshot
+        Publishers.CombineLatest(store.$snapshot, settings.$showMenuBarTokens)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] snapshot in
+            .sink { [weak self] snapshot, showTokens in
                 self?.bridge?.updateAccessibility(
                     label: MenuTextFormatter.accessibilityLabel(for: snapshot)
+                        + (showTokens ? ", " + MenuBarUsageCopy.accessibilityLabel(for: snapshot.usage) : "")
                 )
             }
             .store(in: &sinks)
@@ -641,7 +676,8 @@ final class AppEnvironment {
         let controller = OnboardingWindowController(
             settings: settings,
             integrations: integrations,
-            launchAtLogin: LaunchAtLoginChoice(registrar: SMAppServiceRegistrar.shared)
+            launchAtLogin: LaunchAtLoginChoice(registrar: SMAppServiceRegistrar.shared),
+            showUsage: { [weak self] in self?.usageStatistics.present() }
         ) { [weak self] in
             self?.onboarding?.close()
             self?.onboarding = nil

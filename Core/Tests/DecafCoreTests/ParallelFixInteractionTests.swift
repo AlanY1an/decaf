@@ -246,10 +246,9 @@ private final class InteractionClock {
         #expect(MenuCopy.statusLine(for: snapshot) == "Idle — not preventing sleep")
     }
 
-    /// A real session outranks a fallback agent: the session row is the more
-    /// informative of the two, and both being present is the ordinary state of a
-    /// machine running one hooked agent and one unhooked one.
-    @Test func aRealSessionOutranksAFallbackAgent() {
+    /// A machine running one hooked and one unhooked agent names both tools,
+    /// while the badge only counts sessions for which we have real evidence.
+    @Test func aRealSessionAndAFallbackAgentAreBothNamed() {
         let snapshot = AppStateSnapshot(
             agentSessions: [
                 AgentSessionSummary(
@@ -262,6 +261,6 @@ private final class InteractionClock {
             wantsHold: true
         )
         #expect(iconState(for: snapshot) == .agentHold(sessionCount: 1))
-        #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code working")
+        #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code + Codex working")
     }
 }

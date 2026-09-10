@@ -57,6 +57,7 @@ enum MenuTopRow: Equatable {
     case precisionDetail(String)
     /// Usage/quota line, disabled text (plan 09 M3c).
     case usage(String)
+    case dailyUsage(String, [UsageDetailSection])
     /// The button under it, which opens Settings › Agents.
     case precisionAction(String)
     /// The one agent control: a checkable item that turns agent auto
@@ -186,12 +187,8 @@ enum MenuLayout {
         // `agentAutoKeepAwake`: the ledger keeps counting while the holds are
         // off, and the numbers stay true.
         if showsAgentControls(for: s), let usage = s.usage {
-            if let quota = UsageCopy.quotaLine(for: usage, now: now) {
-                rows.append(.usage(quota))
-            }
-            if let today = UsageCopy.todayLine(for: usage) {
-                rows.append(.usage(today))
-            }
+            rows.append(.dailyUsage(UsageCopy.dailyMenuTitle(for: usage),
+                                    UsageCopy.detailSections(for: usage, now: now)))
         }
 
         // The switch itself, last in the group and hard against the divider

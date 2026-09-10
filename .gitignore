@@ -28,3 +28,6 @@ __pycache__/
 # docs/assets/render/build.sh re-copies App/*.swift here on every run; the
 # repo keeps only the harness itself, never a second copy of the app sources.
 docs/assets/render/Sources/DecafRender/App/
+
+# Isolated live-demo harness copies; production sources remain in App/.
+docs/assets/live-demo/Sources/DecafLiveDemo/App/

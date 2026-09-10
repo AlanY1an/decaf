@@ -161,13 +161,12 @@ struct UsageStateMigrationTests {
     }
 }
 
-@Suite("Usage rebuild horizon")
+@Suite("Full history migration")
 struct UsageRebuildHorizonTests {
 
-    /// A rebuild recreates only what the menu can show. An old transcript is
-    /// marked at EOF rather than counted — and, crucially, is not re-read on
-    /// the NEXT launch either.
-    @Test func oldFilesAreMarkedNotCounted() async throws {
+    /// Monthly views need all available history, even when the old UI only
+    /// displayed a week. Rebuild once, then resume without duplication.
+    @Test func oldFilesAreRebuiltOnce() async throws {
         let harness = try MarksHarness()
         defer { harness.cleanUp() }
         try harness.write([usageLine(message: "old", input: 999)])
@@ -185,14 +184,14 @@ struct UsageRebuildHorizonTests {
         await meter.start(files: [harness.transcript])
         await meter.flush()
 
-        #expect(await harness.todayTotal(meter) == 0)
+        #expect(await harness.todayTotal(meter) == 999)
         let saved = try #require(UsageStore(fileURL: harness.storeURL).load())
         #expect(saved.fileMarks?.count == 1)
         #expect(saved.fileMarks?.first?.offset ?? 0 > 0)   // marked at EOF, not zero
 
-        // Next launch resumes from that mark: still nothing counted.
+        // Next launch resumes from that mark: history is not counted twice.
         let next = harness.makeMeter()
         await next.start(files: [harness.transcript])
-        #expect(await harness.todayTotal(next) == 0)
+        #expect(await harness.todayTotal(next) == 999)
     }
 }

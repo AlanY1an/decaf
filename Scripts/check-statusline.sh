@@ -36,7 +36,8 @@ if [ ! -x "$BIN" ]; then
 fi
 
 echo "==> Checking linked libraries (otool -L whitelist)"
-VIOLATIONS=$(otool -L "$BIN" | tail -n +2 | awk '{print $1}' \
+LIBRARIES=$(otool -arch all -L "$BIN")
+VIOLATIONS=$(printf '%s\n' "$LIBRARIES" | awk '/^[[:space:]]/ {print $1}' \
     | grep -vE '^(/usr/lib/|/System/)' || true)
 if [ -n "$VIOLATIONS" ]; then
     echo "ERROR: decaf-statusline links non-system libraries:" >&2

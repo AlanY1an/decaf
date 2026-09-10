@@ -19,7 +19,6 @@ public struct UsageRecordParser: Sendable {
         case lineNotJSON
         case lineTooDeeplyNested
         case notAnAssistantRecord
-        case sidechainIgnored
         case missingOrInvalidField
     }
 
@@ -71,10 +70,8 @@ public struct UsageRecordParser: Sendable {
             report(.notAnAssistantRecord)
             return nil
         }
-        if JSON.bool(record[RecordKey.isSidechain.rawValue]) == true {
-            report(.sidechainIgnored)
-            return nil
-        }
+        // Subagents spend tokens too. Shared request IDs are deduplicated by
+        // the ledger across parent/sidechain files.
 
         guard let sessionID = JSON.string(record[RecordKey.sessionId.rawValue]), !sessionID.isEmpty,
               let timestampText = JSON.string(record[RecordKey.timestamp.rawValue]),
@@ -95,7 +92,8 @@ public struct UsageRecordParser: Sendable {
         guard let input = JSON.nonNegativeInteger(usage[UsageKey.inputTokens.rawValue]),
               let output = JSON.nonNegativeInteger(usage[UsageKey.outputTokens.rawValue]),
               let cacheCreation = optionalCount(usage[UsageKey.cacheCreationTokens.rawValue]),
-              let cacheRead = optionalCount(usage[UsageKey.cacheReadTokens.rawValue])
+              let cacheRead = optionalCount(usage[UsageKey.cacheReadTokens.rawValue]),
+              [input, output, cacheCreation, cacheRead].allSatisfy({ $0 <= Int.max / 4 })
         else {
             report(.missingOrInvalidField)
             return nil

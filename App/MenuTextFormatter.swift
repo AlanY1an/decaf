@@ -197,7 +197,50 @@ enum MenuTextFormatter {
 /// Copy for the menu's usage lines. Provenance is always in the sentence:
 /// an official number says so, an estimate says so, and the two are never
 /// mixed into one unlabeled figure (plan 09 诚实规则).
+struct UsageDetailSection: Equatable {
+    let title: String
+    let lines: [String]
+}
+
 enum UsageCopy {
+    static func dailyMenuTitle(for overview: UsageOverview) -> String {
+        "Today: \(tokensText(overview.todayTotal.total)) tokens"
+    }
+
+    static func detailSections(for overview: UsageOverview, now: Date) -> [UsageDetailSection] {
+        var sections = [UsageDetailSection(title: "Today · this Mac", lines: [
+            "Claude Code: \(tokensText(overview.usage.today.total)) tokens",
+            "Codex: \(tokensText(overview.codexUsage?.today.total ?? 0)) tokens"
+        ])]
+        let total = overview.todayTotal
+        sections.append(UsageDetailSection(title: "Token breakdown", lines: [
+            "Input (uncached): \(tokensText(total.input))",
+            "Output: \(tokensText(total.output))",
+            "Cache read: \(tokensText(total.cacheRead))",
+            "Cache write: \(tokensText(total.cacheCreation))"
+        ]))
+        let claude = Dictionary(uniqueKeysWithValues: overview.usage.dailyHistory.map { ($0.day, $0.tokens.total) })
+        let codex = Dictionary(uniqueKeysWithValues: (overview.codexUsage?.dailyHistory ?? []).map { ($0.day, $0.tokens.total) })
+        let days = Set(claude.keys).union(codex.keys).sorted(by: >).prefix(7)
+        if !days.isEmpty {
+            sections.append(UsageDetailSection(title: "Daily history · Claude Code / Codex", lines: days.map {
+                "\($0)   \(tokensText(claude[$0] ?? 0)) / \(tokensText(codex[$0] ?? 0))"
+            }))
+        }
+        // Only official quotas belong here. A personal five-hour maximum is
+        // not a limit, and distracts from the daily accounting users asked for.
+        if overview.quotaFiveHour != nil || overview.quotaSevenDay != nil,
+           let quota = quotaLine(for: overview, now: now) {
+            sections.append(UsageDetailSection(title: "Claude Code limits", lines: [quota]))
+        }
+        sections.append(UsageDetailSection(title: "About these counts", lines: [
+            "Local logs · days follow your Mac's time zone",
+            "Includes cached tokens · not subscription limits",
+            "No recorded activity appears as 0"
+        ]))
+        return sections
+    }
+
 
     /// 843 → "843", 12_400 → "12.4K", 3_400_000 → "3.4M".
     static func tokensText(_ count: Int) -> String {

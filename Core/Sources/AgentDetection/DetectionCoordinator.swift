@@ -102,8 +102,10 @@ public actor DetectionCoordinator {
     /// nil = no consumer). Paths, not lines: the usage meter reads the files
     /// itself with its own persisted offsets, so its replay safety never
     /// depends on this reader's prime-to-end launch policy.
+    private let agentTranscriptActivitySink: (@Sendable (AgentKind, [URL], Date) -> Void)?
     private let transcriptActivitySink: (@Sendable ([URL], Date) -> Void)?
     private let waitParser: WaitSignalParser
+    private let codexTurns: CodexTurnMonitor?
     /// Per-file parser cursor (carries at most a pending cron job id).
     private var waitCursors: [URL: WaitSignalParser.Cursor] = [:]
     /// Where a stuck-session downgrade is reported to the user. `nil` keeps the
@@ -154,6 +156,7 @@ public actor DetectionCoordinator {
         watcher: FSEventsWatcher? = nil,
         tailReader: TranscriptTailReader? = TranscriptTailReader(),
         waitParser: WaitSignalParser = WaitSignalParser(),
+        codexOwnerProbe: (any CodexLogOwnerProbing)? = nil,
         // The CPU witness of the stuck predicate. A real sampler by default —
         // the whole point is that a released hold must be justified by a
         // measurement, and a `nil` sampler makes the predicate permanently
@@ -162,11 +165,14 @@ public actor DetectionCoordinator {
         userNotifier: (any UserNotifying)? = nil,
         // Transcript paths with fresh writes, forwarded once per activity
         // event (plan 09 M5). nil costs nothing.
-        transcriptActivitySink: (@Sendable ([URL], Date) -> Void)? = nil
+        transcriptActivitySink: (@Sendable ([URL], Date) -> Void)? = nil,
+        agentTranscriptActivitySink: (@Sendable (AgentKind, [URL], Date) -> Void)? = nil
     ) {
         self.clock = clock
         self.tailReader = tailReader
         self.waitParser = waitParser
+        self.codexTurns = codexOwnerProbe.map { CodexTurnMonitor(ownerProbe: $0) }
+        self.agentTranscriptActivitySink = agentTranscriptActivitySink
         self.transcriptActivitySink = transcriptActivitySink
         self.userNotifier = userNotifier
         self.l2IdleWindow = l2IdleWindow
@@ -216,11 +222,10 @@ public actor DetectionCoordinator {
         }
 
         if let watcher {
-            // Launch never replays history (plan 08 §性能): every transcript
-            // that already exists is seeded at EOF before the first event can
-            // arrive, so a cold start cannot resurrect an expired wait.
+            // Claude waits never replay history. Codex has its own bounded
+            // reader, seeded only from logs with a verified current writer.
             if let tailReader {
-                for (_, urls) in watcher.existingTranscriptFiles() {
+                for (agent, urls) in watcher.existingTranscriptFiles() where agent != .codex {
                     tailReader.primeToEnd(urls)
                 }
             }
@@ -393,6 +398,19 @@ public actor DetectionCoordinator {
     public func noteTranscriptActivity(agent: AgentKind, paths: [URL], at date: Date? = nil) {
         let now = max(date ?? clock(), clock())
 
+        if agent == .codex {
+            codexTurns?.noteActivity(paths: paths, now: now)
+            if !paths.isEmpty {
+                transcriptActivitySink?(paths, now)
+                agentTranscriptActivitySink?(agent, paths, now)
+            }
+            // Codex rollout filenames are not Claude session IDs, and Claude
+            // wait tools are not Codex lifecycle signals. Keep those separate.
+            noteFileActivity(agent: agent, at: date)
+            reconcile(now: now)
+            return
+        }
+
         // Witness (b) of the stuck predicate, fed from the watcher the app
         // already runs — no second file watcher, no extra IO. The transcript
         // path is `<root>/projects/<slug>/<session-uuid>.jsonl`, so the file
@@ -418,6 +436,7 @@ public actor DetectionCoordinator {
 
         if !paths.isEmpty {
             transcriptActivitySink?(paths, now)
+            agentTranscriptActivitySink?(agent, paths, now)
         }
 
         guard let tailReader, !paths.isEmpty else {
@@ -479,6 +498,7 @@ public actor DetectionCoordinator {
     /// plus debounced persistence and boundary-timer rescheduling.
     public func reconcile(now: Date? = nil) {
         let now = now ?? clock()
+        codexTurns?.refresh(now: now)
 
         if let watcher {
             let existence = watcher.tickRootCheck()
@@ -604,6 +624,9 @@ public actor DetectionCoordinator {
                     )
                 }
             case .fileActivity:
+                if agent == .codex, let progress = codexTurns?.lastHoldingProgress(at: now) {
+                    holdSources.append(HoldSource(agent: agent, kind: .codexTurn(lastProgressAt: progress)))
+                }
                 // L2 sliding window: hold while the last activity is within
                 // the idle window (plan 02 §2).
                 if let last = lastActivityAt[agent],
@@ -657,6 +680,7 @@ public actor DetectionCoordinator {
 
     private func nextDeadline(after now: Date) -> Date? {
         var candidates: [Date] = []
+        if let deadline = codexTurns?.nextDeadline(after: now) { candidates.append(deadline) }
         if let grace = registry.nextGraceDeadline(after: now) {
             candidates.append(grace)
         }

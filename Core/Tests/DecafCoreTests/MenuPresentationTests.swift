@@ -47,20 +47,20 @@ import HookWire
         #expect(MenuCopy.statusLine(for: fallbackSnapshot(agents: [.codex])) == "Codex working")
     }
 
-    @Test func severalFallbackAgentsAreCounted() {
-        let snapshot = fallbackSnapshot(agents: [.claudeCode, .codex])
-        #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code working · 2 agents")
-        // The badge stays a dot: we know agents are busy, not how many turns.
-        #expect(iconState(for: snapshot) == .agentHold(sessionCount: 1))
+    @Test func severalFallbackAgentsAreNamedInAStableOrder() {
+        for agents in [[AgentKind.claudeCode, .codex], [.codex, .claudeCode]] {
+            let snapshot = fallbackSnapshot(agents: agents)
+            #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code + Codex working")
+            // The badge stays a dot: we know agents are busy, not how many turns.
+            #expect(iconState(for: snapshot) == .agentHold(sessionCount: 1))
+        }
     }
 
     @Test func fallbackHoldSpeaksToVoiceOverToo() {
         #expect(MenuCopy.accessibilityLabel(for: fallbackSnapshot()) == "Decaf, agent working")
     }
 
-    @Test func sessionRowsStillWinOverTheFallbackLine() {
-        // Hooks arriving for one agent while another is on file activity: the
-        // richer, session-level truth is what the user sees.
+    @Test func aHookedAgentDoesNotHideAnotherAgentsFileActivity() {
         let snapshot = AppStateSnapshot(
             agentSessions: [
                 AgentSessionSummary(
@@ -72,6 +72,34 @@ import HookWire
             wantsHold: true
         )
         #expect(iconState(for: snapshot) == .agentHold(sessionCount: 1))
+        #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code + Codex working")
+    }
+
+    @Test func claudeFinishingDoesNotPromiseSleepWhileCodexIsActive() {
+        let snapshot = AppStateSnapshot(
+            agentSessions: [
+                AgentSessionSummary(
+                    id: "s1", agent: .claudeCode, projectName: "api",
+                    phase: .graceIdle(until: Date().addingTimeInterval(180)), startedAt: Date()
+                )
+            ],
+            fallbackAgents: [.codex],
+            wantsHold: true
+        )
+        #expect(MenuCopy.statusLine(for: snapshot) == "Codex working")
+    }
+
+    @Test func hooksAndFallbackForTheSameAgentAreNotNamedTwice() {
+        let snapshot = AppStateSnapshot(
+            agentSessions: [
+                AgentSessionSummary(
+                    id: "s1", agent: .claudeCode, projectName: "api",
+                    phase: .working, startedAt: Date()
+                )
+            ],
+            fallbackAgents: [.claudeCode],
+            wantsHold: true
+        )
         #expect(MenuCopy.statusLine(for: snapshot) == "Claude Code working")
     }
 

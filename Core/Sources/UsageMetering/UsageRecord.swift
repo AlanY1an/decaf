@@ -24,6 +24,13 @@ public struct TokenTotals: Equatable, Sendable, Codable {
         lhs.cacheRead += rhs.cacheRead
     }
 
+    public static func -= (lhs: inout TokenTotals, rhs: TokenTotals) {
+        lhs.input -= rhs.input
+        lhs.output -= rhs.output
+        lhs.cacheCreation -= rhs.cacheCreation
+        lhs.cacheRead -= rhs.cacheRead
+    }
+
     public var total: Int { input + output + cacheCreation + cacheRead }
 }
 

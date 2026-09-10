@@ -1,0 +1,38 @@
+name: First-day feedback / 试用反馈
+description: Tell us how Decaf fit into a real workday.
+title: "[Feedback] "
+body:
+  - type: markdown
+    attributes:
+      value: "A few sentences are enough. No usage totals or session logs are required. English or 中文 is welcome."
+  - type: dropdown
+    id: tools
+    attributes:
+      label: Your setup
+      options:
+        - Claude Code
+        - Codex
+        - Both Claude Code and Codex
+        - Manual keep-awake only
+  - type: textarea
+    id: experience
+    attributes:
+      label: What helped, or got in your way?
+      description: Mention stable vs source build and which tool versions you used. Did your Mac stay awake when expected? For source builds, was the first usage import clear? A few sentences are enough.
+    validations:
+      required: true
+  - type: dropdown
+    id: return
+    attributes:
+      label: Would you keep using it?
+      options:
+        - Already using it regularly
+        - Still trying it
+        - Only for an occasional task
+        - Stopped using it
+  - type: textarea
+    id: improvement
+    attributes:
+      label: One thing you would change
+    validations:
+      required: false

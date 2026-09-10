@@ -5,9 +5,8 @@
 // - hours: [UTC-hour-floored Date : TokenTotals] — sliding raw material for
 //   the 5h-block and 7-day estimates; pruned past `retention`.
 // - sessions: latest UsageRecord per session — the context waterline.
-// - seen: dedup keys with timestamps, pruned past `dedupRetention`. NOT
-//   persisted: across restarts the upstream reader's file offsets (M3)
-//   prevent re-reads, so in-memory dedup only has to cover live retries.
+// - accounted: one complete usage record per request, persisted permanently.
+//   File offsets accelerate reads; request identity makes replay idempotent.
 //
 // Block inference is the ccusage algorithm: a block starts at the UTC hour
 // floor of the first activity after the previous block expired and lasts
@@ -50,7 +49,22 @@ public struct SessionWaterline: Equatable, Sendable {
     }
 }
 
+public struct DailyUsage: Equatable, Sendable {
+    public var day: String
+    public var tokens: TokenTotals
+    public init(day: String, tokens: TokenTotals) { self.day = day; self.tokens = tokens }
+}
+
 public struct UsageSnapshot: Equatable, Sendable {
+    /// Seven local calendar days, newest first, including days without activity.
+    public var dailyHistory: [DailyUsage]
+    /// All retained local day rollups, oldest first. Sparse: absent dates mean
+    /// no recorded usage, not proof that the account was inactive.
+    public var recordedHistory: [DailyUsage]
+    /// A concrete import/counter problem; nil when none is currently detected.
+    public var historyIssue: String?
+    public var sourceStatus: UsageSourceStatus?
+
     public var today: TokenTotals
     /// API-equivalent value, summed over priced models only; nil when nothing
     /// today is priced. Never a bill — subscription usage is prepaid.
@@ -70,8 +84,14 @@ public struct UsageSnapshot: Equatable, Sendable {
     public init(
         today: TokenTotals, todayCostUSD: Double?, todayHasUnpricedModels: Bool,
         activeBlock: UsageBlock?, personalMaxBlockTokens: Int? = nil,
-        sevenDayTokens: TokenTotals, sessions: [SessionWaterline]
+        sevenDayTokens: TokenTotals, sessions: [SessionWaterline], dailyHistory: [DailyUsage] = [],
+        recordedHistory: [DailyUsage] = [], historyIssue: String? = nil,
+        sourceStatus: UsageSourceStatus? = nil
     ) {
+        self.dailyHistory = dailyHistory
+        self.recordedHistory = recordedHistory
+        self.historyIssue = historyIssue
+        self.sourceStatus = sourceStatus
         self.today = today
         self.todayCostUSD = todayCostUSD
         self.todayHasUnpricedModels = todayHasUnpricedModels
@@ -104,6 +124,10 @@ public struct UsageLedgerState: Codable, Equatable, Sendable {
     /// never claim lines the rollups have not counted, or vice versa.
     /// Optional so pre-M5 files keep decoding.
     public var fileMarks: [FileMark]?
+    public var codexState: CodexUsageParser.State?
+    /// Schema 3: metadata only, no conversation text. Required for exact replay.
+    public var accountedRecords: [UsageRecord]?
+    public var timeZoneIdentifier: String?
 
     public struct FileMark: Codable, Equatable, Sendable {
         public var path: String
@@ -136,7 +160,8 @@ public actor UsageLedger {
         var model: String
     }
 
-    private var seen: [DedupKey: Date] = [:]
+    private var accounted: [DedupKey: UsageRecord] = [:]
+    private var hourRetentionFloor: Date?
     private var days: [DayModelKey: TokenTotals] = [:]
     private var hours: [Date: TokenTotals] = [:]
     private var latestBySession: [String: UsageRecord] = [:]
@@ -145,7 +170,6 @@ public actor UsageLedger {
     private let timeZone: TimeZone
     /// Hour buckets kept this long past `now` (8 d covers the 7-day window).
     private let retention: TimeInterval
-    private let dedupRetention: TimeInterval
     /// Session waterlines older than this are dropped: an ended session's
     /// context occupancy stops being information and starts being growth.
     private let sessionRetention: TimeInterval
@@ -156,13 +180,11 @@ public actor UsageLedger {
     public init(
         timeZone: TimeZone = .current,
         retention: TimeInterval = 8 * 86_400,
-        dedupRetention: TimeInterval = 48 * 3600,
         sessionRetention: TimeInterval = 48 * 3600,
         pricing: PricingTable = .builtin
     ) {
         self.timeZone = timeZone
         self.retention = retention
-        self.dedupRetention = dedupRetention
         self.sessionRetention = sessionRetention
         self.pricing = pricing
         self.dayFormatter = Self.makeDayFormatter(timeZone: timeZone)
@@ -175,13 +197,11 @@ public actor UsageLedger {
         state: UsageLedgerState,
         timeZone: TimeZone = .current,
         retention: TimeInterval = 8 * 86_400,
-        dedupRetention: TimeInterval = 48 * 3600,
         sessionRetention: TimeInterval = 48 * 3600,
         pricing: PricingTable = .builtin
     ) {
         self.timeZone = timeZone
         self.retention = retention
-        self.dedupRetention = dedupRetention
         self.sessionRetention = sessionRetention
         self.pricing = pricing
         self.dayFormatter = Self.makeDayFormatter(timeZone: timeZone)
@@ -195,6 +215,15 @@ public actor UsageLedger {
             latestBySession[record.sessionID] = record
         }
         maxBlockTokens = state.maxBlockTokens
+        for record in state.accountedRecords ?? [] {
+            accounted[DedupKey(messageID: record.messageID, requestID: record.requestID)] = record
+        }
+        if let zone = state.timeZoneIdentifier, zone != timeZone.identifier, state.accountedRecords != nil {
+            days.removeAll()
+            for record in accounted.values {
+                days[DayModelKey(day: dayFormatter.string(from: record.timestamp), model: record.model), default: TokenTotals()] += record.tokens
+            }
+        }
     }
 
     private static func makeDayFormatter(timeZone: TimeZone) -> DateFormatter {
@@ -207,23 +236,65 @@ public actor UsageLedger {
 
     // MARK: Ingest
 
-    /// Returns false for a duplicate (same messageID + requestID).
+    /// Claude emits multiple snapshots of one request. Keep one complete record
+    /// (the largest observed total), and its earliest timestamp, across restarts.
     @discardableResult
     public func ingest(_ record: UsageRecord) -> Bool {
         let key = DedupKey(messageID: record.messageID, requestID: record.requestID)
-        guard seen[key] == nil else { return false }
-        seen[key] = record.timestamp
+        guard let previous = accounted[key] else { return replace(record) }
+        func rank(_ tokens: TokenTotals) -> [Int] {
+            [tokens.total, tokens.input, tokens.output, tokens.cacheCreation, tokens.cacheRead]
+        }
+        var selected = rank(previous.tokens).lexicographicallyPrecedes(rank(record.tokens)) ? record : previous
+        selected.timestamp = min(previous.timestamp, record.timestamp)
+        return replace(selected)
+    }
 
-        let dayKey = DayModelKey(day: dayFormatter.string(from: record.timestamp), model: record.model)
-        days[dayKey, default: TokenTotals()] += record.tokens
-        hours[Self.hourFloor(record.timestamp), default: TokenTotals()] += record.tokens
-
-        if let existing = latestBySession[record.sessionID], existing.timestamp > record.timestamp {
-            // keep the newer waterline
+    /// Exact replacement for reconciled Codex event deltas, including decreases
+    /// when an earlier event arrives from a copied/archived transcript.
+    @discardableResult
+    public func replace(_ record: UsageRecord) -> Bool {
+        let key = DedupKey(messageID: record.messageID, requestID: record.requestID)
+        let previous = accounted[key]
+        guard previous != record, previous != nil || record.tokens.total > 0 else { return false }
+        if let previous { apply(previous, removing: true) }
+        if record.tokens.total > 0 {
+            accounted[key] = record
+            apply(record, removing: false)
         } else {
+            accounted.removeValue(forKey: key)
+        }
+        if let latest = latestBySession[record.sessionID],
+           latest.messageID == record.messageID && latest.requestID == record.requestID {
+            if record.tokens.total > 0, record.timestamp >= latest.timestamp {
+                latestBySession[record.sessionID] = record
+            } else {
+                latestBySession[record.sessionID] = accounted.values
+                    .filter { $0.sessionID == record.sessionID }.max { $0.timestamp < $1.timestamp }
+            }
+        } else if record.tokens.total > 0,
+                  latestBySession[record.sessionID].map({ $0.timestamp <= record.timestamp }) ?? true {
             latestBySession[record.sessionID] = record
         }
         return true
+    }
+
+    private func apply(_ record: UsageRecord, removing: Bool) {
+        let day = DayModelKey(day: dayFormatter.string(from: record.timestamp), model: record.model)
+        let hour = Self.hourFloor(record.timestamp)
+        if removing {
+            days[day, default: TokenTotals()] -= record.tokens
+            if days[day]?.total == 0 { days.removeValue(forKey: day) }
+            if hours[hour] != nil {
+                hours[hour, default: TokenTotals()] -= record.tokens
+                if hours[hour]?.total == 0 { hours.removeValue(forKey: hour) }
+            }
+        } else {
+            days[day, default: TokenTotals()] += record.tokens
+            if hourRetentionFloor.map({ hour > $0 }) ?? true {
+                hours[hour, default: TokenTotals()] += record.tokens
+            }
+        }
     }
 
     // MARK: Snapshot
@@ -274,19 +345,43 @@ public actor UsageLedger {
             activeBlock: block,
             personalMaxBlockTokens: maxBlockTokens,
             sevenDayTokens: sevenDay,
-            sessions: sessions
+            sessions: sessions,
+            dailyHistory: dailyHistory(now: now),
+            recordedHistory: recordedHistory()
         )
+    }
+
+    private func recordedHistory() -> [DailyUsage] {
+        var totals: [String: TokenTotals] = [:]
+        for (key, tokens) in days { totals[key.day, default: TokenTotals()] += tokens }
+        return totals.keys.sorted().map { DailyUsage(day: $0, tokens: totals[$0]!) }
+    }
+
+    private func dailyHistory(now: Date) -> [DailyUsage] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return (0..<7).compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: -offset, to: now) else { return nil }
+            let key = dayFormatter.string(from: date)
+            var tokens = TokenTotals()
+            for (day, counts) in days where day.day == key { tokens += counts }
+            return DailyUsage(day: key, tokens: tokens)
+        }
     }
 
     public func state() -> UsageLedgerState {
         UsageLedgerState(
-            version: 1,
+            version: 3,
             days: days.map { UsageLedgerState.DayRollup(day: $0.key.day, model: $0.key.model, tokens: $0.value) }
                 .sorted { ($0.day, $0.model) < ($1.day, $1.model) },
             hours: hours.map { UsageLedgerState.HourBucket(hour: $0.key, tokens: $0.value) }
                 .sorted { $0.hour < $1.hour },
             sessions: latestBySession.values.sorted { $0.timestamp > $1.timestamp },
-            maxBlockTokens: maxBlockTokens
+            maxBlockTokens: maxBlockTokens,
+            accountedRecords: accounted.values.sorted {
+                ($0.messageID, $0.requestID ?? "") < ($1.messageID, $1.requestID ?? "")
+            },
+            timeZoneIdentifier: timeZone.identifier
         )
     }
 
@@ -316,8 +411,7 @@ public actor UsageLedger {
     private func prune(now: Date) {
         let hourFloor = now.addingTimeInterval(-retention)
         hours = hours.filter { $0.key > hourFloor }
-        let dedupFloor = now.addingTimeInterval(-dedupRetention)
-        seen = seen.filter { $0.value > dedupFloor }
+        hourRetentionFloor = hourFloor
         let sessionFloor = now.addingTimeInterval(-sessionRetention)
         latestBySession = latestBySession.filter { $0.value.timestamp > sessionFloor }
     }

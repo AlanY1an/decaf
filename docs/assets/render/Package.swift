@@ -24,7 +24,7 @@ let package = Package(
             ],
             linkerSettings: [
                 // So Wordmark's Bundle.main lookup finds a version, exactly as
-                // it does in the shipping app bundle (MARKETING_VERSION 0.1.0).
+                // it does in the shipping app bundle.
                 .unsafeFlags([
                     "-Xlinker", "-sectcreate",
                     "-Xlinker", "__TEXT",

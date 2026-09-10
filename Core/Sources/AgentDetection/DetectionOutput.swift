@@ -102,6 +102,9 @@ public struct HoldSource: Sendable, Equatable {
         case session(id: String, state: SessionState)
         /// L2 — agent-granularity fallback activity inside the idle window.
         case fallbackActivity(lastActivityAt: Date)
+        /// A durable unfinished Codex turn with a verified writable log owner.
+        /// Still approximate and bounded by the no-progress timeout.
+        case codexTurn(lastProgressAt: Date)
     }
 
     public var agent: AgentKind

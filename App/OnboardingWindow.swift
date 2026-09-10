@@ -36,6 +36,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         settings: UISettings,
         integrations: AgentIntegrationsModel,
         launchAtLogin: LaunchAtLoginChoice,
+        showUsage: @escaping () -> Void = {},
         onFinished: @escaping () -> Void
     ) {
         self.settings = settings
@@ -47,7 +48,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
             settings: settings,
             integrations: integrations,
             launchAtLogin: launchAtLogin,
-            finish: { relay.action() }
+            finish: { relay.action() },
+            showUsage: { relay.action(); showUsage() }
         )
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)
@@ -95,13 +97,25 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     }
 }
 
-private struct OnboardingView: View {
+struct OnboardingView: View {
     @ObservedObject var settings: UISettings
     @ObservedObject var integrations: AgentIntegrationsModel
     let launchAtLogin: LaunchAtLoginChoice
     let finish: () -> Void
+    let showUsage: () -> Void
 
-    @State private var step = 0
+    init(settings: UISettings, integrations: AgentIntegrationsModel,
+         launchAtLogin: LaunchAtLoginChoice, finish: @escaping () -> Void,
+         showUsage: @escaping () -> Void = {}, initialStep: Int = 0) {
+        self.settings = settings
+        self.integrations = integrations
+        self.launchAtLogin = launchAtLogin
+        self.finish = finish
+        self.showUsage = showUsage
+        _step = State(initialValue: initialStep)
+    }
+
+    @State private var step: Int
     @State private var installHooks = true
     @State private var launchAtLoginEnabled = true
     @State private var launchAtLoginError: String?
@@ -131,7 +145,7 @@ private struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("The caffeinate command, now with a brain.")
                 .font(.title2.bold())
-            Text("Decaf keeps your Mac awake while AI coding agents work — and lets it sleep the moment they are idle. Manual keep-awake is one click away.")
+            Text("Decaf keeps your Mac awake while your coding tools work, then lets it rest. See Claude Code and Codex usage in a little daily or monthly receipt.")
 
             VStack(alignment: .leading, spacing: 8) {
                 iconLegendRow(.idle, "Idle — not preventing sleep")
@@ -143,7 +157,7 @@ private struct OnboardingView: View {
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
 
             Label(
-                "Left-click the menu bar icon to toggle keep-awake. Right-click (or Control-click) opens the menu.",
+                settings.menuBarClickAction.hint,
                 systemImage: "cursorarrow.click"
             )
             .font(.callout.bold())
@@ -199,47 +213,59 @@ private struct OnboardingView: View {
     // MARK: Step 2 — agent detection & hooks consent
 
     private var stepAgents: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Agent detection").font(.title2.bold())
-
-            if integrations.isProbing, !integrations.claudeStatus.agentDetected {
-                // The probe runs off the main actor and can take a moment on a
-                // machine with a version manager. Saying "nothing found" before
-                // we have finished looking would push the user past the one
-                // screen where hooks are offered.
-                Text("Looking for AI coding tools on this Mac\u{2026}")
-                    .foregroundStyle(.secondary)
-            } else if integrations.claudeStatus.agentDetected {
-                Toggle(isOn: $installHooks) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Install hooks for Claude Code (recommended)")
-                        Text("Turn-level precision: knows the exact instant a turn starts and ends, instead of inferring it from file activity.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("Modifies ~/.claude/settings.json via deep-merge — all of your existing configuration is preserved.", systemImage: "doc.badge.gearshape")
-                    Label("One-click uninstall any time in Settings > Agents.", systemImage: "arrow.uturn.backward.circle")
-                    Label("Works without installing too: file-activity detection, lower precision.", systemImage: "eye")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(12)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-            } else {
-                Text("No AI coding tools were detected. Decaf still works fully as a manual keep-awake utility, and will pick up agents automatically once you install one.")
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Your coding companions").font(.title2.bold())
+            VStack(spacing: 12) {
+                agentRow("Claude Code", found: integrations.claudeStatus.agentDetected,
+                         looking: integrations.isProbing,
+                         detail: integrations.claudeStatus.agentDetected
+                            ? (integrations.claudeStatus.hooksInstalled ? "Connected with hooks" : "Detected · file activity")
+                            : "Not found yet")
+                Divider()
+                agentRow("Codex", found: integrations.codexStatus.agentDetected,
+                         looking: integrations.isCodexProbing, detail: integrations.codexStatus.title)
             }
+            .padding(12)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
 
+            Text(OnboardingAgentsSummary(
+                claudeDetected: integrations.claudeStatus.agentDetected,
+                codexDetected: integrations.codexStatus.agentDetected,
+                isProbing: integrations.isProbing
+            ).message)
+            .font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if integrations.claudeStatus.agentDetected, !integrations.claudeStatus.hooksInstalled {
+                Toggle("Connect Claude Code hooks", isOn: $installHooks)
+                Text("Optional, for precise start and stop detection. Adds Decaf entries to ~/.claude/settings.json while preserving existing configuration. Uninstall in Settings → Agents. Works without hooks too.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if integrations.codexStatus.agentDetected {
+                Text("Codex needs no hooks. Local task logs and a process check help keep long, quiet tasks awake.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let installError {
-                Text(installError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                Text(installError).font(.caption).foregroundStyle(.red)
             }
         }
         .onAppear { integrations.refresh() }
+    }
+
+    private func agentRow(_ name: String, found: Bool, looking: Bool, detail: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: found ? "checkmark.circle.fill" : "circle.dotted")
+                .foregroundStyle(found ? Color.accentColor : Color.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name).font(.callout.weight(.medium))
+                Text(looking && !found ? "Looking…" : detail)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Step 3 — finish
@@ -251,14 +277,20 @@ private struct OnboardingView: View {
     /// applies the default for the same reason.
     private var stepFinish: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("You're all set.").font(.title2.bold())
+            Text("Your cup is ready.").font(.title2.bold())
             Toggle("Launch Decaf at login", isOn: $launchAtLoginEnabled)
                 .onChange(of: launchAtLoginEnabled) { _, enabled in
                     report(launchAtLogin.set(enabled))
                 }
-            Text("A keep-awake tool that doesn't start with your Mac might as well not be installed — but it's your call.")
+            Text("A small companion for your next coding session.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Button(action: showUsage) {
+                Label("Take a look at my usage", systemImage: "chart.bar.xaxis")
+            }
+            .buttonStyle(.bordered)
+            Text("Daily and monthly receipts stay on this Mac. Your first import may take a moment.")
+                .font(.caption).foregroundStyle(.secondary)
             if let launchAtLoginError {
                 Text(launchAtLoginError)
                     .font(.caption)
@@ -295,6 +327,7 @@ private struct OnboardingView: View {
                     integrations.installHooks()
                     // Failure shows inline and does not block the flow (plan 04 §6).
                     installError = integrations.lastError
+                    if installError != nil { return }
                 }
                 advance()
             }
@@ -319,16 +352,9 @@ private struct OnboardingView: View {
 /// once on the NSWindow and once on the SwiftUI root — and the two silently
 /// disagreeing is how the window ends up shorter than its own content.
 ///
-/// The height is measured, not guessed. Step 1 is the tallest step and its two
-/// caption lines wrap; at 420 the window was shorter than the content, so
-/// SwiftUI compressed the flexible children and both captions came back as one
-/// ellipsised line — including the ⌘-drag tip, which is the single line in the
-/// whole flow the user most needs. `.fixedSize` on those Labels does nothing on
-/// its own: a label cannot claim height a too-short window has not got. Both
-/// halves are required.
-///
-/// Re-measure with `docs/assets/render/`: `./build.sh && ./.build/release/DecafRender ..`
-/// run, and read the reported point size of `onboarding-step1-light.png`.
+/// The dual-agent step includes two source rows and optional Claude hook
+/// consent. The renderer checks both-tools, Codex-only and no-tools layouts at
+/// this size, with the same production view used by the window.
 enum OnboardingSizing {
     static let width: CGFloat = 520
     static let height: CGFloat = 440

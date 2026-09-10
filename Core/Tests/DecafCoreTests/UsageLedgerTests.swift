@@ -33,6 +33,25 @@ private func record(
 @Suite("UsageLedger")
 struct UsageLedgerTests {
 
+    @Test func retainedHistorySurvivesPruningAndRestartForMonthlyViews() async {
+        let ledger = UsageLedger(timeZone: utc)
+        await ledger.ingest(record(message: "early", timestamp: at(3, day: 1), input: 100, output: 20))
+        await ledger.ingest(record(message: "other-model", model: "another-model", timestamp: at(4, day: 1),
+                                   input: 50, output: 10, cacheRead: 200))
+        await ledger.ingest(record(message: "late", timestamp: at(3, day: 31), input: 5, output: 7))
+        let snapshot = await ledger.snapshot(now: at(4, day: 31))
+        #expect(snapshot.dailyHistory.count == 7)
+        #expect(snapshot.dailyHistory.allSatisfy { $0.day >= "2026-08-25" })
+        #expect(snapshot.recordedHistory == [
+            DailyUsage(day: "2026-08-01", tokens: TokenTotals(input: 150, output: 30, cacheRead: 200)),
+            DailyUsage(day: "2026-08-31", tokens: TokenTotals(input: 5, output: 7))
+        ])
+        let saved = await ledger.state()
+        #expect(saved.hours.count == 1)
+        let restored = UsageLedger(state: saved, timeZone: utc)
+        #expect(await restored.snapshot(now: at(4, day: 31)).recordedHistory == snapshot.recordedHistory)
+    }
+
     @Test func ingestAccumulatesIntoToday() async {
         let ledger = UsageLedger(timeZone: utc)
         await ledger.ingest(record(message: "m1", timestamp: at(3, 15)))
@@ -133,9 +152,8 @@ struct UsageLedgerTests {
         let a = await ledger.snapshot(now: at(5))
         let b = await restored.snapshot(now: at(5))
         #expect(a == b)
-        // Dedup keys are NOT persisted (bounded memory): re-ingesting the same
-        // record after restore double-counts, which offset-tracking prevents
-        // upstream. Documented behavior, not asserted here.
+        // Request identities survive restarts independently of file offsets.
+        #expect(await restored.ingest(record(message: "m1", request: "r1", timestamp: at(3, 47))) == false)
     }
 
     @Test func hourBucketsOlderThanRetentionArePruned() async {

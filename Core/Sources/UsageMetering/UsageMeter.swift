@@ -16,6 +16,13 @@ import TranscriptSupport
 /// Everything the UI needs about usage, in one equatable value.
 public struct UsageOverview: Equatable, Sendable {
     public var usage: UsageSnapshot
+    /// Separate ledger: Codex tokens never enter Claude's estimated quota windows.
+    public var codexUsage: UsageSnapshot?
+    public var todayTotal: TokenTotals {
+        var result = usage.today
+        result += codexUsage?.today ?? TokenTotals()
+        return result
+    }
     public var quotaFiveHour: QuotaState.Window?
     public var quotaSevenDay: QuotaState.Window?
     public var quotaProvenance: QuotaState.Provenance
@@ -24,8 +31,10 @@ public struct UsageOverview: Equatable, Sendable {
         usage: UsageSnapshot,
         quotaFiveHour: QuotaState.Window?,
         quotaSevenDay: QuotaState.Window?,
-        quotaProvenance: QuotaState.Provenance
+        quotaProvenance: QuotaState.Provenance,
+        codexUsage: UsageSnapshot? = nil
     ) {
+        self.codexUsage = codexUsage
         self.usage = usage
         self.quotaFiveHour = quotaFiveHour
         self.quotaSevenDay = quotaSevenDay
@@ -35,23 +44,13 @@ public struct UsageOverview: Equatable, Sendable {
 
 public actor UsageMeter {
 
-    /// Bumped whenever a persisted state can no longer be trusted to line up
-    /// with the marks beside it. On a lower version the meter DISCARDS the
-    /// rollups and rebuilds them from the transcripts on disk (see `start`).
-    ///
-    /// Version 2 exists because version 1 had no marks: the first launch of a
-    /// marks-aware build read every transcript from offset 0 and added a
-    /// second copy of the whole history on top of counts that were already
-    /// there — the in-memory dedup set is empty after a restart, so nothing
-    /// stopped it. Rebuilding is the only honest repair: the inflated numbers
-    /// cannot be un-added, and the transcripts are still on disk.
-    public static let stateVersion = 2
+    /// Schema 3 adds persistent request accounting and Codex observations.
+    /// Earlier rollups are backed up and rebuilt from all available transcripts.
+    public static let stateVersion = 3
 
-    /// How far back a rebuild recreates. The menu shows today and the trailing
-    /// seven days, so ten days of transcripts is the whole renderable past
-    /// with margin; older files are marked, not read.
-    public static let rebuildHorizon: TimeInterval = 10 * 86_400
-
+    public enum Source: Sendable { case claudeCode, codex }
+    private let source: Source
+    private var codexParser = CodexUsageParser()
     private let parser = UsageRecordParser()
     private var ledger: UsageLedger
     private let store: UsageStore?
@@ -61,6 +60,12 @@ public actor UsageMeter {
     /// Set at init when the loaded state predates `stateVersion`; consumed by
     /// the first `start(files:)`.
     private var needsRebuild = false
+    private var persistenceBlocked = false
+    private var historyIssue: String?
+    private var sourceStatus = UsageSourceStatus()
+    private var readPaths: Set<String> = []
+    private var failedPaths: Set<String> = []
+    private var pendingCatchupPaths: Set<URL> = []
     /// The meter's OWN reader (plan 09 M5) — never the detection layer's. Its
     /// offsets are persisted as `UsageLedgerState.fileMarks` in the same save
     /// as the rollups, which is what makes restarts exact: a mark and the
@@ -68,19 +73,37 @@ public actor UsageMeter {
     private let reader = TranscriptTailReader()
     /// Marks as last persisted/updated, keyed by path.
     private var marks: [String: UsageLedgerState.FileMark] = [:]
+    // Ledger calls suspend this actor. Serialize reader/parser/persistence
+    // transactions so live events cannot overtake launch catch-up mid-file.
+    private var processing = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    private func beginTransaction() async {
+        if processing {
+            await withCheckedContinuation { waiters.append($0) }
+        } else { processing = true }
+    }
+
+    private func endTransaction() {
+        if waiters.isEmpty { processing = false }
+        else { waiters.removeFirst().resume() }
+    }
 
     /// Restores the persisted ledger state when the store has one.
     public init(
         store: UsageStore? = UsageStore(),
         timeZone: TimeZone = .current,
         pricing: PricingTable = .builtin,
-        quotaFreshnessWindow: TimeInterval = 600
+        quotaFreshnessWindow: TimeInterval = 600,
+        source: Source = .claudeCode
     ) {
+        self.source = source
         self.store = store
         self.timeZone = timeZone
         self.pricing = pricing
         let persisted = store?.load()
-        if let persisted, persisted.version >= Self.stateVersion {
+        if let persisted, persisted.version == Self.stateVersion, persisted.accountedRecords != nil,
+           source != .codex || persisted.codexState?.observations != nil {
             self.ledger = UsageLedger(state: persisted, timeZone: timeZone, pricing: pricing)
             for mark in persisted.fileMarks ?? [] {
                 marks[mark.path] = mark
@@ -91,8 +114,9 @@ public actor UsageMeter {
             // counts and marks cannot be reconciled (rebuild). Both start from
             // an empty ledger; `start(files:)` fills it.
             self.ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
-            self.needsRebuild = persisted != nil
+            self.needsRebuild = store.map { FileManager.default.fileExists(atPath: $0.fileURL.path) } ?? false
         }
+        if !needsRebuild, let state = persisted?.codexState { self.codexParser = CodexUsageParser(state: state) }
         self.quota = QuotaState(freshnessWindow: quotaFreshnessWindow)
     }
 
@@ -112,37 +136,23 @@ public actor UsageMeter {
     /// transcripts still on disk is lost; that is the price of not shipping
     /// numbers we know to be wrong.
     public func start(files: [URL], at date: Date = Date()) async {
+        await beginTransaction()
+        defer { sourceStatus.hasCompletedScan = true; endTransaction() }
         if needsRebuild {
+            do {
+                _ = try store?.backupBeforeRebuild()
+            } catch {
+                persistenceBlocked = true
+                historyIssue = "Could not back up previous usage. History has not been rebuilt."
+                return
+            }
             needsRebuild = false
+            persistenceBlocked = false
+            historyIssue = nil
             ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
             marks.removeAll()
+            codexParser = CodexUsageParser()
             reader.reset()
-            // A rebuild is bounded by what the UI can actually show. The menu
-            // reports today and the trailing seven days; reading a gigabyte of
-            // months-old transcripts to recreate day rollups nothing renders
-            // would cost a minute of launch IO for nothing. Files outside the
-            // horizon are marked at EOF instead — counted as history we choose
-            // not to recreate, and never re-read later.
-            let horizon = date.addingTimeInterval(-Self.rebuildHorizon)
-            var recent: [URL] = []
-            for url in files {
-                let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? nil
-                if let modified, modified < horizon {
-                    reader.readNewLines(at: url, startAtEnd: true)
-                    if let mark = reader.currentMark(at: url) {
-                        marks[url.path] = UsageLedgerState.FileMark(
-                            path: url.path, deviceID: mark.stat.deviceID,
-                            inode: mark.stat.inode, size: mark.stat.size, offset: mark.offset
-                        )
-                    }
-                } else {
-                    recent.append(url)
-                }
-            }
-            await drain(paths: recent)
-            marks = marks.filter { FileManager.default.fileExists(atPath: $0.key) }
-            await persist()
-            return
         } else {
             for (path, mark) in marks {
                 reader.prime(
@@ -154,7 +164,9 @@ public actor UsageMeter {
                 )
             }
         }
-        await noteActivity(paths: files, at: date)
+        let catchup = Set(files).union(pendingCatchupPaths).sorted { $0.path < $1.path }
+        pendingCatchupPaths.removeAll()
+        _ = await drain(paths: catchup, at: date)
         // Marks for files that have since vanished are dead weight in every
         // future save; a rebuild has none, a normal launch can have many.
         marks = marks.filter { FileManager.default.fileExists(atPath: $0.key) }
@@ -165,7 +177,13 @@ public actor UsageMeter {
     /// fan-out). Reads with the meter's own reader, ingests, refreshes marks,
     /// and persists rollups + marks in one state.
     public func noteActivity(paths: [URL], at date: Date = Date()) async {
-        let moved = await drain(paths: paths)
+        await beginTransaction()
+        defer { endTransaction() }
+        if needsRebuild {
+            pendingCatchupPaths.formUnion(paths)
+            return
+        }
+        let moved = await drain(paths: paths, at: date)
         if moved {
             await persist()
         }
@@ -179,34 +197,47 @@ public actor UsageMeter {
     /// claim a position the counts never reached and the remainder would be
     /// silently dropped — the one failure mode marks exist to prevent.
     @discardableResult
-    private func drain(paths: [URL]) async -> Bool {
+    private func drain(paths: [URL], at date: Date) async -> Bool {
         var moved = false
         for url in paths {
             var rounds = 0
             repeat {
                 let lines = reader.readNewLines(at: url)
-                if lines.isEmpty { break }
                 for line in lines {
-                    guard let record = parser.parse(line: line) else { continue }
-                    _ = await ledger.ingest(record)
+                    await ingest(line: line, path: url.path)
                 }
+                // A retained mark survives IO failure. Do not turn it into a
+                // successful-read timestamp, or spin at an unreadable offset.
+                guard reader.lastReadSucceeded(at: url) else { break }
                 rounds += 1
             } while reader.hasPendingBytes(at: url) && rounds < Self.maxDrainRounds
+            if reader.lastReadSucceeded(at: url), !reader.hasPendingBytes(at: url) {
+                readPaths.insert(url.path)
+                failedPaths.remove(url.path)
+                sourceStatus.lastReadAt = date
+            } else if FileManager.default.fileExists(atPath: url.path) {
+                failedPaths.insert(url.path)
+            } else {
+                readPaths.remove(url.path)
+                failedPaths.remove(url.path)
+            }
             if let mark = reader.currentMark(at: url) {
-                marks[url.path] = UsageLedgerState.FileMark(
+                let updated = UsageLedgerState.FileMark(
                     path: url.path,
                     deviceID: mark.stat.deviceID,
                     inode: mark.stat.inode,
                     size: mark.stat.size,
                     offset: mark.offset
                 )
-                moved = true
+                if marks[url.path] != updated { moved = true }
+                marks[url.path] = updated
             }
         }
+        sourceStatus.filesRead = readPaths.count
         return moved
     }
 
-    /// 4096 rounds x the reader's 8 MiB per-call budget = 32 GiB, i.e. no real
+    /// 4096 rounds x the reader's 16 MiB per-call budget = 64 GiB, i.e. no real
     /// transcript is ever left half-read, while a pathological file still
     /// cannot loop forever.
     private static let maxDrainRounds = 4096
@@ -214,15 +245,28 @@ public actor UsageMeter {
     /// Parse one transcript line directly (test seam; production flows through
     /// `noteActivity`). Does NOT advance marks — line callers own replay.
     public func ingestLine(_ line: String, at date: Date = Date()) async {
-        guard let record = parser.parse(line: line) else { return }
-        guard await ledger.ingest(record) else { return }
+        await beginTransaction()
+        defer { endTransaction() }
+        await ingest(line: line, path: "direct")
         await persist()
     }
 
+    private func ingest(line: String, path: String) async {
+        switch source {
+        case .claudeCode:
+            if let record = parser.parse(line: line) { await ledger.ingest(record) }
+        case .codex:
+            for record in codexParser.parseRecords(line: line, path: path) {
+                await ledger.replace(record)
+            }
+        }
+    }
+
     private func persist() async {
-        guard let store else { return }
+        guard let store, !persistenceBlocked, !needsRebuild else { return }
         var state = await ledger.state()
         state.version = Self.stateVersion
+        if source == .codex { state.codexState = codexParser.state }
         state.fileMarks = marks.values.sorted { $0.path < $1.path }
         store.save(state)
     }
@@ -245,8 +289,18 @@ public actor UsageMeter {
     }
 
     public func overview(now: Date = Date()) async -> UsageOverview {
-        UsageOverview(
-            usage: await ledger.snapshot(now: now),
+        await beginTransaction()
+        defer { endTransaction() }
+        var snapshot = await ledger.snapshot(now: now)
+        snapshot.sourceStatus = sourceStatus
+        let problems = [historyIssue,
+            codexParser.unresolvedRecordCount > 0
+                ? "Some Codex counter changes could not be reconciled. Recorded usage may be incomplete." : nil,
+            failedPaths.isEmpty ? nil : "Could not finish reading \(failedPaths.count) local log file(s). Usage may be incomplete. Check file access and reopen Decaf to retry."
+        ].compactMap { $0 }
+        snapshot.historyIssue = problems.isEmpty ? nil : problems.joined(separator: " ")
+        return UsageOverview(
+            usage: snapshot,
             quotaFiveHour: quota.fiveHour,
             quotaSevenDay: quota.sevenDay,
             quotaProvenance: quota.provenance(now: now)
@@ -255,6 +309,8 @@ public actor UsageMeter {
 
     /// Synchronous persistence drain for app shutdown and tests.
     public func flush() async {
+        await beginTransaction()
+        defer { endTransaction() }
         await persist()
         store?.flush()
     }

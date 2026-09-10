@@ -55,10 +55,11 @@ struct UsageRecordParserTests {
         #expect(record.model == "claude-sonnet-4-5-20250929")
     }
 
-    @Test func sidechainRecordsAreIgnored() {
+    @Test func sidechainRecordsContributeUsage() throws {
         let log = DiagnosticLog()
-        #expect(makeParser(log: log).parse(line: UsageFixture.lines[3]) == nil)
-        #expect(log.all.contains(.sidechainIgnored))
+        let record = try #require(makeParser(log: log).parse(line: UsageFixture.lines[3]))
+        #expect(record.tokens.total > 0)
+        #expect(log.all.isEmpty)
     }
 
     @Test func nonAssistantRecordsAreIgnored() {

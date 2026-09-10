@@ -1,130 +1,81 @@
 <div align="center">
 
-<img src="docs/assets/icon-256.png" alt="Decaf app icon" width="160" height="160">
+<img src="docs/assets/icon-256.png" alt="Decaf app icon" width="80" height="80">
 
 # Decaf
 
-**The `caffeinate` command as a smart menu bar app.**
+**Keep your Mac awake while agents work. End the day with a little token receipt.**
 
-Keeps your Mac awake while Claude Code is actually working — and lets it sleep the moment the agent is done, or is only waiting on you.
+A native macOS menu bar app: automatic agent detection and unified daily/monthly token usage for Claude Code + Codex.
 
-Every other keep-awake app is a switch you have to remember to turn off. This one puts itself down.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menu-hero-dark.png">
-  <img src="docs/assets/menu-hero-light.png" alt="The Decaf menu: Claude Code working with three sessions, each listed with its own state, above manual hold controls and display options" width="400">
-</picture>
-
-<p>
-  <a href="https://github.com/AlanY1an/decaf/releases/latest"><img src="https://img.shields.io/badge/Download-.dmg-brightgreen?style=flat-square" alt="Download"></a>
-  <img src="https://img.shields.io/badge/macOS-14%2B-blue?style=flat-square" alt="Requires macOS 14 or later">
-  <a href="https://github.com/AlanY1an/homebrew-decaf"><img src="https://img.shields.io/badge/Homebrew-tap-orange?style=flat-square" alt="Homebrew tap"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey?style=flat-square" alt="MIT License"></a>
-  <a href="https://github.com/AlanY1an/decaf/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/AlanY1an/decaf/ci.yml?style=flat-square&label=CI" alt="CI status"></a>
-</p>
-
-<a href="README.zh-CN.md">中文</a>
+[Get started](#get-started) · [Three uses](#three-uses) · [Guide](docs/usage.md) · [中文](README.zh-CN.md)
 
 </div>
 
----
-
-## Install
-
-```sh
-brew install --cask AlanY1an/decaf/decaf
-```
-
-Or download the DMG from [the latest release](https://github.com/AlanY1an/decaf/releases/latest). Requires **macOS 14 or later**.
-
-It works out of the box. On first launch it offers to install hooks into Claude Code, which sharpens detection from about five minutes to the exact turn — one click, optional, and reversible.
-
-## What it does
-
-- [x] **Stays awake while a turn is running**, and lets go a few minutes after it finishes
-- [x] **Lets your Mac sleep when the agent is waiting on you** — an idle prompt is not work
-- [x] **Doesn't give up on a long, quiet job** — a 20-minute build looks idle and isn't
-- [x] **Survives self-paced loops** — when an agent schedules its own wake-up, Decaf waits with it instead of sleeping through the gap
-- [x] **Works as a plain switch too** — hold for 30 minutes, until 6 PM, or indefinitely
-- [x] **Gets out of the way** — Low Power Mode, fast user switching and a low battery all release it; closing the lid always wins
-- [x] **Shows token usage and rate limits**, every number labelled official or estimated
-- [ ] Codex and opencode
-- [ ] Scheduled time windows ("keep awake 9–6 on weekdays")
-- [ ] Automatic updates
-- [ ] Clamshell mode, with a loud warning
-
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/menubar-icons-dark.png">
-  <img src="docs/assets/menubar-icons-light.png" alt="Four menu bar icon states: idle, manual hold, agents working with a session count, and paused by a safety protection" width="440">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-hero-dark.png">
+  <img src="docs/assets/readme-hero-light.png" alt="Decaf detects agent activity, keeps your Mac awake and unifies daily and monthly Claude Code and Codex token statistics" width="960">
 </picture>
 
-<sub>Four menu bar states. The Mac sleeps normally in the first one.</sub>
+<sub>Native statistics view and menu status excerpt, composed with example data.</sub>
 
-## Privacy
+> **New in v0.2.0:** Codex support, daily/monthly statistics and Your brew. Already using Decaf? [Update in two steps →](docs/usage.md#update)
 
-Decaf watches `~/.claude`. That deserves a straight answer.
+## Three uses
 
-- **It makes no network requests.** No telemetry, no analytics, not even an update check.
-- **It never reads your conversation.** It reads timestamps, ids and token counts — never a prompt, never a reply. That limit is enforced by the code's structure and pinned by tests, not by good intentions.
-- **It writes only** to its own folder, plus its hook entries in `~/.claude/settings.json` if you let it. Both are reversible from Settings.
+- **Automatic keep-awake.** Detect agent activity and keep the Mac awake, then release after the applicable grace or idle window. Each tool's hold is independent. Manual timers and battery protection are available too.
+- **Unified token statistics.** Claude Code + Codex daily, calendar-month and historical usage, combined or per tool, with cache details and import status.
+- **A personal record.** Your brew profiles and monthly cards, previewed, copied or saved on your Mac. Monthly cards hide token totals by default. [Full usage guide →](docs/usage.md)
 
-You see exactly what it will write before it writes anything:
+<details>
+<summary>16 seconds of real interaction: run an agent → monthly usage → save a card</summary>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/consent-sheet-dark.png">
-  <img src="docs/assets/consent-sheet-light.png" alt="The install consent sheet, listing the files Decaf will write and previewing the exact JSON it merges into ~/.claude/settings.json" width="500">
+  <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/readme-hero-light.png">
+  <img src="docs/assets/decaf-live-demo.gif" alt="Real UI recording: run Codex, inspect monthly usage and save a card; usage history is example data" width="840">
 </picture>
 
-## Settings
+An actual Codex run, the native menu and monthly statistics, then a PNG saved through the real save dialog. Recorded in an isolated demo harness with example monthly history; pauses between actions are cut. Codex's file-activity grace may keep the Mac awake after a task ends. [Watch the MP4](docs/assets/decaf-live-demo.mp4).
 
-Six, and no more.
+</details>
 
-| | |
-| --- | --- |
-| **Auto keep awake for agents** | On by default. Off means Decaf ignores agents entirely. |
-| **Release grace period** | How long to hold after a turn ends. 1–10 minutes, default 3. |
-| **Display while keeping awake** | Screen sleeps normally, or stays on. Plus **Turn Off Display Now**. |
-| **Battery threshold** | Stop holding below this. Default 20%. |
-| **Default manual duration** and **"Until" time** | What the one-click hold does. |
-| **Launch at login** | |
+## Get started
 
-## Questions
+Requires **macOS 14 or later**.
 
-**Why "Decaf" if it does `caffeinate`'s job?**
-Because the job is knowing when to *stop*. Everything in this category is named for the stimulant, and every one of them is a switch you have to remember to turn off. The subtitle keeps the word `caffeinate` because that is the command you already know — but the app deliberately does not share the name, so it can never shadow `/usr/bin/caffeinate`.
+1. **Install.**
 
-**Does it read my conversations?**
-No. It reads timestamps, session ids and token counters, and nothing else — see [Privacy](#privacy) above. The parsers are closed enums with tests pinning their fields, so widening them is a failing build rather than something a code review has to catch.
+   ```sh
+   brew install --cask AlanY1an/decaf/decaf
+   ```
 
-**How is this different from KeepingYouAwake or Amphetamine?**
-Those are switches, and good ones. Decaf decides. If a switch is what you want, KeepingYouAwake is well maintained and you should use it. (Decaf is also that switch when you want it to be.)
+   Or [download the DMG](https://github.com/AlanY1an/decaf/releases/latest).
 
-**Do I have to install the hooks?**
-No. Without them it watches for file activity instead — roughly five minutes of resolution rather than instant — and the menu tells you which one is running.
+2. **Find the cup.** Open Decaf from Applications and look in the menu bar. Claude Code hooks are optional; Settings previews the changes before installation.
+3. **Start a task.** Check detection status in the cup menu. Open **Today: … tokens…** for both tools’ usage and switch between **Daily / Monthly**. [First-use guide →](docs/usage.md#first-use)
 
-**Does it work with the lid closed?**
-No. Clamshell keep-awake needs a privileged helper and carries a real heat risk on a closed laptop. It is on the roadmap and will ship with a warning you cannot miss, or not at all.
+<details>
+<summary>A little extra: Your brew profile and monthly cards</summary>
 
-**Will it drain my battery?**
-It can only prevent sleep, and it stops below 20%. The default lets your Mac sleep whenever the agent isn't working — for most people that is less awake time than a switch they forgot about.
+Open **Your brew…** from the cup menu. Pick a month, add an optional nickname and coffee stamp, then preview your card. Token totals are hidden by default.
 
-**Why isn't it on the Mac App Store?**
-The sandbox makes what Decaf does impossible, not merely inconvenient. Permanent, not a backlog item.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/profile-previous-month-card-dark.png">
+  <img src="docs/assets/profile-previous-month-card-light.png" alt="Your brew monthly card: a coffee stamp, recorded activity and Claude Code plus Codex, with token totals hidden" width="360">
+</picture>
 
-**How do I uninstall it?**
-`brew uninstall --cask AlanY1an/decaf/decaf`, or drag it out of Applications. If you installed hooks, use **Settings → Agents → Uninstall Hooks** first — it removes Decaf's entries and leaves everything else untouched. Power assertions die with the process, so quitting or deleting Decaf can never leave your Mac unable to sleep.
+<sub>Example nickname and data. <a href="docs/usage.md#your-brew">Explore the profile and card options →</a></sub>
 
-## Contributing
+</details>
 
-```sh
-git clone https://github.com/AlanY1an/decaf.git
-cd decaf
-Scripts/bootstrap.sh
-swift test --package-path Core
-```
+## Your data stays here
 
-How it all works: [`docs/architecture.md`](docs/architecture.md).
+Decaf parses existing local logs and makes no app network requests. Counts include cached tokens and cover available records on this Mac; missing history stays missing. These are recorded tokens, not an account bill or a productivity score. [Data sources and limits →](docs/usage.md#your-data)
 
-## License
+Keep-awake respects safety pauses; closing the lid still allows sleep. Codex detection is approximate. [How detection works →](docs/usage.md#what-to-expect)
 
-MIT. See [LICENSE](LICENSE).
+## Make it better with us
+
+Try it during a normal workday: Claude Code, Codex, or both. Did the first import make sense? Did your Mac stay awake when it should? Would you open it tomorrow? [Leave a short report →](https://github.com/AlanY1an/decaf/issues/new?template=feedback.yml)
+
+Code, docs and accessibility fixes are welcome. [Contributing](CONTRIBUTING.md) · [Report a bug](https://github.com/AlanY1an/decaf/issues/new/choose) · [Uninstall](docs/usage.md#uninstall) · [MIT](LICENSE)

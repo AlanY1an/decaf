@@ -1,9 +1,9 @@
-// StatusItemBridge — AppKit bridge for left-click toggle (plan 04 §4, option A).
+// StatusItemBridge — configurable left-click behavior for the menu-bar cup.
 //
 // MenuBarExtra has no public API to distinguish left from right clicks; this
 // bridge locates the underlying NSStatusItem (keepresso's StatusItemBridge is
 // the reference for the technique), takes over the button's target/action, and:
-//   left click            -> onToggle() (never opens the menu)
+//   left click            -> chosen action: menu or onToggle()
 //   right / control click -> forwards to the original target/action (menu)
 //
 // Graceful degradation is mandatory (plan 04 §4): if the status item cannot be
@@ -11,10 +11,12 @@
 // keep opening the menu, nothing crashes, the icon stays.
 
 import AppKit
+import DecafCore
 
 @MainActor
 final class StatusItemBridge: NSObject {
     private let onToggle: () -> Void
+    private let clickAction: () -> MenuBarClickAction
 
     private weak var button: NSStatusBarButton?
     private weak var forwardTarget: AnyObject?
@@ -22,7 +24,8 @@ final class StatusItemBridge: NSObject {
     private var attachAttempts = 0
     private static let maxAttachAttempts = 12
 
-    init(onToggle: @escaping () -> Void) {
+    init(clickAction: @escaping () -> MenuBarClickAction, onToggle: @escaping () -> Void) {
+        self.clickAction = clickAction
         self.onToggle = onToggle
     }
 
@@ -78,9 +81,11 @@ final class StatusItemBridge: NSObject {
 
     @objc private func didClick(_ sender: NSStatusBarButton) {
         let event = NSApp.currentEvent
-        let wantsMenu = event.map {
-            $0.type == .rightMouseUp || $0.modifierFlags.contains(.control)
-        } ?? true // unknown event: safest is opening the menu
+        let wantsMenu = clickAction().opensMenu(
+            secondaryClick: event?.type == .rightMouseUp,
+            controlPressed: event?.modifierFlags.contains(.control) == true,
+            hasMouseEvent: event?.type == .leftMouseUp || event?.type == .rightMouseUp
+        )
         if wantsMenu {
             openMenu(from: sender)
         } else {

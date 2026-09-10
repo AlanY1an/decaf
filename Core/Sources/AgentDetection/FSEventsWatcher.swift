@@ -78,6 +78,12 @@ public final class FSEventsWatcher {
             }
         }
 
+        public static func codex(home: String = NSHomeDirectory(), codexHome: String? = ProcessInfo.processInfo.environment["CODEX_HOME"]) -> Root {
+            let root = codexHome ?? (home as NSString).appendingPathComponent(".codex")
+            return Root(agent: .codex, path: root,
+                        activityPrefix: (root as NSString).appendingPathComponent("sessions") + "/")
+        }
+
         /// The claude root: ~/.claude with activity under projects/.
         public static func claude(home: String = NSHomeDirectory()) -> Root {
             let root = (home as NSString).appendingPathComponent(".claude")
@@ -89,10 +95,11 @@ public final class FSEventsWatcher {
         }
     }
 
-    /// MVP watches claude only; V1.x appends ~/.codex/sessions and the
-    /// opencode log root to the same (single) stream.
+    /// Both agents share one event stream. Codex remains file-activity precision.
+
     public static func defaultRoots() -> [Root] {
-        [.claude()]
+        [.claude(), .codex()]
+
     }
 
     // MARK: Pure classification (unit-testable without FSEvents)
@@ -160,28 +167,36 @@ public final class FSEventsWatcher {
         return URL(fileURLWithPath: normalized)
     }
 
-    /// Every transcript file that exists under the configured roots right now.
-    ///
-    /// Used once, at launch, to seed the tail reader's offsets at EOF: history
-    /// written before we were running is history (same "since now" discipline
-    /// as `kFSEventStreamEventIdSinceNow`).
+    /// Archived Codex logs contribute usage, never active-agent signals.
+    public static func archivedTranscriptURL(path: String, roots: [Root]) -> URL? {
+        let normalized = (path as NSString).standardizingPath
+        guard (normalized as NSString).pathExtension == transcriptExtension,
+              roots.contains(where: {
+                  $0.agent == .codex && normalized.hasPrefix($0.path + "/archived_sessions/")
+              }) else { return nil }
+        return URL(fileURLWithPath: normalized)
+    }
+
+    /// All available usage history. Detection still uses only activityPrefix.
     public func existingTranscriptFiles() -> [AgentKind: [URL]] {
         var result: [AgentKind: [URL]] = [:]
         for root in allRoots {
-            let projects = URL(fileURLWithPath: root.activityPrefix, isDirectory: true)
-            guard let walker = fileManager.enumerator(
-                at: projects,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { continue }
-            var files: [URL] = []
-            for case let url as URL in walker
-            where url.pathExtension == Self.transcriptExtension {
-                files.append(url)
+            var prefixes = [root.activityPrefix]
+            if root.agent == .codex { prefixes.append(root.path + "/archived_sessions/") }
+            var files: Set<URL> = []
+            for prefix in prefixes {
+                guard let walker = fileManager.enumerator(
+                    at: URL(fileURLWithPath: prefix, isDirectory: true),
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                ) else { continue }
+                for case let url as URL in walker where url.pathExtension == Self.transcriptExtension {
+                    if (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true {
+                        files.insert(url)
+                    }
+                }
             }
-            if !files.isEmpty {
-                result[root.agent, default: []].append(contentsOf: files)
-            }
+            if !files.isEmpty { result[root.agent, default: []].append(contentsOf: files.sorted { $0.path < $1.path }) }
         }
         return result
     }
@@ -195,10 +210,17 @@ public final class FSEventsWatcher {
     /// Always paired with an `onActivity` call for the same agent; a batch that
     /// named no file (queue overflow) fires only the latter.
     public var onTranscriptActivity: ((AgentKind, [URL], Date) -> Void)?
+    /// Usage-only imports, without an onActivity or detection callback.
+    public var onHistoricalTranscriptActivity: (([URL], Date) -> Void)?
     /// Called (on `queue`) when a watched root vanished (RootChanged).
     public var onRootVanished: ((AgentKind) -> Void)?
 
     private let allRoots: [Root]
+    /// Same roots as the stream, including a custom CODEX_HOME. Archives are
+    /// deliberately absent from the process-owner keep-awake probe.
+    public var codexActivityRoots: [URL] {
+        allRoots.filter { $0.agent == .codex }.map { URL(fileURLWithPath: $0.activityPrefix) }
+    }
     private let latency: TimeInterval
     private let queue: DispatchQueue
     private let fileManager: FileManager
@@ -378,10 +400,15 @@ public final class FSEventsWatcher {
         // it once is enough.
         var transcripts: [AgentKind: [URL]] = [:]
         var seenTranscripts: Set<URL> = []
+        var archivedTranscripts: Set<URL> = []
         for (index, path) in paths.enumerated() {
             let eventFlags = index < flags.count ? flags[index] : 0
             // EventIdsWrapped: bookkeeping only, ignore (plan 02 §2).
             if eventFlags & FSEventStreamEventFlags(kFSEventStreamEventFlagEventIdsWrapped) != 0 {
+                continue
+            }
+            if let archive = Self.archivedTranscriptURL(path: path, roots: streamedRoots) {
+                archivedTranscripts.insert(archive)
                 continue
             }
             switch FSEventsWatcher.classify(path: path, flags: eventFlags, roots: streamedRoots) {
@@ -398,6 +425,9 @@ public final class FSEventsWatcher {
             }
         }
         let now = Date()
+        if !archivedTranscripts.isEmpty {
+            onHistoricalTranscriptActivity?(archivedTranscripts.sorted { $0.path < $1.path }, now)
+        }
         for agent in active {
             onActivity?(agent, now)
             if let urls = transcripts[agent] {

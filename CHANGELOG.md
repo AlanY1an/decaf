@@ -5,6 +5,50 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-09
+
+Automatic keep-awake for Claude Code and Codex, with a shared view of local
+token usage. Requires macOS 14 or later.
+
+### Added
+
+- Codex activity detection and a process-backed extension for unfinished quiet
+  tasks. Claude Code and Codex hold requests are independent. Detection is
+  labelled approximate; recent file activity can continue holding after a task ends.
+- Daily and calendar-month statistics for both tools, combined or filtered,
+  with retained history, cache details, import status and local PNG receipts.
+- Your brew: a local profile, 90-day recorded activity, month browsing and monthly
+  cards. Token quantities are hidden on profile cards unless explicitly enabled.
+- Menu-bar options for today's token total and the cup's left-click behavior.
+- **Updates…** in the menu and General settings, with the release download and
+  copyable Homebrew commands. This is a manual update guide, with no background
+  requests, automatic version check or automatic installation.
+
+### Fixed
+
+- Both embedded helpers now match the app's Apple Silicon and Intel architectures;
+  the release pipeline verifies every slice before distribution.
+- Usage accounting across duplicate messages, resumed sessions, changed counters,
+  truncated logs, cached tokens and midnight boundaries. Ambiguous imports are
+  surfaced for review instead of silently presented as exact.
+- Existing usage stores are backed up before accounting history is rebuilt from
+  available local logs. A failed backup prevents migration writes.
+- Codex tasks that are still running can retain their hold through quiet periods;
+  completion, cancellation or loss of the log writer removes that extension.
+
+### Updating from 0.1.0
+
+Quit Decaf, then run `brew update` and
+`brew upgrade --cask AlanY1an/decaf/decaf`, or replace Decaf in Applications with
+the app from the new DMG. Reopen it afterward. Do not uninstall or clear app data.
+The bundle identity, preferences and integration paths are unchanged; existing
+left-click behavior is retained. First launch may take time to rebuild usage,
+and corrected totals can differ from the previous version. Missing source logs
+cannot be recovered; the old usage files remain in Application Support/Decaf/Backups.
+
+Version 0.1.0 cannot notify users about this release from inside the app.
+Subscribe to **Watch → Custom → Releases** on GitHub for future notifications.
+
 ## [0.1.0] - 2026-08-13
 
 First release. A menu bar app that keeps a Mac awake while Claude Code is
@@ -157,4 +201,5 @@ scheduled time windows; automatic updates (Sparkle), so a DMG installed at
 0.1.0 has no update channel; clamshell / lid-closed keep-awake; and any
 Mac App Store build, which the sandbox makes permanently impossible.
 
+[0.2.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.2.0
 [0.1.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.1.0

@@ -70,6 +70,7 @@ public final class CompositionRoot: ObservableObject {
     /// Token ledger + official quota (plan 09). Fed from the coordinator's
     /// transcript line sink and from Statusline frames routed in `route(_:)`.
     public let usageMeter: UsageMeter
+    public let codexUsageMeter: UsageMeter
     /// "Turn the screen off now" adapter (pmset in production, a fake in tests).
     public let displaySleeper: any DisplaySleeping
 
@@ -130,6 +131,9 @@ public final class CompositionRoot: ObservableObject {
         displaySleeper: any DisplaySleeping = PmsetDisplaySleeper(),
         socketPath: String = HookSocketServer.defaultSocketPath,
         watcher: FSEventsWatcher = FSEventsWatcher(),
+        // The app opts into real process/log inspection. Headless assemblies
+        // and tests must not discover tasks from the user's actual Codex home.
+        codexOwnerProbe: (any CodexLogOwnerProbing)? = nil,
         sessionsStore: SessionsStore = SessionsStore(),
         // The stuck-session downgrade's window and its CPU witness (plan 02
         // §1.1b). Production values by default; the acceptance harness
@@ -170,19 +174,34 @@ public final class CompositionRoot: ObservableObject {
         self.socketServer = HookSocketServer(socketPath: socketPath)
         let usageMeter = UsageMeter(store: usageStore, timeZone: usageTimeZone)
         self.usageMeter = usageMeter
+        let codexStore = usageStore.map {
+            UsageStore(fileURL: $0.fileURL.deletingLastPathComponent().appendingPathComponent("codex-usage.json"))
+        }
+        let codexMeter = UsageMeter(store: codexStore, timeZone: usageTimeZone, source: .codex)
+        self.codexUsageMeter = codexMeter
+        watcher.onHistoricalTranscriptActivity = { paths, date in
+            Task { await codexMeter.noteActivity(paths: paths, at: date) }
+        }
         self.coordinator = DetectionCoordinator(
             gracePeriod: tuning.gracePeriod,
             l2IdleWindow: tuning.l2IdleWindow,
             stuckThreshold: stuckThreshold,
             store: sessionsStore,
             watcher: watcher,
+            codexOwnerProbe: codexOwnerProbe,
             activitySampler: activitySampler,
             userNotifier: userNotifier,
             // Paths, not lines (plan 09 M5): the meter reads the files itself
             // with its own persisted offsets, so restart replay safety never
             // depends on this coordinator's reader.
-            transcriptActivitySink: { paths, date in
-                Task { await usageMeter.noteActivity(paths: paths, at: date) }
+            agentTranscriptActivitySink: { agent, paths, date in
+                Task {
+                    switch agent {
+                    case .claudeCode: await usageMeter.noteActivity(paths: paths, at: date)
+                    case .codex: await codexMeter.noteActivity(paths: paths, at: date)
+                    case .opencode: break
+                    }
+                }
             }
         )
     }
@@ -243,9 +262,11 @@ public final class CompositionRoot: ObservableObject {
         // the ledger exactly once. One-shot; live activity takes over after.
         if usagePersistenceEnabled {
             let meter = usageMeter
-            let existingTranscripts = watcher.existingTranscriptFiles().values.flatMap { $0 }
+            let existingTranscripts = watcher.existingTranscriptFiles()
+            let codexMeter = codexUsageMeter
             pumpTasks.append(Task { [weak self] in
-                await meter.start(files: existingTranscripts)
+                await meter.start(files: existingTranscripts[.claudeCode] ?? [])
+                await codexMeter.start(files: existingTranscripts[.codex] ?? [])
                 await self?.refreshUsageOverview()
             })
         }
@@ -309,7 +330,8 @@ public final class CompositionRoot: ObservableObject {
 
     /// Pulls a fresh overview and republishes when it changed.
     func refreshUsageOverview() async {
-        let overview = await usageMeter.overview()
+        var overview = await usageMeter.overview()
+        overview.codexUsage = await codexUsageMeter.overview().usage
         guard overview != usageOverview else { return }
         usageOverview = overview
         republish()
@@ -509,7 +531,7 @@ public final class CompositionRoot: ObservableObject {
             switch source.kind {
             case .session(let id, _):
                 desired.insert(.agentSession(id: id))
-            case .fallbackActivity:
+            case .fallbackActivity, .codexTurn:
                 desired.insert(.agentFallback(source.agent))
                 fallbacks.insert(source.agent)
             }

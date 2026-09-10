@@ -1,8 +1,8 @@
 // UsageStore — usage.json persistence (plan 09 M1).
 //
 // Debounce-written like SessionsStore. No bootTime guard: token history is
-// wall-clock data and survives reboots by design. Dedup keys are NOT stored
-// (see UsageLedger); the upstream reader's offsets (M3) own replay safety.
+// wall-clock data and survives reboots by design. Request identities, Codex observations
+// and complete-line file offsets are saved atomically with their rollups.
 
 import Foundation
 
@@ -38,6 +38,20 @@ public final class UsageStore {
               let state = try? Self.decoder().decode(UsageLedgerState.self, from: data)
         else { return nil }
         return state
+    }
+
+    /// Never replace a legacy/corrupt store without retaining its exact bytes.
+    /// A failed backup blocks migration writes; no silent loss of old history.
+    @discardableResult
+    public func backupBeforeRebuild() throws -> URL? {
+        try queue.sync {
+            guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+            let directory = fileURL.deletingLastPathComponent().appendingPathComponent("Backups", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let destination = directory.appendingPathComponent(fileURL.lastPathComponent + ".before-v3-" + UUID().uuidString + ".json")
+            try FileManager.default.copyItem(at: fileURL, to: destination)
+            return destination
+        }
     }
 
     public func save(_ state: UsageLedgerState) {

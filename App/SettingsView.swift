@@ -1,4 +1,4 @@
-// SettingsView — the three MVP settings tabs (plan 04 §5).
+// SettingsView — profile preferences and the three system settings tabs.
 //
 // Design stance: ONE HERO, EVERYTHING ELSE QUIET.
 //
@@ -53,6 +53,8 @@ struct SettingsView: View {
     @ObservedObject var settings: UISettings
     @ObservedObject var integrations: AgentIntegrationsModel
     @ObservedObject var tabRouter: SettingsTabRouter
+    @ObservedObject var profile: BrewProfileStore
+    var showProfile: () -> Void
 
     /// Wide enough for a grouped form's label column plus its trailing control
     /// without wrapping the footers to four lines; System Settings panes sit in
@@ -94,24 +96,30 @@ struct SettingsView: View {
     static let windowHeight: CGFloat = SettingsSizing.windowHeight
 
     var body: some View {
-        SettingsTabs(settings: settings, integrations: integrations, tabRouter: tabRouter)
+        SettingsTabs(settings: settings, integrations: integrations, tabRouter: tabRouter,
+                     profile: profile, showProfile: showProfile)
             .frame(width: Self.windowWidth, height: Self.windowHeight)
     }
 }
 
-/// The three tabs with no frame around them, so their assembled natural height
+/// The tabs with no frame around them, so their assembled natural height
 /// can be measured. `SettingsView` is this plus the window frame; nothing else
 /// should build a `TabView` of these pages.
 struct SettingsTabs: View {
     @ObservedObject var settings: UISettings
     @ObservedObject var integrations: AgentIntegrationsModel
     @ObservedObject var tabRouter: SettingsTabRouter
+    @ObservedObject var profile: BrewProfileStore
+    var showProfile: () -> Void
 
     var body: some View {
         TabView(selection: $tabRouter.selectedTab) {
             GeneralSettingsTab(settings: settings)
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
+            ProfileSettingsTab(profile: profile, showProfile: showProfile)
+                .tabItem { Label("Profile", systemImage: "person.crop.circle") }
+                .tag(SettingsTab.profile)
             AgentsSettingsTab(settings: settings, integrations: integrations)
                 .tabItem { Label("Agents", systemImage: "sparkles") }
                 .tag(SettingsTab.agents)
@@ -130,22 +138,20 @@ struct SettingsTabs: View {
 /// `SettingsWindowSizingTests` fails when the pages outgrow them.
 enum SettingsSizing {
     /// Natural height of each tab, tab strip and TabView insets included,
-    /// measured on 2026-08-07. Agents is measured in all three hero states; the
+    /// measured on 2026-09-08. Agents is measured in all three hero states; the
     /// hero's status line is the one row whose height varies with state, and
     /// all three came out the same.
     static let measuredTabHeights: [SettingsTab: CGFloat] = [
-        .general: 409,
-        .agents: 442,
-        .safety: 387,
+        .general: 561,
+        .profile: 545,
+        .agents: 641,
+        .safety: 388,
     ]
 
-    /// The tallest page, plus a margin.
-    ///
-    /// The margin is not padding for its own sake. Two known reasons the true
-    /// requirement runs above the measurement: `fittingSize` under-reports a
-    /// grouped Form's last card by a few points, and a footer that wraps one
-    /// line further in another locale costs about 15pt. 16 covers both.
-    static let slack: CGFloat = 16
+    /// The assembled Form needs more bottom space than fittingSize reports.
+    /// This margin was verified against the full window render, including the
+    /// final removal row, at 620 × 694 points on 2026-09-08.
+    static let slack: CGFloat = 53
 
     static let windowHeight: CGFloat = (measuredTabHeights.values.max() ?? 0) + slack
 }
@@ -174,9 +180,27 @@ struct GeneralSettingsTab: View {
                 // The app signs its own window once, in type. No header reading
                 // "Startup" above it: a label over a single toggle whose own
                 // label already says "Launch at login" is scaffolding.
-                Wordmark()
+                HStack(alignment: .firstTextBaseline) {
+                    Wordmark()
+                    Spacer()
+                    Button("Updates…") { UpdateGuidePresenter.shared.present() }
+                        .textCase(nil)
+                }
             } footer: {
                 SectionFooter("Decaf lives in the menu bar and keeps no Dock icon of its own.")
+            }
+
+            Section {
+                Picker("Left-click the cup", selection: $settings.menuBarClickAction) {
+                    ForEach(MenuBarClickAction.allCases, id: \.self) { action in
+                        Text(action.title).tag(action)
+                    }
+                }
+                Toggle("Show today's tokens beside the cup", isOn: $settings.showMenuBarTokens)
+            } header: {
+                SectionHeader("Menu Bar")
+            } footer: {
+                SectionFooter(settings.menuBarClickAction.hint + " Token totals combine Claude Code and Codex, including cached tokens.")
             }
 
             Section {
@@ -204,7 +228,7 @@ struct GeneralSettingsTab: View {
                 // says the menu's own time picker does not silently rewrite
                 // this. Without it, a user who picks 3 PM from the menu once
                 // has no way to know whether their 6 PM default survived.
-                SectionFooter("Used when you click the menu bar icon or flip the Keep Awake switch. The time above is the menu's one-click \u{201C}Until\u{201D} item; the menu's \u{201C}Until\u{2026}\u{201D} submenu can pick any other hour without changing it.")
+                SectionFooter("Used when you toggle manual keep-awake. The time above is the menu's one-click \u{201C}Until\u{201D} item; the menu's \u{201C}Until\u{2026}\u{201D} submenu can pick any other hour without changing it.")
             }
 
             // Its own card, not a third row of the one above: duration and
@@ -364,6 +388,13 @@ struct AgentsSettingsTab: View {
                         + "output through unchanged. Uninstall restores your original."
                     )
                 }
+            }
+
+            Section {
+                LabeledContent("Codex", value: integrations.isCodexProbing
+                               ? "Looking for local sessions…" : integrations.codexStatus.title)
+            } footer: {
+                SectionFooter("Local logs power daily and monthly counts. Task events plus a running-process check help keep silent Codex work awake, with a two-hour no-progress limit. No hooks required.")
             }
 
             // The same switch that is in the menu, in the same words — one

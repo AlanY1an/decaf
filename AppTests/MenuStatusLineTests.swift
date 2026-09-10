@@ -110,13 +110,13 @@ import HookWire
         #expect(iconState(for: s) == .agentHold(sessionCount: 1))
     }
 
-    @Test func severalFallbackAgentsAreCountedAsAgentsNotSessions() {
+    @Test func severalFallbackAgentsAreNamedWithoutInventingSessionCounts() {
         let s = AppStateSnapshot(
             fallbackAgents: [.claudeCode, .codex],
             precision: [.claudeCode: .fileActivity, .codex: .fileActivity],
             wantsHold: true
         )
-        #expect(MenuTextFormatter.statusLine(for: s) == "Claude Code working · 2 agents")
+        #expect(MenuTextFormatter.statusLine(for: s) == "Claude Code + Codex working")
     }
 
     /// The last line of defence: something is holding that the UI does not model

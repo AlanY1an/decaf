@@ -15,7 +15,7 @@
 #                 a real sha256. Signing, notarization, stapling and Gatekeeper
 #                 assessment are reported as skipped. Missing credentials downgrade
 #                 from fatal to a warning. Use this to test the script today.
-#   --skip-tests  Skip `swift test --package-path Core` (plan 06 §10 checklist item 1).
+#   --skip-tests  Skip the Core and app tests (only after checking this exact source).
 #
 # Three things this script CANNOT do for you, and refuses to fake (see the
 # PENDING AUTHOR DECISIONS block below):
@@ -435,6 +435,7 @@ ok "decaf-bridge links system libraries only, is under budget, and is silent"
 step "xcodebuild archive"
 rm -rf "$ARCHIVE_PATH"
 
+set +e
 if [ "$DRY_RUN" -eq 1 ] && [ -z "$SIGN_IDENTITY" ]; then
     info "unsigned archive (no Developer ID available)"
     xcodebuild archive \
@@ -445,7 +446,8 @@ if [ "$DRY_RUN" -eq 1 ] && [ -z "$SIGN_IDENTITY" ]; then
         -archivePath "$ARCHIVE_PATH" \
         CODE_SIGNING_ALLOWED=NO \
         CODE_SIGNING_REQUIRED=NO \
-        2>&1 | grep -E "error:|warning: .*\.swift|ARCHIVE (SUCCEEDED|FAILED)" || true
+        2>&1 | grep -E "error:|warning: .*\.swift|ARCHIVE (SUCCEEDED|FAILED)"
+    ARCHIVE_STATUS=${PIPESTATUS[0]}
 else
     xcodebuild archive \
         -project "$PROJECT" \
@@ -457,8 +459,11 @@ else
         CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
         DEVELOPMENT_TEAM="$TEAM_ID" \
         OTHER_CODE_SIGN_FLAGS="--timestamp" \
-        2>&1 | grep -E "error:|warning: .*\.swift|ARCHIVE (SUCCEEDED|FAILED)" || true
+        2>&1 | grep -E "error:|warning: .*\.swift|ARCHIVE (SUCCEEDED|FAILED)"
+    ARCHIVE_STATUS=${PIPESTATUS[0]}
 fi
+set -e
+[ "$ARCHIVE_STATUS" -eq 0 ] || die "xcodebuild archive failed (exit $ARCHIVE_STATUS)."
 
 ARCHIVED_APP="$ARCHIVE_PATH/Products/Applications/$APP_NAME.app"
 [ -d "$ARCHIVED_APP" ] || die "archive produced no $APP_NAME.app at:
@@ -468,12 +473,24 @@ ARCHIVED_APP="$ARCHIVE_PATH/Products/Applications/$APP_NAME.app"
            -destination 'generic/platform=macOS' -archivePath '$ARCHIVE_PATH'"
 ok "archived $ARCHIVED_APP"
 
+# Every executable the app invokes must run on every architecture it advertises.
+APP_ARCHS="$(lipo -archs "$ARCHIVED_APP/Contents/MacOS/$APP_NAME")"
+for HELPER in decaf-bridge decaf-statusline; do
+    for TARGET_ARCH in $APP_ARCHS; do
+        lipo "$ARCHIVED_APP/Contents/Helpers/$HELPER" -verify_arch "$TARGET_ARCH" \
+            || die "$HELPER is missing the $TARGET_ARCH slice shipped by the app."
+    done
+done
+ok "app and embedded helpers support $APP_ARCHS"
+
 # The embedded bridge is the classic notarization rejection: it is copied in by a
 # post-build script, so it is easy for it to end up unsigned or missing.
 EMBEDDED_BRIDGE="$ARCHIVED_APP/Contents/Helpers/decaf-bridge"
 [ -x "$EMBEDDED_BRIDGE" ] || die "embedded helper missing: Contents/Helpers/decaf-bridge
    The 'Embed decaf-bridge' post-build script in project.yml did not run or failed."
 ok "embedded Contents/Helpers/decaf-bridge present"
+./Scripts/check-bridge.sh "$EMBEDDED_BRIDGE"
+./Scripts/check-statusline.sh "$ARCHIVED_APP/Contents/Helpers/decaf-statusline"
 
 # ==========================================================================
 # 6. Verify signatures before spending time on notarization

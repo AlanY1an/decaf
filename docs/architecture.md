@@ -132,8 +132,8 @@ self-paced loop with a seven-minute gap does not lose the machine at minute
 five.
 
 The parser reads exactly five fields and is pinned by a test that fails if a
-sixth is ever added. Conversation content — prompts, reasons — is never read,
-stored or logged.
+sixth is ever added. Conversation bodies are not retained or logged. Log lines are parsed locally;
+only scheduling metadata and the narrow cron-result job ID are extracted.
 
 Guard rails, in order: the extension is **capped at one hour**, so a parse bug
 costs an hour of sleep rather than a night; **every safety gate still applies**,
@@ -229,8 +229,9 @@ That is a maintenance obligation, not a bug, and it is worth knowing about.
 
 ## What the app never does
 
-- It does not read your conversations. The hook read surface is five fields,
-  enforced by a closed enum and a test.
+- It parses local transcript records and retains selected metadata, not
+  conversation bodies. Tests pin the expected parser behavior; they are not
+  a compiler-enforced security boundary.
 - It does not touch `~/.claude` without consent. The install sheet shows the
   exact JSON that will be deep-merged, and uninstall restores what was there.
 - It does not sandbox, and so it is not on the Mac App Store: detection needs
@@ -251,3 +252,136 @@ Scripts/release.sh       # signed, notarized, stapled DMG
 
 `Decaf.xcodeproj` is generated from `project.yml` on every run; edit the
 manifest, never the project file.
+
+## Daily and monthly usage, and Codex
+
+The menu leads with today's combined Claude Code + Codex token count. Clicking it opens a compact, reusable native statistics window. Agent totals filter the
+seven-day chart; selecting a date updates the headline and token breakdown.
+The default view presents a daily summary and a small chart without dashboard
+cards or axes. Input, output and cache counts expand under “The little details”.
+Uncached input, output, cache reads and writes remain separate, and days without
+recorded activity remain visible. The Monthly switch reads all retained daily
+rollups from `UsageSnapshot.recordedHistory`, independently of the rolling hourly
+retention. Recent daily history replaces overlapping dates instead of adding them.
+Month navigation uses local calendar boundaries, stops at the current month and
+earliest available history, and includes gaps between months. Future days are
+muted and disabled; current-month totals are explicitly month-to-date. Selecting
+a bar drills down to that day; selecting the month total restores the aggregate.
+The Copy card action renders a separate SwiftUI view to a PNG on the clipboard.
+Its input model contains only the selected date and selected agents’ daily or monthly token
+totals. Filtering to one agent also excludes the other from the export. There is
+no network request, automatic posting, or access to project names or conversations
+in this export path. Documentation uses the same PNG renderer with example data.
+Calendar arithmetic handles midnight and daylight-saving transitions. The
+existing Claude official quota is shown separately only when viewing today; Codex tokens never enter
+Claude's five-hour estimates. Counts cover available local logs, not account-wide
+usage or subscription limits.
+
+`UsageLedger` persists the selected complete record for every message ID and
+request ID pair. Claude subagent records participate in the same deduplication.
+An updated usage snapshot replaces the previous snapshot when its total is higher;
+it is never added as a second request. The earliest observed timestamp determines
+the local day. Record identity survives pruning, restarts and copied transcripts.
+Persisted timestamps also allow daily history to be regrouped after a time-zone
+change without mixing calendar boundaries.
+
+`CodexUsageParser` retains token observations by session and reconciles them in
+timestamp order. Cached input is a subset of input; reasoning is a subset of
+output, and both count once. A new cumulative segment is recognized when the
+counter changes at a later timestamp and matches that event's last-call usage.
+Repeated observations and unchanged quota-only events add nothing. Backfilling an
+earlier observation can replace neighboring event deltas to correct their daily
+allocation without inflating the total. A counter discontinuity without sufficient
+last-call evidence remains unresolved; statistics and exported cards indicate
+that the recorded usage needs review. Log formats still cannot establish
+account-wide usage or recover missing sessions.
+
+The Codex ledger is `codex-usage.json`, beside the Claude ledger. Complete-line
+resume offsets, request accounting and Codex observations are saved atomically.
+Meter transactions serialize catch-up, live events and snapshots. Schema 3 backs
+up prior store bytes under `Application Support/Decaf/Backups` before rebuilding
+all available history; the old ten-day migration limit is removed. If the backup
+fails, migration does not overwrite the previous store. History whose logs no
+longer exist is recoverable only from the retained backup, not silently combined
+with rebuilt totals.
+
+The FSEvents stream watches live Codex sessions under `~/.codex` (or
+`CODEX_HOME`). `CodexTurnMonitor` extends the five-minute file-activity window
+when durable task events indicate an unfinished turn and `CodexLogOwnerProbe`
+verifies that a `codex` executable still has that exact live log open for writing.
+The native libproc probe checks executable basename, write flags, path, device
+and inode; it never inspects command lines or launches a helper. It rechecks at
+most once every 30 seconds. A process merely remaining open is insufficient.
+
+The monitor recognizes `task_started` / `turn_started`, `task_complete` /
+`turn_complete`, and `turn_aborted`. Recognized task item completions and tool
+call/results can renew progress; token/quota/settings records cannot. Duplicate
+starts cannot reopen a finished turn, and another turn's late stop cannot end
+the current one. Each file has independent state. Completion, cancellation,
+closed writers, read failure, or replacement revoke the extended hold. Normal
+file-activity grace still lasts up to five minutes after a write.
+
+On launch, only currently owned logs get a bounded last-1-MiB scan. A recognized
+item completion carrying a turn ID can recover an active turn whose start falls
+outside that tail. Complete-line resume offsets preserve a partial final record.
+At most 32 logs are admitted, each read capped at 1 MiB per sweep; a reader behind
+its backlog cannot extend a hold. Unknown formats, absent ownership or missing
+recent task evidence retain ordinary file-activity behavior. Two hours without
+recognized task progress ends an extension, with a boundary timer for expiry.
+
+This remains `.fileActivity` precision: persisted logs do not reliably expose
+approval/input waits, so an unanswered approval can hold until the silence cap.
+No per-task CPU activity is inferred from a shared app-server process. See the
+[Codex keep-awake verification](plans/codex-quiet-tasks.md) for protocol sources,
+limits and test cases.
+
+`archived_sessions` is scanned for usage at startup and receives a separate
+usage-only event callback. Archives never enter the owner probe. Remote sessions
+without local logs are not scanned, and no Codex configuration is changed. See
+the [usage repair plan](plans/usage-accuracy.md) for accounting validation.
+
+The [official Codex hooks documentation](https://learn.chatgpt.com/docs/hooks)
+explicitly identifies transcript format as unstable. Future format changes may
+require parser updates; unknown records are ignored rather than guessed.
+
+## Your brew profile
+
+`UsageProfileModel` reads the same retained and recent daily rollups as usage
+statistics; recent days replace matching retained days. It aggregates the
+selected local calendar month and creates 90 distinct calendar dates through
+today for the current month, or through the final day of a past month, including
+DST boundaries. Month navigation includes gaps, stops at the earliest positive
+record across either agent, and cannot advance beyond the current local month.
+Stale snapshots cannot move the reporting date back. Future and malformed dates are excluded.
+Dates with positive recorded usage count once across agents. Blank cells mean
+no recorded usage, not verified inactivity; the earliest record never serves
+as a fabricated account join date. Monthly tool percentages describe tokens,
+including cached tokens, not time or productivity.
+
+`BrewProfileStore` stores an optional nickname, one of three built-in icons and
+a sharing preference in local UserDefaults. The app injects one shared instance
+into settings and statistics; tests and the renderer inject isolated suites.
+No system account name, remote identity or new network service is used. The
+profile is reachable through the menu, statistics navigation and Settings →
+Profile. Existing daily/monthly usage views remain available.
+
+`BrewProfileShareModel` is a separate export boundary containing only chosen
+identity, selected-month activity, active tools and an allowlisted partial-history
+flag. With totals hidden (the default), agent and aggregate quantities are nil
+and active heatmap cells all use the same level. The PNG renderer refuses
+loading and empty-month models. A preview uses the same SwiftUI view as the
+export. The card has a System/Light/Dark appearance choice independent of the
+app; preview and export resolve the same choice. Copy renders before replacing
+the clipboard; Save uses the user's chosen destination and a month-specific
+default filename. No automatic sharing occurs. Transient page interactions are
+kept in a child view so selecting activity cells does not reaggregate history.
+
+## Manual updates
+
+`UpdateGuideView` is opened from the menu and General settings. It displays the
+installed bundle version, a GitHub Releases link and copyable Homebrew commands.
+Displaying the window does not contact a server. A release link explicitly opens
+the user's browser; copying commands does not execute them. There is no automatic
+update check or installer. The bundle identity and Application Support paths stay
+constant across upgrades. Usage schema migration backs up the previous ledger
+before rebuilding available history (see the usage metering section above).

@@ -38,9 +38,10 @@ if [ ! -x "$BRIDGE" ]; then
 fi
 
 echo "==> Checking linked libraries (otool -L whitelist)"
-# Skip line 1 (the binary's own name); every linked library must live under
-# /usr/lib or /System — zero third-party, zero @rpath (plan 06 §2).
-VIOLATIONS=$(otool -L "$BRIDGE" | tail -n +2 | awk '{print $1}' \
+# Inspect dependencies in every architecture; universal headers are not libraries.
+# Every linked library must live under /usr/lib or /System — zero @rpath.
+LIBRARIES=$(otool -arch all -L "$BRIDGE")
+VIOLATIONS=$(printf '%s\n' "$LIBRARIES" | awk '/^[[:space:]]/ {print $1}' \
     | grep -vE '^(/usr/lib/|/System/)' || true)
 if [ -n "$VIOLATIONS" ]; then
     echo "ERROR: decaf-bridge links non-system libraries:" >&2

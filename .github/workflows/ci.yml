@@ -139,6 +139,9 @@ jobs:
       - name: check-bridge (dependency discipline)
         run: ./Scripts/check-bridge.sh "build/ci-derived-data/Build/Products/Release/Decaf.app/Contents/Helpers/decaf-bridge"
 
+      - name: check-statusline (embedded helper contract)
+        run: ./Scripts/check-statusline.sh "build/ci-derived-data/Build/Products/Release/Decaf.app/Contents/Helpers/decaf-statusline"
+
       # The app layer's own tests (plan 06 §4.1). Safe on a headless runner
       # BECAUSE the bundle is a logic test bundle with no TEST_HOST: nothing
       # launches Decaf.app, so there is no LSUIElement app waiting on a

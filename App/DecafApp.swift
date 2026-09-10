@@ -5,7 +5,7 @@
 //   (plan 04 §2). `.menu` labels are snapshotted — a snapshot change publishes
 //   through AppStateStore, SwiftUI re-evaluates the label, and the system
 //   re-snapshots the new image. No animation, ever.
-// - Settings scene with the General / Agents / Safety tabs (plan 04 §5).
+// - Settings scene with General / Profile / Agents / Safety tabs.
 //
 // The app target contains zero decision logic — everything is wired through
 // AppEnvironment (rewired by assembly, plan 01 PR-6 / review decision R11).
@@ -28,10 +28,11 @@ struct DecafApp: App {
                 settings: env.settings,
                 toggleGate: env.toggleGate,
                 tabRouter: env.tabRouter,
-                customHold: env.customHold
+                customHold: env.customHold,
+                usageStatistics: env.usageStatistics
             )
         } label: {
-            MenuBarIconLabel(store: env.store)
+            MenuBarIconLabel(store: env.store, settings: env.settings)
         }
         .menuBarExtraStyle(.menu)
 
@@ -39,7 +40,9 @@ struct DecafApp: App {
             SettingsView(
                 settings: env.settings,
                 integrations: env.integrations,
-                tabRouter: env.tabRouter
+                tabRouter: env.tabRouter,
+                profile: env.brewProfile,
+                showProfile: { env.usageStatistics.present(page: .profile) }
             )
         }
     }
@@ -49,9 +52,20 @@ struct DecafApp: App {
 /// Rendering goes through IconRenderer's per-state template-image cache.
 private struct MenuBarIconLabel: View {
     @ObservedObject var store: AppStateStore
+    @ObservedObject var settings: UISettings
 
     var body: some View {
-        Image(nsImage: IconRenderer.shared.image(for: store.snapshot))
+        HStack(spacing: 4) {
+            Image(nsImage: IconRenderer.shared.image(for: store.snapshot))
+            if settings.showMenuBarTokens {
+                Text(MenuBarUsageCopy.text(for: store.snapshot.usage))
+                    .font(.system(size: 11, weight: .medium)).monospacedDigit()
+            }
+        }
+        .help(settings.menuBarClickAction.hint)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(MenuTextFormatter.accessibilityLabel(for: store.snapshot)
+            + (settings.showMenuBarTokens ? ", " + MenuBarUsageCopy.accessibilityLabel(for: store.snapshot.usage) : ""))
     }
 }
 

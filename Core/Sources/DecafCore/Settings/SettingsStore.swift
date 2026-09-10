@@ -30,6 +30,8 @@ public enum SettingsKey {
     /// this is the one key whose absence must not read as `false`, so its
     /// accessor cannot use `UserDefaults.bool(forKey:)`.
     public static let agentAutoKeepAwake = "agentAutoKeepAwake"
+    public static let menuBarClickAction = "menuBarClickAction"
+    public static let showMenuBarTokens = "showMenuBarTokens"
 }
 
 /// Typed access to Decaf's persisted settings.
@@ -177,5 +179,21 @@ public final class SettingsStore {
     public var hasCompletedOnboarding: Bool {
         get { defaults.bool(forKey: SettingsKey.hasCompletedOnboarding) }
         set { defaults.set(newValue, forKey: SettingsKey.hasCompletedOnboarding) }
+    }
+
+    /// New installs open the menu. Existing installs retain their familiar
+    /// toggle until the user explicitly chooses a different action.
+    public var menuBarClickAction: MenuBarClickAction {
+        get {
+            if let raw = defaults.string(forKey: SettingsKey.menuBarClickAction),
+               let action = MenuBarClickAction(rawValue: raw) { return action }
+            return hasCompletedOnboarding ? .toggleKeepAwake : .openMenu
+        }
+        set { defaults.set(newValue.rawValue, forKey: SettingsKey.menuBarClickAction) }
+    }
+
+    public var showMenuBarTokens: Bool {
+        get { defaults.bool(forKey: SettingsKey.showMenuBarTokens) }
+        set { defaults.set(newValue, forKey: SettingsKey.showMenuBarTokens) }
     }
 }

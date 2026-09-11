@@ -47,8 +47,9 @@ struct DecafWindowView: View {
                 }.buttonStyle(.plain).help("Edit your profile")
                     .padding(.horizontal, 30).padding(.bottom, 30)
             }.frame(width: 174).frame(maxHeight: .infinity)
-                .background(palette.selection.opacity(0.25))
+                .background(palette.selection.opacity(0.25).ignoresSafeArea(edges: .top))
             Rectangle().fill(palette.rule.opacity(0.5)).frame(width: 1)
+                .ignoresSafeArea(edges: .top)
             ZStack(alignment: .topLeading) {
                 // Keep both pages mounted so tab switches retain filters and scroll positions.
                 Group {
@@ -75,7 +76,7 @@ struct DecafWindowView: View {
                 }.modifier(DecafPageVisibility(active: router.page == .settings, reducedMotion: reduceMotion))
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .animation(DecafMotion.page(reduceMotion), value: router.page)
-        }.background(palette.canvas).foregroundStyle(palette.ink).tint(palette.codex)
+        }.background(palette.canvas.ignoresSafeArea()).foregroundStyle(palette.ink).tint(palette.codex)
     }
 
     private func navigationButton(_ title: String, page: DecafWindowPage) -> some View {

@@ -110,11 +110,12 @@ enum Renderer {
         scale: CGFloat = 2,
         dark: Bool,
         chrome: Bool = true,
+        followsAppAppearance: Bool = false,
         to filename: String
     ) {
         let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
         NSApp.appearance = appearance
-        window.appearance = appearance
+        window.appearance = followsAppAppearance ? nil : appearance
 
         makeKey(window)
         settle(0.9)
@@ -418,6 +419,32 @@ MainActor.assumeIsolated {
             let store = AppStateStore(snapshot: AppStateSnapshot(fallbackAgents: [.claudeCode, .codex], wantsHold: true, usage: usage))
             let view = DecafWindowView(store: store, settings: preferences, integrations: integrations,
                                       profile: profile, router: router, tabRouter: tabs, commands: InertCommands())
+            if arguments.contains("--window-chrome") {
+                router.page = .settings
+                let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+                window.title = "Decaf"
+                window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+                DecafWindowAppearance.apply(to: window, surface: .brew)
+                window.setContentSize(NSSize(width: 1060, height: 820))
+                let updates = NSWindow(contentViewController: NSHostingController(rootView: UpdateGuideView()))
+                updates.title = "Decaf Updates"
+                updates.styleMask = [.titled, .closable]
+                DecafWindowAppearance.apply(to: updates)
+                let hold = CustomHoldWindowController(commit: { _ in }, didClose: {})
+                hold.retarget(.duration)
+                let onboarding = OnboardingWindowController(settings: preferences, integrations: integrations,
+                    launchAtLogin: LaunchAtLoginChoice(isEnabled: false, registrar: InertRegistrar()), onFinished: {})
+                // Reuse each window while the app appearance changes. A fresh
+                // window for every image would miss stale title-bar colors.
+                for (name, dark) in [("light", false), ("dark", true), ("light-again", false)] {
+                    Renderer.renderWindow(window, dark: dark, followsAppAppearance: true, to: "chrome-settings-\(name).png")
+                    Renderer.renderWindow(updates, dark: dark, followsAppAppearance: true, to: "chrome-updates-\(name).png")
+                    Renderer.renderWindow(hold.window!, dark: dark, followsAppAppearance: true, to: "chrome-hold-\(name).png")
+                    Renderer.renderWindow(onboarding.window!, dark: dark, followsAppAppearance: true, to: "chrome-onboarding-\(name).png")
+                }
+                renderDefaults.removePersistentDomain(forName: renderSuiteName)
+                return
+            }
             for dark in [false, true] {
                 router.page = .home
                 Renderer.render(view, size: CGSize(width: 1060, height: 820), dark: dark,

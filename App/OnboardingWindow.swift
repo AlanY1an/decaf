@@ -55,6 +55,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         let window = NSWindow(contentViewController: hosting)
         window.title = "Welcome to Decaf"
         window.styleMask = [.titled, .closable]
+        DecafWindowAppearance.apply(to: window)
         window.setContentSize(NSSize(width: OnboardingSizing.width,
                                      height: OnboardingSizing.height))
         window.collectionBehavior = [.fullScreenNone]

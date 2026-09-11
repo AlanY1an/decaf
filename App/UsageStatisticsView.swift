@@ -605,7 +605,7 @@ struct UsageBrewCup: View {
 
 struct UsageStatisticsPalette {
     let dark: Bool
-    var canvas: Color { dark ? Color(red: 0.13, green: 0.125, blue: 0.115) : Color(red: 0.984, green: 0.980, blue: 0.969) }
+    var canvas: Color { Color(nsColor: DecafWindowAppearance.canvas(dark: dark)) }
     var ink: Color { dark ? Color(red: 0.95, green: 0.925, blue: 0.86) : Color(red: 0.24, green: 0.235, blue: 0.20) }
     var secondary: Color { dark ? Color(red: 0.66, green: 0.64, blue: 0.59) : Color(red: 0.49, green: 0.47, blue: 0.41) }
     var rule: Color { dark ? Color.white.opacity(0.17) : Color(red: 0.79, green: 0.76, blue: 0.68) }

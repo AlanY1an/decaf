@@ -12,7 +12,8 @@ PUBLIC_KEY="$("$SPARKLE/generate_keys" --account io.github.alany1an.decaf -p)"
 mkdir -p "$OUT/feed" "$OUT/install" "$OUT/new"
 swiftc -swift-version 5 -parse-as-library -framework Sparkle -F "$FRAMEWORK" \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-    App/AppUpdater.swift App/UpdateGuideView.swift docs/assets/updater-smoke/UpdaterSmoke.swift \
+    App/AppUpdater.swift App/UpdateGuideView.swift App/WindowAppearance.swift \
+    docs/assets/updater-smoke/UpdaterSmoke.swift \
     -o "$OUT/UpdaterSmoke"
 for BUILD in 41 42; do
     if [ "$BUILD" = 41 ]; then APP="$OUT/install/DecafUpdaterSmoke.app"; else APP="$OUT/new/DecafUpdaterSmoke.app"; fi

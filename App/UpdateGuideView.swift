@@ -12,6 +12,7 @@ final class UpdateGuidePresenter {
             let window = NSWindow(contentViewController: NSHostingController(rootView: UpdateGuideView()))
             window.title = "Decaf Updates"
             window.styleMask = [.titled, .closable]
+            DecafWindowAppearance.apply(to: window)
             window.isReleasedWhenClosed = false
             window.center()
             controller = NSWindowController(window: window)

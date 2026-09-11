@@ -40,7 +40,7 @@ final class UsageStatisticsPresenter {
             let window = NSWindow(contentViewController: host)
             window.title = "Decaf"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.titlebarAppearsTransparent = true
+            DecafWindowAppearance.apply(to: window, surface: .brew)
             window.isReleasedWhenClosed = false
             window.setContentSize(NSSize(width: 1060, height: 820))
             window.contentMinSize = NSSize(width: 900, height: 640)

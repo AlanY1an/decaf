@@ -137,6 +137,7 @@ final class CustomHoldWindowController: NSWindowController, NSWindowDelegate {
         )
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable]
+        DecafWindowAppearance.apply(to: window)
         window.collectionBehavior = [.fullScreenNone]
         window.isRestorable = false
         window.center()

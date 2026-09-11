@@ -47,6 +47,10 @@ public actor UsageMeter {
     /// Schema 3 adds persistent request accounting and Codex observations.
     /// Earlier rollups are backed up and rebuilt from all available transcripts.
     public static let stateVersion = 3
+    /// Schema 4 rebuilds Codex's former root-session counters using thread IDs
+    /// and completed response records. Claude stores keep schema 3.
+    public static let codexStateVersion = 4
+    private var currentStateVersion: Int { source == .codex ? Self.codexStateVersion : Self.stateVersion }
 
     public enum Source: Sendable { case claudeCode, codex }
     private let source: Source
@@ -102,8 +106,8 @@ public actor UsageMeter {
         self.timeZone = timeZone
         self.pricing = pricing
         let persisted = store?.load()
-        if let persisted, persisted.version == Self.stateVersion, persisted.accountedRecords != nil,
-           source != .codex || persisted.codexState?.observations != nil {
+        if let persisted, persisted.version == (source == .codex ? Self.codexStateVersion : Self.stateVersion), persisted.accountedRecords != nil,
+           source != .codex || (persisted.codexState?.observations != nil && persisted.codexState?.responses != nil) {
             self.ledger = UsageLedger(state: persisted, timeZone: timeZone, pricing: pricing)
             for mark in persisted.fileMarks ?? [] {
                 marks[mark.path] = mark
@@ -138,9 +142,10 @@ public actor UsageMeter {
     public func start(files: [URL], at date: Date = Date()) async {
         await beginTransaction()
         defer { sourceStatus.hasCompletedScan = true; endTransaction() }
+        let rebuilding = needsRebuild
         if needsRebuild {
             do {
-                _ = try store?.backupBeforeRebuild()
+                _ = try store?.backupBeforeRebuild(version: currentStateVersion)
             } catch {
                 persistenceBlocked = true
                 historyIssue = "Could not back up previous usage. History has not been rebuilt."
@@ -151,6 +156,8 @@ public actor UsageMeter {
             historyIssue = nil
             ledger = UsageLedger(timeZone: timeZone, pricing: pricing)
             marks.removeAll()
+            readPaths.removeAll()
+            failedPaths.removeAll()
             codexParser = CodexUsageParser()
             reader.reset()
         } else {
@@ -167,6 +174,14 @@ public actor UsageMeter {
         let catchup = Set(files).union(pendingCatchupPaths).sorted { $0.path < $1.path }
         pendingCatchupPaths.removeAll()
         _ = await drain(paths: catchup, at: date)
+        if rebuilding, !failedPaths.isEmpty {
+            // Do not replace the original cache with a partially rebuilt one.
+            // A later start retries from zero; activity remains queued meanwhile.
+            needsRebuild = true
+            pendingCatchupPaths.formUnion(catchup)
+            historyIssue = "Could not finish rebuilding usage. Previous usage cache has been retained."
+            return
+        }
         // Marks for files that have since vanished are dead weight in every
         // future save; a rebuild has none, a normal launch can have many.
         marks = marks.filter { FileManager.default.fileExists(atPath: $0.key) }
@@ -202,7 +217,12 @@ public actor UsageMeter {
         for url in paths {
             var rounds = 0
             repeat {
+                let previousMark = reader.currentMark(at: url)
                 let lines = reader.readNewLines(at: url)
+                if source == .codex, let previousMark, let nextMark = reader.currentMark(at: url),
+                   !previousMark.stat.isSameFile(as: nextMark.stat) || nextMark.stat.size < previousMark.stat.size {
+                    codexParser.resetContext(path: url.path)
+                }
                 for line in lines {
                     await ingest(line: line, path: url.path)
                 }
@@ -265,7 +285,7 @@ public actor UsageMeter {
     private func persist() async {
         guard let store, !persistenceBlocked, !needsRebuild else { return }
         var state = await ledger.state()
-        state.version = Self.stateVersion
+        state.version = currentStateVersion
         if source == .codex { state.codexState = codexParser.state }
         state.fileMarks = marks.values.sorted { $0.path < $1.path }
         store.save(state)

@@ -361,7 +361,7 @@ app.setActivationPolicy(.prohibited)   // never a foreground app, never a Dock t
 MainActor.assumeIsolated {
     if arguments.contains("--updates") {
         for dark in [false, true] {
-            Renderer.render(UpdateGuideView(), dark: dark, width: 500,
+            Renderer.render(UpdateGuideView(), dark: dark, width: 420,
                             to: "updates-\(dark ? "dark" : "light").png")
         }
         return

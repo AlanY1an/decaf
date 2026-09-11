@@ -213,7 +213,8 @@ struct GeneralSettingsTab: View {
                 Text("Decaf " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Updates…") { UpdateGuidePresenter.shared.present() }.buttonStyle(.plain)
+                CheckForUpdatesButton().buttonStyle(.plain)
+                Button("Update options…") { UpdateGuidePresenter.shared.present() }.buttonStyle(.plain)
             }.font(.system(size: 12))
         }
     }
@@ -235,7 +236,8 @@ struct GeneralSettingsTab: View {
                 HStack(alignment: .firstTextBaseline) {
                     Wordmark()
                     Spacer()
-                    Button("Updates…") { UpdateGuidePresenter.shared.present() }
+                    CheckForUpdatesButton()
+                    Button("Update options…") { UpdateGuidePresenter.shared.present() }
                         .textCase(nil)
                 }
             } footer: {

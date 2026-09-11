@@ -1,8 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A manual update path. Only an explicit link click opens the browser;
-/// displaying this window never contacts GitHub or runs Homebrew.
+/// Update options. Opening this view never contacts the network or runs Homebrew.
 @MainActor
 final class UpdateGuidePresenter {
     static let shared = UpdateGuidePresenter()
@@ -25,55 +24,91 @@ final class UpdateGuidePresenter {
 
 struct UpdateGuideView: View {
     @State private var copied = false
+    @ObservedObject private var updater = AppUpdater.shared
     private let releases = URL(string: "https://github.com/AlanY1an/decaf/releases/latest")!
     private let upgradeCommand = "brew update\nbrew upgrade --cask AlanY1an/decaf/decaf"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Decaf").font(.largeTitle.weight(.semibold))
+                Text("Decaf").font(.title2.weight(.semibold))
                 if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
-                    Text(version).font(.title3).foregroundStyle(.secondary)
+                    Text(version).foregroundStyle(.secondary)
                 }
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Downloaded the DMG?").font(.headline)
-                Text("Quit Decaf, replace it in Applications, then reopen it.")
+                Text("Download, install and relaunch in a few clicks.")
                     .foregroundStyle(.secondary)
-                Link(destination: releases) {
-                    Label("View latest release", systemImage: "arrow.up.forward")
+                Button("Check for Updates…") { updater.checkForUpdates() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(!updater.canCheckForUpdates)
+                if let reason = updater.unavailableReason {
+                    Text(reason).font(.caption).foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
+                if let error = updater.errorMessage {
+                    Text(error).font(.callout).foregroundStyle(.orange)
+                }
             }
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Installed with Homebrew?").font(.headline)
-                Text("Quit Decaf, run these commands, then reopen it.")
-                    .foregroundStyle(.secondary)
-                Text(upgradeCommand)
-                    .font(.system(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-                Button(copied ? "Copied" : "Copy commands", systemImage: copied ? "checkmark" : "doc.on.doc") {
-                    NSPasteboard.general.clearContents()
-                    copied = NSPasteboard.general.setString(upgradeCommand, forType: .string)
+            DisclosureGroup("Other ways to update") {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Link(destination: releases) {
+                            Label("Download from GitHub", systemImage: "arrow.up.forward")
+                        }
+                        Text("Quit Decaf, replace it in Applications, then reopen it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Homebrew").font(.headline)
+                        Text("Quit Decaf, run these commands, then reopen it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(upgradeCommand)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                        Button(copied ? "Copied" : "Copy commands", systemImage: copied ? "checkmark" : "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            copied = NSPasteboard.general.setString(upgradeCommand, forType: .string)
+                        }
+                    }
                 }
+                .padding(.top, 12)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Your settings and local records stay in place.")
-                Text("Updates are manual. Decaf does not check in the background. For release notifications, choose Watch → Custom → Releases on GitHub.")
+                Text("GitHub is contacted only when you check or download. No background checks or usage uploads.")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .padding(28)
-        .frame(width: 500)
+        .padding(24)
+        .frame(width: 420)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct CheckForUpdatesButton: View {
+    @State private var showingError = false
+    @ObservedObject private var updater = AppUpdater.shared
+    var body: some View {
+        Button("Check for Updates…") {
+            updater.checkForUpdates()
+            showingError = updater.errorMessage != nil
+        }
+            .disabled(!updater.canCheckForUpdates)
+            .help(updater.unavailableReason ?? "Check for a new version of Decaf.")
+            .alert("Unable to check for updates", isPresented: $showingError) {
+                Button("Update options…") { updater.dismissError(); UpdateGuidePresenter.shared.present() }
+                Button("OK", role: .cancel) { updater.dismissError() }
+            } message: { Text(updater.errorMessage ?? "") }
     }
 }

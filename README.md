@@ -70,7 +70,7 @@ Open **Open Decaf…** from the cup menu. Your rhythm shows recorded activity on
 
 ## Your data stays here
 
-Decaf parses existing local logs and makes no app network requests. Counts include cached tokens and cover available records on this Mac; missing history stays missing. These are recorded tokens, not an account bill or a productivity score. [Data sources and limits →](docs/usage.md#your-data)
+Agent detection and token accounting stay on this Mac. An explicit update check or download contacts GitHub; background checks and system profiling are off. Counts include cached tokens and cover available records on this Mac; missing history stays missing. These are recorded tokens, not an account bill or a productivity score. [Data sources and limits →](docs/usage.md#your-data)
 
 Keep-awake respects safety pauses; closing the lid still allows sleep. Codex detection is approximate. [How detection works →](docs/usage.md#what-to-expect)
 

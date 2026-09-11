@@ -376,12 +376,26 @@ the clipboard; Save uses the user's chosen destination and a month-specific
 default filename. No automatic sharing occurs. Transient page interactions are
 kept in a child view so selecting activity cells does not reaggregate history.
 
-## Manual updates
+## In-app updates (0.3.1)
 
-`UpdateGuideView` is opened from the menu and General settings. It displays the
-installed bundle version, a GitHub Releases link and copyable Homebrew commands.
-Displaying the window does not contact a server. A release link explicitly opens
-the user's browser; copying commands does not execute them. There is no automatic
-update check or installer. The bundle identity and Application Support paths stay
-constant across upgrades. Usage schema migration backs up the previous ledger
-before rebuilding available history (see the usage metering section above).
+`AppUpdater` constructs a Sparkle driver only when the user explicitly checks.
+The menu and General settings bind their button availability to the same updater.
+`UpdateGuideView` keeps manual DMG and Homebrew routes available. Opening either
+settings or the guide makes no network request. The renderer and logic-test
+harness do not link the installer.
+
+Sparkle 2.9.6 is pinned in `project.yml` and embedded in the app. Default background
+checks, background downloads and system profiling are disabled. The feed uses the
+latest GitHub release's `appcast.xml` asset, with immutable versioned download URLs.
+Signed feeds and validation before archive extraction are required. The private
+Ed25519 key stays in the maintainer's Keychain; only the public key ships.
+
+`Scripts/release.sh` resolves the package, checks the public key against the
+Keychain, signs/notarizes the app and DMG, then calls `generate-appcast.sh` to
+produce and verify archive/feed signatures. The DMG, checksum and feed must ship
+in the same GitHub release. [Updater operation and verification](updating.md).
+
+Bundle identity and Application Support paths stay constant across upgrades.
+Usage schema migration backs up previous ledgers before rebuilding available
+history. Sparkle only replaces the app bundle. Versions through 0.3.0 need a
+manual update once; adding a feed cannot retrofit an updater into older binaries.

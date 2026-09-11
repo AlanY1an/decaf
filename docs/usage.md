@@ -21,6 +21,13 @@ Open **Decaf** from Applications, then look for the coffee cup in your menu bar.
 
 ## Update
 
+**0.3.1 and later:** choose **Check for Updates…** in the cup menu or **Settings →
+General**, then install and relaunch from the update window. Opening settings does
+not start a request. Updates preserve preferences and usage history. 0.3.0 and
+earlier need the manual update below once to obtain this updater. Homebrew users
+can continue using Homebrew; **Update options…** keeps those instructions available.
+[Updater details](updating.md).
+
 First quit Decaf from the cup menu. Then use the same method you installed with:
 
 - **Homebrew:** run the commands below, then open Decaf from Applications.
@@ -145,7 +152,7 @@ Low Power Mode, a low battery and other safety conditions can pause keep-awake. 
 
 ## Your data
 
-- **No app network requests, analytics or background update checks. Updates are manual; the release link opens your browser only when clicked.**
+- **Detection and usage accounting stay local.** Starting with 0.3.1, an explicit update check or download connects to GitHub and its download CDN. No background checks, analytics, system profiling or conversation uploads. Clicking release links opens your browser.
 - Existing local logs are parsed for detection and usage metadata. Conversation bodies are not retained or uploaded.
 - Decaf reads Claude Code logs (including subagents) and Codex live/archived session logs (`~/.codex/sessions` and `archived_sessions`, or under `CODEX_HOME`).
 - Accounting upgrades back up the previous usage stores before rebuilding available history. Ambiguous counter changes are marked for review.

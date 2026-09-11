@@ -37,6 +37,7 @@ struct DecafApp: App {
         .menuBarExtraStyle(.menu)
 
         .commands {
+            CommandGroup(after: .appInfo) { CheckForUpdatesButton() }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { env.usageStatistics.presentSettings() }.keyboardShortcut(",")
             }

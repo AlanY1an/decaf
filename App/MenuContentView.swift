@@ -240,6 +240,8 @@ struct MenuContentView: View {
         }
         .keyboardShortcut(",")
 
+        CheckForUpdatesButton()
+
         Button("Updates…") { UpdateGuidePresenter.shared.present() }
 
         Button("Quit Decaf") {

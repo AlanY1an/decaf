@@ -26,5 +26,23 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 AlanY1an. MIT License.</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUEnableJavaScript</key>
+	<false/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/AlanY1an/decaf/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>3t88jDqoUNk6BR+cJOQdlgFtNgmnU9NoBzJutg3pd2c=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

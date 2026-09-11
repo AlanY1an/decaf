@@ -19,7 +19,7 @@ A native macOS menu bar app: automatic agent detection and unified daily/monthly
 
 <sub>Native statistics view and menu status excerpt, composed with example data.</sub>
 
-> **New in v0.2.0:** Codex support, daily/monthly statistics and Your brew. Already using Decaf? [Update in two steps →](docs/usage.md#update)
+> **v0.2.1 fixes missing Codex tokens.** Update and reopen Decaf to rebuild usage from your retained local logs. No cache deletion needed. [Recover affected history →](docs/usage.md#update)
 
 ## Three uses
 

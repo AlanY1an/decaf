@@ -2,7 +2,7 @@
 
 [← 首页](../README.zh-CN.md) · [English](usage.md)
 
-**v0.2.0** 支持 Claude Code 与 Codex 自动保活、每日／每月统计和 Your brew。
+**v0.2.1** 修复 Codex token 漏算，并支持两款工具自动保活、每日／每月统计和 Your brew。
 
 [安装](#安装) · [更新](#更新) · [首次使用](#首次使用) · [功能边界](#功能与边界) · [隐私](#数据留在哪里) · [卸载](#卸载)
 
@@ -30,6 +30,12 @@ brew install --cask AlanY1an/decaf/decaf
 brew update
 brew upgrade --cask AlanY1an/decaf/decaf
 ```
+
+**找回之前漏算的 Codex tokens：** 升级到 0.2.1 并重新打开后，等待导入完成，
+再进入 **Usage Statistics → Monthly**，选择 **Codex** 并查看受影响的月份。
+Decaf 会自动备份旧 Codex 缓存，重新读取本机仍保留的活动及归档日志，补计因
+父／子任务计数混用或遗漏已完成响应而跳过的用量。去重修正也可能让数字降低。
+恢复依赖本机原始日志；已删除或只存在于远程的日志无法重建。无需删除缓存或重装。
 
 不需要卸载。原有设置、集成路径和左键操作习惯会保留。从 0.1.0 升级时，
 首次启动会先备份旧用量文件，再从可用日志重建统计。请等待导入完成；修正后的

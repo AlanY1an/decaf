@@ -5,6 +5,34 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-09-11
+
+Fixes missing Codex tokens and rebuilds affected local history on upgrade.
+Requires macOS 14 or later. Includes [PR #1](https://github.com/AlanY1an/decaf/pull/1).
+
+### Fixed
+
+- Parent tasks and subagents now keep separate thread counters, even when they
+  share a root session. Valid child usage is no longer skipped as a counter regression.
+- Completed-response usage, including recorded compaction responses, is counted
+  once. Copied responses keep their original owner; overlapping legacy counters
+  are excluded so the two formats are not added together.
+- Existing Codex caches are backed up and rebuilt from available active and
+  archived logs. Backup/read failures retain the original cache. Claude Code's
+  cache format stays unchanged.
+
+### Recover affected history
+
+Quit Decaf, update via Homebrew or replace the app using the new DMG, then reopen
+it and wait for the import to finish. No uninstall or cache deletion is needed.
+Open **Usage Statistics → Monthly**, select **Codex**, and browse affected months.
+Previously skipped tokens can reappear when their source logs are still on this
+Mac; corrected totals may increase or decrease after deduplication. Deleted or
+remote-only logs cannot be reconstructed. Old caches remain in
+`~/Library/Application Support/Decaf/Backups/` as `codex-usage.json.before-v4-…`.
+
+[Update instructions](docs/usage.md#update) · [中文升级说明](docs/usage.zh-CN.md#更新)
+
 ## [0.2.0] - 2026-09-09
 
 Automatic keep-awake for Claude Code and Codex, with a shared view of local

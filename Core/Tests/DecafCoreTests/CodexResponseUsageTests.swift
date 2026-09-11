@@ -170,6 +170,59 @@ struct CodexResponseUsageTests {
         #expect(await meter.overview().usage.historyIssue == nil)
     }
 
+    @Test func upgradeRecoversPreviouslySkippedChildHistoryWithoutDoubleCountingOnRestart() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = UsageStore(fileURL: root.appendingPathComponent("codex-usage.json"), debounceInterval: 0)
+        let parent = root.appendingPathComponent("parent.jsonl"), child = root.appendingPathComponent("child.jsonl")
+        let parentEvents = [count(1_000, 100, at: "2025-01-31T23:59:00Z"),
+                            count(1_200, 120, at: "2025-02-01T00:02:00Z")]
+        let childEvents = [count(100, 10, at: "2025-02-01T00:01:00Z"),
+                           count(200, 20, at: "2025-02-01T00:03:00Z")]
+        try ([meta("parent")] + parentEvents).joined(separator: "\n").appending("\n")
+            .write(to: parent, atomically: true, encoding: .utf8)
+        try ([meta("child")] + childEvents).joined(separator: "\n").appending("\n")
+            .write(to: child, atomically: true, encoding: .utf8)
+
+        // Reproduce schema 3's incorrect root-session ownership in its stored
+        // observations. The child counters regress against the parent's total.
+        var oldParser = CodexUsageParser()
+        let oldLedger = UsageLedger(timeZone: zone)
+        for (path, events) in [(parent.path, parentEvents), (child.path, childEvents)] {
+            _ = oldParser.parseRecords(line: meta("root"), path: path)
+            for event in events {
+                for record in oldParser.parseRecords(line: event, path: path) { await oldLedger.replace(record) }
+            }
+        }
+        #expect(oldParser.unresolvedRecordCount == 2)
+        #expect(await oldLedger.snapshot(now: date("2025-02-01T12:00:00Z")).recordedHistory.reduce(0) { $0 + $1.tokens.total } == 1_320)
+        var old = await oldLedger.state()
+        old.version = 3
+        old.codexState = oldParser.state
+        old.codexState?.responses = nil
+        old.codexState?.responseIssues = nil
+        store.save(old); store.flush()
+        let original = try Data(contentsOf: store.fileURL)
+
+        let upgraded = UsageMeter(store: store, timeZone: zone, source: .codex)
+        await upgraded.start(files: [parent, child]); await upgraded.flush()
+        let recovered = await upgraded.overview(now: date("2025-02-01T12:00:00Z")).usage
+        #expect(recovered.recordedHistory.map { $0.tokens.total } == [1_100, 440])
+        #expect(recovered.recordedHistory.map(\.day) == ["2025-01-31", "2025-02-01"])
+        #expect(recovered.historyIssue == nil)
+        let backups = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("Backups"), includingPropertiesForKeys: nil)
+        #expect(backups.count == 1)
+        #expect(try Data(contentsOf: #require(backups.first)) == original)
+
+        let restarted = UsageMeter(store: store, timeZone: zone, source: .codex)
+        await restarted.start(files: [child, parent]); await restarted.flush()
+        let afterRestart = await restarted.overview(now: date("2025-02-01T12:00:00Z")).usage
+        #expect(afterRestart.recordedHistory == recovered.recordedHistory)
+        #expect(afterRestart.historyIssue == nil)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("Backups").path).count == 1)
+    }
+
     @Test func conflictingResponseCopiesRemainDiagnosableAcrossRestart() throws {
         var parser = CodexUsageParser()
         _ = parser.parseRecords(line: response("one", thread: "parent", input: 100, output: 10,

@@ -2,7 +2,7 @@
 
 [← README](../README.md) · [中文](usage.zh-CN.md)
 
-**v0.2.0** includes automatic keep-awake for Claude Code and Codex, daily/monthly statistics and Your brew.
+**v0.2.1** fixes missing Codex tokens, with automatic keep-awake for both tools, daily/monthly statistics and Your brew.
 
 [Install](#install) · [Update](#update) · [First use](#first-use) · [Behavior and limits](#what-to-expect) · [Privacy](#your-data) · [Uninstall](#uninstall)
 
@@ -30,6 +30,15 @@ First quit Decaf from the cup menu. Then use the same method you installed with:
 brew update
 brew upgrade --cask AlanY1an/decaf/decaf
 ```
+
+**Recover missing Codex tokens in 0.2.1:** after reopening, wait for the import to
+finish, then open **Usage Statistics → Monthly**, select **Codex** and browse the
+affected months. Decaf automatically backs up the old Codex cache and re-reads
+available active and archived logs, restoring usage previously skipped when
+parent/child counters were mixed or completed responses were not counted.
+Corrected totals can increase or decrease after deduplication. Recovery requires
+the original logs on this Mac; deleted or remote-only logs cannot be reconstructed.
+Do not delete the cache or reinstall to trigger recovery.
 
 No uninstall is needed. Your preferences and integration paths stay in place,
 including the existing left-click behavior. When upgrading from 0.1.0, the first

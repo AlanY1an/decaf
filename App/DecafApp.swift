@@ -1,11 +1,11 @@
 // DecafApp — app entry point (plan 04 §1).
 //
-// Two scenes:
+// Two app surfaces:
 // - MenuBarExtra(.menu) whose label is the four-state static template icon
 //   (plan 04 §2). `.menu` labels are snapshotted — a snapshot change publishes
 //   through AppStateStore, SwiftUI re-evaluates the label, and the system
 //   re-snapshots the new image. No animation, ever.
-// - Settings scene with General / Profile / Agents / Safety tabs.
+// - A reusable Home + Settings window presented from the menu or reopening the app.
 //
 // The app target contains zero decision logic — everything is wired through
 // AppEnvironment (rewired by assembly, plan 01 PR-6 / review decision R11).
@@ -36,14 +36,10 @@ struct DecafApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Settings {
-            SettingsView(
-                settings: env.settings,
-                integrations: env.integrations,
-                tabRouter: env.tabRouter,
-                profile: env.brewProfile,
-                showProfile: { env.usageStatistics.present(page: .profile) }
-            )
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { env.usageStatistics.presentSettings() }.keyboardShortcut(",")
+            }
         }
     }
 }
@@ -92,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// instead. Both end at the same window, which is the point: whatever the
     /// user did to "open Decaf again", they get an interface.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        AppEnvironment.shared.presentSettingsWindow()
+        AppEnvironment.shared.usageStatistics.present()
         return true
     }
 }

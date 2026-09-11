@@ -88,7 +88,8 @@ final class DemoEnvironment: ObservableObject {
         store = AppStateStore()
         profile = BrewProfileStore(defaults: defaults)
         profile.nickname = "Demo"
-        usage = UsageStatisticsPresenter(store: store, profile: profile)
+        usage = UsageStatisticsPresenter(store: store, profile: profile, settings: settings,
+            integrations: AgentIntegrationsModel(provider: DemoIntegrationsProvider()), tabRouter: tabRouter, commands: root)
         gate = ManualToggleGate(store: store, commands: root)
         customHold = CustomHoldPresenter(commands: root)
         let examples = Self.exampleUsage()
@@ -250,4 +251,23 @@ struct DemoStage: View {
             .foregroundStyle(Color(red: 0.24, green: 0.235, blue: 0.20))
             .background(Color(red: 0.945, green: 0.932, blue: 0.891))
     }
+}
+
+/// The isolated demo must never probe or edit a viewer's real integrations.
+@MainActor
+private final class DemoIntegrationsProvider: AgentIntegrationsProviding {
+    enum DemoError: LocalizedError {
+        case unavailable
+        var errorDescription: String? { "Integration changes are unavailable in the isolated demo." }
+    }
+    func probeClaudeCode() async -> ClaudeCodeStatus {
+        ClaudeCodeStatus(agentDetected: true, agentVersion: nil, hooksInstalled: false, needsRepair: false)
+    }
+    func probeCodex() async -> CodexStatus { .localSessions }
+    func plannedChanges() -> [PlannedChangeSummary] { [] }
+    func installClaudeCodeHooks() throws { throw DemoError.unavailable }
+    func uninstallClaudeCodeHooks() throws { throw DemoError.unavailable }
+    func installStatusline() throws { throw DemoError.unavailable }
+    func uninstallStatusline() throws { throw DemoError.unavailable }
+    func removeAllIntegrations() throws { throw DemoError.unavailable }
 }

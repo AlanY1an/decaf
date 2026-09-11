@@ -26,6 +26,15 @@ somewhere you are not looking.
 changing it — actool compiles the asset catalog at build time, so an existing
 bundle keeps showing the old icon.
 
+## Home and Settings in 0.3.0
+
+Run `docs/assets/render/build.sh`, then
+`docs/assets/render/.build/release/DecafRender --interface build/interface-qa`.
+The harness renders the production Home and four Settings pages, light/dark,
+a compact window and loading/safety states with isolated synthetic data.
+The published `home-*.png` and `settings-general-*.png` are copied from that output.
+The older walkthrough below is labelled as the 0.2.x interface.
+
 ## Daily usage and receipt images
 
 Run `docs/assets/render/build.sh`, then `docs/assets/render/.build/release/DecafRender docs/assets --usage` to render light/dark statistics windows, a narrow window, an empty state and the exact share-card PNG export. All use example data. The `usage-*.png` screenshots show the v0.2.0 statistics interface.

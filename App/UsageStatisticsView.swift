@@ -56,14 +56,18 @@ struct UsageDashboardContent: View {
 /// Production observes the menu's usage snapshot; the renderer injects example data.
 struct UsageStatisticsContent: View {
     let overview: UsageOverview?
+    var homeProfile: BrewProfileStore?
+    private var homeLayout: Bool { homeProfile != nil }
+    @Namespace private var periodSelection
     @State private var agent: UsageStatisticsAgent
     @State private var selectedID: String?
     @State private var period: UsageStatisticsPeriod
     @State private var monthID: String?
 
     init(overview: UsageOverview?, period: UsageStatisticsPeriod = .daily, monthID: String? = nil,
-         agent: UsageStatisticsAgent = .all, detailsExpanded: Bool = false) {
+         agent: UsageStatisticsAgent = .all, detailsExpanded: Bool = false, homeProfile: BrewProfileStore? = nil) {
         self.overview = overview
+        self.homeProfile = homeProfile
         _period = State(initialValue: period)
         _agent = State(initialValue: agent)
         _detailsExpanded = State(initialValue: detailsExpanded)
@@ -72,6 +76,7 @@ struct UsageStatisticsContent: View {
     @State private var detailsExpanded: Bool
     @State private var copyResult: Bool?
     @State private var showingSources = false
+    @State private var showingHomeSources = false
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -109,30 +114,48 @@ struct UsageStatisticsContent: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                periodPicker
-                dailyBrew
-                agents
-                receiptRule
-                activity
-                receiptRule
-                details
-                footer
+        Group {
+            if homeLayout {
+                sections
+            } else {
+                ScrollView {
+                    sections.padding(.horizontal, 38).padding(.top, 28).padding(.bottom, 26)
+                        .frame(maxWidth: 650).frame(maxWidth: .infinity)
+                }.frame(minWidth: 500, minHeight: 540)
             }
-            .padding(.horizontal, 38).padding(.top, 28).padding(.bottom, 26)
-            .frame(maxWidth: 650)
-            .frame(maxWidth: .infinity)
         }
-        .background(palette.canvas)
-        .foregroundStyle(palette.ink)
-        .tint(palette.claude)
-        .frame(minWidth: 500, minHeight: 540)
+        .background(palette.canvas).foregroundStyle(palette.ink).tint(palette.claude)
         .task(id: copyResult) {
             guard copyResult != nil else { return }
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
             copyResult = nil
+        }
+    }
+
+    private var sections: some View {
+        VStack(alignment: .leading, spacing: homeLayout ? 23 : 20) {
+            if !homeLayout { header }
+            periodPicker
+            dailyBrew
+            agents
+            if homeLayout, dataStatus.issue != nil {
+                Button { showingHomeSources = true } label: {
+                    Label(dataStatus.headline(timeZone: model.calendar.timeZone), systemImage: "exclamationmark.circle")
+                        .font(.system(size: 11)).foregroundStyle(palette.claude)
+                }.buttonStyle(.plain)
+                    .popover(isPresented: $showingHomeSources) {
+                        UsageDataSourcesView(status: dataStatus, timeZone: model.calendar.timeZone)
+                    }
+            }
+            if !homeLayout { receiptRule }
+            activity
+            receiptRule
+            if let homeProfile {
+                DecafRhythmView(model: UsageProfileModel(overview: overview, monthID: period == .monthly ? model.monthID : nil),
+                                profile: homeProfile, palette: palette)
+            }
+            details
+            footer
         }
     }
 
@@ -162,6 +185,11 @@ struct UsageStatisticsContent: View {
 
     private var periodPicker: some View {
         HStack(spacing: 12) {
+            if homeLayout {
+                Text(brewTitle.replacingOccurrences(of: "brew", with: "tokens"))
+                    .font(.system(size: 13)).foregroundStyle(palette.secondary).lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 8)
+            }
             HStack(spacing: 2) {
                 ForEach(UsageStatisticsPeriod.allCases) { item in
                     Button {
@@ -170,13 +198,19 @@ struct UsageStatisticsContent: View {
                         Text(item.title).font(.system(size: 11, weight: period == item ? .semibold : .regular))
                             .padding(.horizontal, 13).padding(.vertical, 7)
                             .foregroundStyle(period == item ? palette.ink : palette.secondary)
-                            .background(period == item ? palette.selection : Color.clear, in: Capsule())
+                            .background(!homeLayout && period == item ? palette.selection : Color.clear, in: Capsule())
+                            .overlay(alignment: .bottom) {
+                                if homeLayout && period == item {
+                                    Rectangle().fill(palette.ink).frame(height: 1)
+                                        .matchedGeometryEffect(id: "period", in: periodSelection)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(period == item ? .isSelected : [])
                 }
             }
-            Spacer(minLength: 0)
+            if !homeLayout { Spacer(minLength: 0) }
             if period == .monthly {
                 monthButton("Previous month", icon: "chevron.left", destination: model.previousMonthID)
                 Text(model.monthLabel).font(.system(size: 11, design: .monospaced))
@@ -202,43 +236,68 @@ struct UsageStatisticsContent: View {
     private var dailyBrew: some View {
         HStack(alignment: .center, spacing: 8) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(brewTitle)
-                    .font(.custom("Georgia", size: 23))
+                if !homeLayout {
+                    Text(brewTitle).font(.custom("Georgia", size: 23))
+                }
                 Text(isLoading ? "—" : UsageStatisticsModel.compact(tokens.total))
-                    .font(.system(size: 72, weight: .regular, design: .rounded))
+                    .font(.system(size: homeLayout ? 68 : 72, weight: homeLayout ? .light : .regular, design: homeLayout ? .default : .rounded))
                     .tracking(-3).monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
-                    .contentTransition(.numericText())
+                    .contentTransition(reduceMotion ? .identity : .numericText())
                     .accessibilityLabel(isLoading ? "Loading usage" : "\(tokens.total) recorded tokens")
                     .help("\(tokens.total.formatted()) recorded tokens, including cached tokens")
-                Text(brewSubtitle)
-                    .font(.system(size: 12)).foregroundStyle(palette.secondary)
+                if !homeLayout || isLoading || tokens.total == 0 {
+                    Text(brewSubtitle).font(.system(size: 12)).foregroundStyle(palette.secondary)
+                }
             }
             Spacer(minLength: 0)
-            UsageBrewCup(ink: palette.claude, fill: palette.cup)
-                .frame(width: 116, height: 120).rotationEffect(.degrees(-8))
-                .accessibilityHidden(true)
+            if !homeLayout {
+                UsageBrewCup(ink: palette.claude, fill: palette.cup)
+                    .frame(width: 116, height: 120).rotationEffect(.degrees(-8)).accessibilityHidden(true)
+            }
         }
         .padding(.vertical, 9)
     }
 
-    private var agents: some View {
-        VStack(spacing: 15) {
+    @ViewBuilder private var agents: some View {
+        if homeLayout {
             HStack(spacing: 28) {
-                agentButton(.claude, count: summary.claude.total)
-                agentButton(.codex, count: summary.codex.total)
+                homeAgentButton(.claude, count: summary.claude.total)
+                homeAgentButton(.codex, count: summary.codex.total)
+                Spacer(minLength: 0)
             }
-            GeometryReader { geometry in
-                let total = model.isLoading ? 0 : summary.tokens(for: .all).total
-                let fraction = total > 0 ? Double(summary.claude.total) / Double(total) : 0
-                HStack(spacing: total > 0 && fraction > 0 && fraction < 1 ? 3 : 0) {
-                    if fraction > 0 {
-                        Capsule().fill(palette.claude.opacity(agent == .codex ? 0.25 : 1))
-                            .frame(width: max(0, geometry.size.width - (fraction < 1 ? 3 : 0)) * fraction)
-                    }
-                    Capsule().fill(total == 0 ? palette.rule : palette.codex.opacity(agent == .claude ? 0.25 : 1))
+        } else {
+            VStack(spacing: 15) {
+                HStack(spacing: 28) {
+                    agentButton(.claude, count: summary.claude.total)
+                    agentButton(.codex, count: summary.codex.total)
                 }
-            }.frame(height: 5).accessibilityHidden(true)
+                GeometryReader { geometry in
+                    let total = model.isLoading ? 0 : summary.tokens(for: .all).total
+                    let fraction = total > 0 ? Double(summary.claude.total) / Double(total) : 0
+                    HStack(spacing: total > 0 && fraction > 0 && fraction < 1 ? 3 : 0) {
+                        if fraction > 0 {
+                            Capsule().fill(palette.claude.opacity(agent == .codex ? 0.25 : 1))
+                                .frame(width: max(0, geometry.size.width - (fraction < 1 ? 3 : 0)) * fraction)
+                        }
+                        Capsule().fill(total == 0 ? palette.rule : palette.codex.opacity(agent == .claude ? 0.25 : 1))
+                    }
+                }.frame(height: 5).accessibilityHidden(true)
+            }
         }
+    }
+
+
+    private func homeAgentButton(_ source: UsageStatisticsAgent, count: Int) -> some View {
+        let sourceLoading = model.dataStatus(for: source).isLoading
+        return Button { change { agent = agent == source ? .all : source } } label: {
+            HStack(spacing: 7) {
+                Circle().fill(source == .claude ? palette.claude : palette.codex).frame(width: 5, height: 5)
+                Text(source.title).foregroundStyle(palette.secondary)
+                Text(sourceLoading ? "—" : UsageStatisticsModel.compact(count)).monospacedDigit()
+            }.font(.system(size: 12)).padding(.vertical, 4)
+                .opacity(agent == .all || agent == source ? 1 : 0.45).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityAddTraits(agent == source ? .isSelected : [])
+            .help(sourceLoading ? "Reading local history" : "\(count.formatted()) recorded tokens. Click to filter this agent.")
     }
 
     private func agentButton(_ source: UsageStatisticsAgent, count: Int) -> some View {
@@ -260,7 +319,7 @@ struct UsageStatisticsContent: View {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(sourceLoading ? "—" : UsageStatisticsModel.compact(count))
                         .font(.system(size: 23, weight: .regular, design: .rounded)).monospacedDigit()
-                        .contentTransition(.numericText())
+                        .contentTransition(reduceMotion ? .identity : .numericText())
                     Text(!model.isLoading && total > 0 ? "\(Int((fraction * 100).rounded()))%" : "—")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(palette.secondary)
                 }
@@ -476,7 +535,7 @@ struct UsageStatisticsContent: View {
     }
 
     private var receiptRule: some View {
-        UsageReceiptRule().stroke(palette.rule, style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+        UsageReceiptRule().stroke(palette.rule, style: StrokeStyle(lineWidth: 1, dash: homeLayout ? [] : [3, 4]))
             .frame(height: 1).accessibilityHidden(true)
     }
 
@@ -546,7 +605,7 @@ struct UsageBrewCup: View {
 
 struct UsageStatisticsPalette {
     let dark: Bool
-    var canvas: Color { dark ? Color(red: 0.13, green: 0.125, blue: 0.115) : Color(red: 0.982, green: 0.968, blue: 0.939) }
+    var canvas: Color { dark ? Color(red: 0.13, green: 0.125, blue: 0.115) : Color(red: 0.984, green: 0.980, blue: 0.969) }
     var ink: Color { dark ? Color(red: 0.95, green: 0.925, blue: 0.86) : Color(red: 0.24, green: 0.235, blue: 0.20) }
     var secondary: Color { dark ? Color(red: 0.66, green: 0.64, blue: 0.59) : Color(red: 0.49, green: 0.47, blue: 0.41) }
     var rule: Color { dark ? Color.white.opacity(0.17) : Color(red: 0.79, green: 0.76, blue: 0.68) }

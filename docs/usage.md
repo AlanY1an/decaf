@@ -2,7 +2,8 @@
 
 [← README](../README.md) · [中文](usage.zh-CN.md)
 
-**v0.2.1** fixes missing Codex tokens, with automatic keep-awake for both tools, daily/monthly statistics and Your brew.
+**v0.3.0** brings automatic keep-awake, Claude Code/Codex usage and Your brew
+into one Home window, with Settings alongside it. [Window guide](interface.md).
 
 [Install](#install) · [Update](#update) · [First use](#first-use) · [Behavior and limits](#what-to-expect) · [Privacy](#your-data) · [Uninstall](#uninstall)
 
@@ -31,8 +32,8 @@ brew update
 brew upgrade --cask AlanY1an/decaf/decaf
 ```
 
-**Recover missing Codex tokens in 0.2.1:** after reopening, wait for the import to
-finish, then open **Usage Statistics → Monthly**, select **Codex** and browse the
+**Upgrading from 0.2.0 or earlier:** 0.3.0 includes the Codex recovery fix from 0.2.1; after reopening, wait for the import to
+finish, then open **Home → Monthly**, select **Codex** and browse the
 affected months. Decaf automatically backs up the old Codex cache and re-reads
 available active and archived logs, restoring usage previously skipped when
 parent/child counters were mixed or completed responses were not counted.
@@ -75,21 +76,36 @@ This builds and opens the checkout locally. See [Contributing](../CONTRIBUTING.m
 ## First use
 
 1. Run a task in Claude Code, Codex, or both on this Mac.
-2. Open the coffee cup menu → **Today: … tokens…** to see your daily brew. New installs open the menu on click; existing installs keep the left-click toggle (right-click opens the menu). Choose either behavior in **Settings → General → Menu Bar**.
+2. Open the coffee cup menu → **Open Decaf…** to see Home: keep-awake status, daily usage and Your rhythm. **Pause auto** pauses automatic holds for both agents; manual holds remain controlled from the cup menu. New installs open the menu on click; existing installs keep the left-click toggle (right-click opens the menu). Choose either behavior in **Settings → General → Left-click the cup**.
 3. Switch to **Monthly** for this month so far; use the arrows to browse months with retained history. Pick a bar to inspect a day, or click the month total to return. Click an agent's name to filter. The month receipt shows days with recorded usage and the average across those days; a day shared by both agents counts once.
 4. Click the read-status line to see each tool’s local log count, last read time, earliest usage and any import issues. No-log and importing states are distinct from a quiet day. The earliest date does not guarantee complete history. **Copy support summary** copies versions and import status for a bug report, without usage totals or log contents.
 5. **The little details** shows the cache-read share and expands input, output and cache counts. The percentage is cache reads divided by all recorded tokens. **Copy card** puts a PNG of the selected day or month and agents on your clipboard. Paste it wherever you choose; Decaf never uploads it.
 
 ## Your brew
 
-Open **Your brew…** in the cup menu (**⇧⌘P**) for a personal page: 90 days of recorded activity, monthly totals and Claude Code/Codex token split. Use the month arrows to revisit retained history; past months show activity through that month's last day. **This month** returns to today. Change your optional nickname and coffee icon in **Settings → Profile**, or choose **Personalize** on the page. **Make a monthly card** previews the selected month's exact PNG before you copy or save it. Choose **System**, **Light** or **Dark** for the card; saved filenames include the month. Cards hide token quantities and intensity by default; turn on **Show token totals** to include them. Blank dates may be missing history, and two agents used on the same day count as one active day.
+Your brew now lives on **Home**, opened from **Open Decaf…** in the cup menu
+(**⇧⌘P**) or by reopening Decaf from Finder or Spotlight. Closing the window leaves
+menu-bar detection running. **Settings…** or **⌘,** opens Settings in that same window.
+
+**Your rhythm** shows 90 days of recorded activity across both tools. Select
+**Monthly** and use the arrows to revisit history; the activity grid ends at the
+selected month's last day. The token filter affects the token panel; the activity
+grid remains a combined view. Blank dates may be missing history, and two agents
+used on the same day count as one active day.
+
+Choose **Share your brew** to preview the selected month's exact PNG before copying
+or saving. Choose **System**, **Light** or **Dark** for the card. Token quantities and
+intensity are hidden by default; turn on **Show token totals** to include them.
+Change your optional nickname, coffee icon and sharing default in **Settings →
+Your profile**. Returning from Settings retains Home's month, filter and scroll
+position. System Reduce Motion is respected.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/profile-dark.png">
-  <img src="assets/profile-light.png" alt="Your brew profile with an optional nickname, coffee stamp, monthly totals, a 90-day activity grid and a monthly card button" width="520">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/home-dark.png">
+  <img src="assets/home-light.png" alt="Decaf Home: automatic keep-awake, both agents’ token statistics and Your rhythm activity" width="960">
 </picture>
 
-<sub>Your brew. Native interface, example data and nickname.</sub>
+<sub>Home in 0.3.0. Native interface, example data and nickname.</sub>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/profile-previous-month-card-dark.png">
@@ -109,12 +125,13 @@ Open **Your brew…** in the cup menu (**⇧⌘P**) for a personal page: 90 days
 
 ## What to expect
 
-| | v0.1.0 | v0.2.0 |
+| | v0.1.0 | v0.3.0 |
 | --- | --- | --- |
 | Claude Code keep-awake | Optional hooks, file-activity fallback | Same |
 | Codex keep-awake | — | Task logs + process check, with file-activity fallback |
 | Daily + monthly Claude Code / Codex statistics | — | Combined or per-agent totals, daily trends, previous months |
-| Your brew profile | — | Local nickname/icon, 90-day activity, monthly share cards |
+| Home + Settings | — | Keep-awake status, usage, activity and settings in one window |
+| Your brew | — | Local nickname/icon, 90-day activity, monthly share cards |
 | Copy a daily or monthly receipt | — | PNG, generated locally |
 | Manual keep-awake, timers and battery protection | Yes | Yes |
 
@@ -134,7 +151,7 @@ Low Power Mode, a low battery and other safety conditions can pause keep-awake. 
 - Accounting upgrades back up the previous usage stores before rebuilding available history. Ambiguous counter changes are marked for review.
 - Counts include cached tokens and cover available logs on this Mac. They are not account-wide totals, subscription quotas, money spent or a measure of productivity.
 - Daily/monthly receipts export the selected date and agent token totals. Profile cards export your chosen nickname/icon, the selected month’s recorded activity and tools; token totals are optional and off by default. Both include the Decaf repository address. You choose whether to share them.
-- Profile preferences stay in local app preferences. No account identity is read automatically. Clear the nickname in Settings → Profile to return to the generic card.
+- Profile preferences stay in local app preferences. No account identity is read automatically. Clear the nickname in Settings → Your profile to return to the generic card.
 - Optional Claude hooks and statusline integration change only Decaf's entries, with a preview and uninstall controls in Settings.
 
 More detail: [Architecture and data flow](architecture.md).

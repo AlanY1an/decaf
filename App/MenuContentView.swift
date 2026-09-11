@@ -29,7 +29,6 @@ struct MenuContentView: View {
     let customHold: CustomHoldPresenter
     let usageStatistics: UsageStatisticsPresenter
 
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         // Evaluated when the menu opens; absolute-time strings stay correct
@@ -70,7 +69,7 @@ struct MenuContentView: View {
                 Button(title) {
                     tabRouter.selectedTab = .agents
                     NSApp.activate(ignoringOtherApps: true)
-                    openSettings()
+                    usageStatistics.presentSettings(tab: .agents)
                 }
 
             case .agentAutoToggle(let title, let isOn):
@@ -226,19 +225,18 @@ struct MenuContentView: View {
 
         Divider()
 
-        // openSettings (macOS 14+) + explicit activation so the window fronts
-        // (plan 04 §3 / risk 4).
+        // Home and Settings reuse the same window and activate the app.
         if !MenuLayout.showsAgentControls(for: snapshot) || snapshot.usage == nil {
             Button("Usage Statistics…") { usageStatistics.present() }
                 .keyboardShortcut("u", modifiers: [.command, .shift])
         }
 
-        Button("Your brew…") { usageStatistics.present(page: .profile) }
+        Button("Open Decaf…") { usageStatistics.present() }
             .keyboardShortcut("p", modifiers: [.command, .shift])
 
         Button("Settings…") {
             NSApp.activate(ignoringOtherApps: true)
-            openSettings()
+            usageStatistics.presentSettings()
         }
         .keyboardShortcut(",")
 

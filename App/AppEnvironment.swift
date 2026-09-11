@@ -549,7 +549,8 @@ final class AppEnvironment {
         self.customHold = CustomHoldPresenter(commands: root)
         let brewProfile = BrewProfileStore(defaults: .standard)
         self.brewProfile = brewProfile
-        self.usageStatistics = UsageStatisticsPresenter(store: store, profile: brewProfile)
+        self.usageStatistics = UsageStatisticsPresenter(store: store, profile: brewProfile, settings: self.settings,
+                                                          integrations: self.integrations, tabRouter: tabRouter, commands: root)
 
         // Root snapshot → UI store (the UI's single data channel).
         //
@@ -584,7 +585,7 @@ final class AppEnvironment {
     /// deadline and the three outcomes lives in AgentDetection where it is
     /// tested; this method only runs the result.
     func startCoreOrQuit() {
-        root.onReopenUIRequest = { [weak self] in self?.presentSettingsWindow() }
+        root.onReopenUIRequest = { [weak self] in self?.usageStatistics.present() }
         start(allowingRetry: true)
     }
 
@@ -628,21 +629,9 @@ final class AppEnvironment {
         alert.runModal()
     }
 
-    /// The running instance's answer to "someone launched me again": open and
-    /// focus Settings.
-    ///
-    /// Settings is the right destination rather than, say, popping the menu:
-    /// it is a real window. A full menu bar, a notch and a third-party menu-bar
-    /// manager can all swallow a status item, and none of them can swallow a
-    /// window. `showSettingsWindow:` is the macOS 14+ selector behind SwiftUI's
-    /// `Settings` scene; the older name is tried second so a future rename
-    /// degrades to a no-op instead of a crash.
+    /// Settings shortcuts share the same window as Home.
     func presentSettingsWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        let selectors = [Selector(("showSettingsWindow:")), Selector(("showPreferencesWindow:"))]
-        for selector in selectors {
-            if NSApp.sendAction(selector, to: nil, from: nil) { return }
-        }
+        usageStatistics.presentSettings()
     }
 
     /// Plan 04 §4 option A: start the left-click interception bridge. Degrades

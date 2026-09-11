@@ -340,6 +340,19 @@ final class InertRegistrar: LaunchAtLoginRegistering {
     func unregister() throws {}
 }
 
+/// Rendering never executes keep-awake commands.
+@MainActor
+final class InertCommands: AppCommands {
+    func toggleManual() {}
+    func startManual(_ mode: ManualMode) {}
+    func holdUntil(_ deadline: Date) {}
+    func stopManual() {}
+    func confirmLowBatteryOverride() {}
+    func setDisplayPolicy(_ policy: DisplayPolicy) {}
+    func setAgentAutoKeepAwake(_ enabled: Bool) {}
+    func turnOffDisplayNow() {}
+}
+
 // MARK: - Run
 
 let app = NSApplication.shared
@@ -353,17 +366,28 @@ MainActor.assumeIsolated {
         }
         return
     }
-    if arguments.contains("--usage") || arguments.contains("--profile") || arguments.contains("--marketing") {
+    if arguments.contains("--usage") || arguments.contains("--profile") || arguments.contains("--marketing") || arguments.contains("--interface") {
         let amounts = [420_000, 1_100_000, 650_000, 1_320_000, 300_000, 940_000, 1_840_000]
         func split(_ n: Int) -> TokenTotals {
             TokenTotals(input: n * 30 / 100, output: n * 7 / 100,
                         cacheCreation: n * 3 / 100, cacheRead: n * 60 / 100)
         }
+        // The interface header uses today's date. Keep its synthetic history aligned.
+        let sampleDateFormatter = DateFormatter()
+        sampleDateFormatter.calendar = Calendar(identifier: .gregorian)
+        sampleDateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        sampleDateFormatter.dateFormat = "yyyy-MM-dd"
+        func sampleDay(_ index: Int) -> String {
+            guard arguments.contains("--interface") else {
+                return String(format: "2026-09-%02d", index + 2)
+            }
+            return sampleDateFormatter.string(from: Calendar.current.date(byAdding: .day, value: index - 6, to: Date())!)
+        }
         let claudeHistory = amounts.enumerated().map { index, n in
-            DailyUsage(day: String(format: "2026-09-%02d", index + 2), tokens: split(index == 6 ? 1_200_000 : n * 65 / 100))
+            DailyUsage(day: sampleDay(index), tokens: split(index == 6 ? 1_200_000 : n * 65 / 100))
         }
         let codexHistory = amounts.enumerated().map { index, n in
-            DailyUsage(day: String(format: "2026-09-%02d", index + 2), tokens: split(index == 6 ? 640_000 : n - n * 65 / 100))
+            DailyUsage(day: sampleDay(index), tokens: split(index == 6 ? 640_000 : n - n * 65 / 100))
         }
         let augustClaude = (1...31).map { day in
             DailyUsage(day: String(format: "2026-08-%02d", day),
@@ -384,6 +408,34 @@ MainActor.assumeIsolated {
         let usage = UsageOverview(usage: snapshot(claudeHistory, history: augustClaude), quotaFiveHour: nil,
                                   quotaSevenDay: nil, quotaProvenance: .estimated,
                                   codexUsage: snapshot(codexHistory, history: augustCodex))
+        if arguments.contains("--interface") {
+            let preferences = UISettings(backing: SettingsStore(defaults: renderDefaults))
+            let profile = BrewProfileStore(defaults: renderDefaults)
+            profile.nickname = "Alan"
+            let integrations = AgentIntegrationsModel(provider: StagedIntegrationsProvider(
+                ClaudeCodeStatus(agentDetected: true, agentVersion: nil, hooksInstalled: true, needsRepair: false)))
+            let router = DecafWindowRouter(), tabs = SettingsTabRouter()
+            let store = AppStateStore(snapshot: AppStateSnapshot(fallbackAgents: [.claudeCode, .codex], wantsHold: true, usage: usage))
+            let view = DecafWindowView(store: store, settings: preferences, integrations: integrations,
+                                      profile: profile, router: router, tabRouter: tabs, commands: InertCommands())
+            for dark in [false, true] {
+                router.page = .home
+                Renderer.render(view, size: CGSize(width: 1060, height: 820), dark: dark,
+                                to: "home-\(dark ? "dark" : "light").png")
+                router.page = .settings
+                for (tab, name) in [(SettingsTab.general, "general"), (.agents, "agents"), (.safety, "safety"), (.profile, "profile")] {
+                    tabs.selectedTab = tab
+                    Renderer.render(view, size: CGSize(width: 1060, height: 820), dark: dark,
+                                    to: "settings-\(name)-\(dark ? "dark" : "light").png")
+                }
+            }
+            router.page = .home
+            Renderer.render(view, size: CGSize(width: 900, height: 640), dark: false, to: "home-compact.png")
+            store.update(AppStateSnapshot(safetyPause: .lowBattery(percent: 12, threshold: 20), wantsHold: true))
+            Renderer.render(view, size: CGSize(width: 1060, height: 820), dark: false, to: "home-loading-safety.png")
+            renderDefaults.removePersistentDomain(forName: renderSuiteName)
+            return
+        }
         if arguments.contains("--marketing") {
             MarketingAssets.render(usage: usage)
             renderDefaults.removePersistentDomain(forName: renderSuiteName)

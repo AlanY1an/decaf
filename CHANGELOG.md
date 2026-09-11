@@ -5,6 +5,22 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-11
+
+A new home for automatic keep-awake, token usage and Your brew. Requires macOS 14
+or later. Existing preferences and usage history are retained.
+
+### Added
+
+- A shared Home and Settings window. Home brings automatic keep-awake status,
+  Claude Code/Codex daily and monthly usage, 90-day activity and monthly sharing
+  together. Menu shortcuts and reopening Decaf reuse the same window.
+- Quiet settings pages with native controls, tab transitions, a moving selection
+  indicator and activity hover feedback. Reduce Motion is respected; Home keeps
+  its selected month, agent filter and scroll position when visiting Settings.
+- Usage import warnings remain visible above the chart, with detailed local-log
+  status and support summaries available from the data panel.
+
 ## [0.2.1] - 2026-09-11
 
 Fixes missing Codex tokens and rebuilds affected local history on upgrade.
@@ -231,3 +247,6 @@ Mac App Store build, which the sandbox makes permanently impossible.
 
 [0.2.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.2.0
 [0.1.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.1.0
+
+[0.3.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.3.0
+[0.2.1]: https://github.com/AlanY1an/decaf/releases/tag/v0.2.1

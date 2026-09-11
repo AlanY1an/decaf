@@ -4,7 +4,7 @@
 <dict>
   <key>CFBundleIdentifier</key><string>io.github.alany1an.decaf.render</string>
   <key>CFBundleName</key><string>Decaf</string>
-  <key>CFBundleShortVersionString</key><string>0.2.0</string>
+  <key>CFBundleShortVersionString</key><string>0.3.0</string>
   <key>CFBundleVersion</key><string>2</string>
 </dict>
 </plist>

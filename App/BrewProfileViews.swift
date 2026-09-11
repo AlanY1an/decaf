@@ -25,6 +25,8 @@ struct BrewActivityGrid: View {
     var selectedDay: String? = nil
     var onSelect: ((String) -> Void)? = nil
     var compact = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hoveredDay: String?
     private var side: CGFloat { compact ? 15 : 22 }
 
     var body: some View {
@@ -76,6 +78,9 @@ struct BrewActivityGrid: View {
                                   lineWidth: cell.day == selectedDay ? 1.5 : 1)
             }
             .frame(width: side, height: side)
+            .scaleEffect(hoveredDay == cell.day && !reduceMotion ? 1.08 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hoveredDay == cell.day)
+            .onHover { hoveredDay = $0 ? cell.day : nil }
     }
 }
 

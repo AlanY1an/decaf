@@ -160,13 +160,65 @@ enum SettingsSizing {
 
 struct GeneralSettingsTab: View {
     @ObservedObject var settings: UISettings
+    var homeLayout = false
     /// The login item's own state is the source of truth — it can change in
     /// System Settings, and onboarding writes it too. Never a stored pref.
     private let registrar: any LaunchAtLoginRegistering = SMAppServiceRegistrar.shared
     @State private var launchAtLogin = SMAppServiceRegistrar.shared.status == .enabled
     @State private var launchAtLoginError: String?
 
-    var body: some View {
+
+    private var homeContent: some View {
+        VStack(alignment: .leading, spacing: 34) {
+            DecafPreferenceGroup(title: "Everyday") {
+                DecafPreferenceRow(title: "Launch at login") {
+                    Toggle("Launch at login", isOn: $launchAtLogin).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        .onChange(of: launchAtLogin) { _, enabled in apply(launchAtLogin: enabled) }
+                }
+                if let launchAtLoginError { SettingsIssueRow(message: launchAtLoginError) }
+                Divider()
+                DecafPreferenceRow(title: "Left-click the cup") {
+                    Picker("Left-click the cup", selection: $settings.menuBarClickAction) {
+                        ForEach(MenuBarClickAction.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.labelsHidden().frame(width: 180).help(settings.menuBarClickAction.hint)
+                }
+                Divider()
+                DecafPreferenceRow(title: "Tokens in the menu bar", detail: "Today’s Claude Code + Codex total, including cache.") {
+                    Toggle("Tokens in the menu bar", isOn: $settings.showMenuBarTokens).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+            }
+            DecafPreferenceGroup(title: "Keep awake") {
+                DecafPreferenceRow(title: "Default manual duration") {
+                    Picker("Default manual duration", selection: Binding(
+                        get: { ManualPreset.matching(settings.defaultManualMode) ?? .infinite },
+                        set: { settings.defaultManualMode = $0.mode }
+                    )) { ForEach(ManualPreset.allCases, id: \.self) { Text($0.title).tag($0) } }
+                        .labelsHidden().frame(width: 150)
+                }
+                Divider()
+                DecafPreferenceRow(title: "Default ‘Until’ time", detail: "Used by the menu’s one-click Until item.") {
+                    DatePicker("Until time", selection: Binding(
+                        get: { Self.date(fromMinutes: settings.untilTimeMinutes) },
+                        set: { settings.untilTimeMinutes = Self.minutes(from: $0) }
+                    ), displayedComponents: .hourAndMinute).labelsHidden()
+                }
+                Divider()
+                DecafPreferenceRow(title: "Display while keeping awake", detail: "Your Mac keeps working when the screen sleeps.") {
+                    Picker("Display while keeping awake", selection: $settings.defaultDisplayPolicy) {
+                        ForEach(DisplayPolicy.allCases, id: \.self) { Text($0.settingsTitle).tag($0) }
+                    }.labelsHidden().frame(width: 180)
+                }
+            }
+            HStack {
+                Text("Decaf " + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Updates…") { UpdateGuidePresenter.shared.present() }.buttonStyle(.plain)
+            }.font(.system(size: 12))
+        }
+    }
+
+    private var legacyForm: some View {
         Form {
             Section {
                 Toggle("Launch at login", isOn: $launchAtLogin)
@@ -267,6 +319,12 @@ struct GeneralSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    var body: some View {
+        Group {
+            if homeLayout { homeContent } else { legacyForm }
+        }
         // Both of these can change outside this window: the login item from
         // System Settings > General > Login Items, the display default from the
         // menu's own override. Re-read whenever the page appears.
@@ -336,13 +394,59 @@ private struct Wordmark: View {
 struct AgentsSettingsTab: View {
     @ObservedObject var settings: UISettings
     @ObservedObject var integrations: AgentIntegrationsModel
+    var homeLayout = false
 
     @State private var showingInstallSheet = false
     @State private var showingRemoveConfirmation = false
 
     private static let gracePresets = [1, 2, 3, 5, 10]
 
-    var body: some View {
+
+    private var homeContent: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            DecafPreferenceGroup(title: "Automatic keep-awake") {
+                DecafPreferenceRow(title: "Keep awake for agents", detail: "Applies to Claude Code and Codex. Manual holds are separate.") {
+                    Toggle("Keep awake for agents", isOn: $settings.agentAutoKeepAwake).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
+                Divider()
+                DecafPreferenceRow(title: "Release grace period", detail: "Leave time for a reply or follow-up request.") {
+                    Picker("Release grace period", selection: $settings.gracePeriodMinutes) {
+                        ForEach(Self.gracePresets, id: \.self) { Text($0 == 1 ? "1 minute" : "\($0) minutes").tag($0) }
+                    }.labelsHidden().frame(width: 130).disabled(!settings.agentAutoKeepAwake)
+                }
+            }
+            DecafPreferenceGroup(title: "Connections") {
+                DecafPreferenceRow(title: "Claude Code", detail: AgentState(integrations.claudeStatus, isProbing: integrations.isProbing).statusLine) {
+                    integrationButton
+                }
+                Text(integrationFooter).font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).padding(.bottom, 18)
+                if let error = integrations.lastError { SettingsIssueRow(message: error) }
+                Divider()
+                DecafPreferenceRow(title: "Codex", detail: integrations.isCodexProbing ? "Looking for local sessions…" : integrations.codexStatus.title) {
+                    Text("No hooks needed").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                Text("Local task events and a running-process check detect active work. Local logs also provide token history.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).padding(.bottom, 16)
+                if integrations.claudeStatus.agentDetected {
+                    Divider()
+                    DecafPreferenceRow(title: "Claude usage statusline", detail: "Reads official rate limits. Your existing statusline is preserved and restored on uninstall.") {
+                        if integrations.claudeStatus.statuslineInstalled {
+                            Button("Uninstall") { integrations.uninstallStatusline() }
+                        } else {
+                            Button("Install") { integrations.installStatusline() }
+                        }
+                    }
+                }
+            }
+            DecafPreferenceRow(title: "Remove Decaf integrations", detail: "Only Decaf’s entries are removed. File-activity detection remains available.") {
+                Button("Remove…", role: .destructive) { showingRemoveConfirmation = true }
+                    .disabled(!integrations.claudeStatus.hooksInstalled && !integrations.claudeStatus.statuslineInstalled)
+            }
+        }
+    }
+
+    private var legacyForm: some View {
         Form {
             // No header: the hero names itself. A label reading "Agent
             // Integrations" above a card reading "Claude Code" is chrome.
@@ -460,6 +564,12 @@ struct AgentsSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    var body: some View {
+        Group {
+            if homeLayout { homeContent } else { legacyForm }
+        }
         .sheet(isPresented: $showingInstallSheet) {
             InstallConsentSheet(
                 changes: integrations.plannedChanges(),
@@ -753,11 +863,35 @@ struct InstallConsentSheet: View {
 
 struct SafetySettingsTab: View {
     @ObservedObject var settings: UISettings
+    var homeLayout = false
 
     /// 0 = off (plan 04 §5).
     private static let thresholds = [0, 10, 20, 30]
 
-    var body: some View {
+
+    private var homeContent: some View {
+        VStack(alignment: .leading, spacing: 32) {
+            DecafPreferenceGroup(title: "Battery") {
+                DecafPreferenceRow(title: "Pause on low battery below") {
+                    Picker("Pause on low battery below", selection: $settings.batteryThreshold) {
+                        ForEach(Self.thresholds, id: \.self) { Text($0 == 0 ? "Off" : "\($0)%").tag($0) }
+                    }.labelsHidden().frame(width: 110)
+                }
+                Text(batteryFooter).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            DecafPreferenceGroup(title: "Built-in protections") {
+                DecafPreferenceRow(title: "Low Power Mode", detail: "Releases the hold while Low Power Mode is on.") { Text("Always on").font(.system(size: 11)).foregroundStyle(.secondary) }
+                Divider()
+                DecafPreferenceRow(title: "Sleep you asked for", detail: "Closing the lid or choosing Sleep comes first.") { Text("Always on").font(.system(size: 11)).foregroundStyle(.secondary) }
+                Divider()
+                DecafPreferenceRow(title: "Switching users", detail: "Releases the hold while you are switched out.") { Text("Always on").font(.system(size: 11)).foregroundStyle(.secondary) }
+            }
+            Text("These protections override manual and automatic holds.").font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+    }
+
+    private var legacyForm: some View {
         Form {
             Section {
                 Picker("Pause on low battery below", selection: $settings.batteryThreshold) {
@@ -797,6 +931,12 @@ struct SafetySettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    var body: some View {
+        Group {
+            if homeLayout { homeContent } else { legacyForm }
+        }
     }
 
     /// A footer that describes hysteresis while the gate is switched off is

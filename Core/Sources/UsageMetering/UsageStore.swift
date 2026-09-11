@@ -43,12 +43,12 @@ public final class UsageStore {
     /// Never replace a legacy/corrupt store without retaining its exact bytes.
     /// A failed backup blocks migration writes; no silent loss of old history.
     @discardableResult
-    public func backupBeforeRebuild() throws -> URL? {
+    public func backupBeforeRebuild(version: Int = 3) throws -> URL? {
         try queue.sync {
             guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
             let directory = fileURL.deletingLastPathComponent().appendingPathComponent("Backups", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let destination = directory.appendingPathComponent(fileURL.lastPathComponent + ".before-v3-" + UUID().uuidString + ".json")
+            let destination = directory.appendingPathComponent(fileURL.lastPathComponent + ".before-v\(version)-" + UUID().uuidString + ".json")
             try FileManager.default.copyItem(at: fileURL, to: destination)
             return destination
         }

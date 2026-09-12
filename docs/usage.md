@@ -88,6 +88,48 @@ This builds and opens the checkout locally. See [Contributing](../CONTRIBUTING.m
 4. Click the read-status line to see each tool’s local log count, last read time, earliest usage and any import issues. No-log and importing states are distinct from a quiet day. The earliest date does not guarantee complete history. **Copy support summary** copies versions and import status for a bug report, without usage totals or log contents.
 5. **The little details** shows the cache-read share and expands input, output and cache counts. The percentage is cache reads divided by all recorded tokens. **Copy card** puts a PNG of the selected day or month and agents on your clipboard. Paste it wherever you choose; Decaf never uploads it.
 
+## Move sessions
+
+**Move sessions · Claude Code** in the sidebar moves local Code conversations
+between accounts in **Claude Desktop 1.52386.3**. It is useful after signing into
+a different account and finding that earlier conversations no longer appear.
+Other Desktop versions are listed for inspection but cannot move sessions until
+their format is verified. Codex, web chats and remote/scheduled sessions are not
+supported by this feature.
+
+1. Sign in to the destination account in Claude Desktop. Open **Move sessions**
+   in Decaf, or **Move Claude Code sessions…** in the cup menu.
+2. Select one or more source accounts and one destination. Nothing is selected
+   as a source automatically. Email and organization names come from matching
+   local account records. **Add email** supplies a missing display label; it
+   does not establish identity or sign in. Expand conversations to exclude
+   individual sessions and see available pin/group labels.
+3. Choose **Review move…** and inspect the ready count and any held entries.
+   Confirm to let Decaf quit Claude normally, move eligible entries, verify the
+   result and reopen Claude. If Claude or a session worker remains active, the
+   affected move is refused.
+
+Conversation IDs and transcript files stay in place. Original account entries
+and a durable operation record are saved under
+`~/Library/Application Support/Decaf/SessionMoves/`. Pins, group placement,
+Remote Control bridge references and per-session permission grants are not
+carried into the destination. Reapply organization and permissions in Claude.
+
+**Undo last** restores original entries only while placement and history can
+still be verified. Later conversation changes are preserved and reported;
+Undo does not erase new messages. After a verified completed move, **Keep this
+move & continue** may be offered to retain its current placement and end Undo.
+Incomplete operations, missing history and ambiguous older records require
+inspection before another move. **Show saved records…** opens the local records.
+Backups are retained, with no automatic pruning in this release.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/sessions-dark.png">
+  <img src="assets/sessions-light.png" alt="Move sessions: source accounts and a destination, labeled with example emails and organizations" width="960">
+</picture>
+
+<sub>Native interface with example accounts; opening this page does not move sessions.</sub>
+
 ## Your brew
 
 Your brew now lives on **Home**, opened from **Open Decaf…** in the cup menu
@@ -158,7 +200,8 @@ Low Power Mode, a low battery and other safety conditions can pause keep-awake. 
 - Accounting upgrades back up the previous usage stores before rebuilding available history. Ambiguous counter changes are marked for review.
 - Counts include cached tokens and cover available logs on this Mac. They are not account-wide totals, subscription quotas, money spent or a measure of productivity.
 - Daily/monthly receipts export the selected date and agent token totals. Profile cards export your chosen nickname/icon, the selected month’s recorded activity and tools; token totals are optional and off by default. Both include the Decaf repository address. You choose whether to share them.
-- Profile preferences stay in local app preferences. No account identity is read automatically. Clear the nickname in Settings → Your profile to return to the generic card.
+- Profile preferences stay in local app preferences; the share card uses your chosen nickname, not discovered account identities. Clear the nickname in Settings → Your profile to return to the generic card.
+- Move sessions reads local Claude account/profile and session metadata to match emails and organizations to exact account IDs. Labels stay in local preferences. Confirmed moves save original session-entry metadata and operation records locally; transcripts are validated in place, not uploaded or rewritten.
 - Optional Claude hooks and statusline integration change only Decaf's entries, with a preview and uninstall controls in Settings.
 
 More detail: [Architecture and data flow](architecture.md).

@@ -78,6 +78,37 @@ Scripts/run.sh
 4. 点读取状态这一行，查看两个工具各自读取的日志数、读取时间、最早记录和导入问题。没有日志、正在导入和当天没记录会分别显示；最早日期不代表历史完整。遇到用量问题，可以点 **Copy support summary** 复制版本和导入状态，不包含用量数字或日志内容。
 5. **The little details** 旁显示缓存读取占全部 token 的比例，展开可看输入、输出和缓存明细。点 **Copy card**，把当前日期或月份、当前筛选范围的小票复制为 PNG，自行粘贴分享。Decaf 不会上传它。
 
+## 迁移会话
+
+侧边栏 **Move sessions · Claude Code** 用于迁移 **Claude Desktop 1.52386.3 中的本地
+Code 会话**。换账号后看不到旧会话时，可以把它们移到当前账号。其他 Desktop 版本
+可以查看记录，但必须验证格式后才能迁移；不支持 Codex、网页聊天或远程／计划会话。
+
+1. 先在 Claude Desktop 登录目标账号，再打开 Decaf 侧栏 **Move sessions**，或菜单栏
+   **Move Claude Code sessions…**。
+2. 多选来源、指定一个目标。默认不选择来源。邮箱与组织名来自账号 ID 精确匹配的本地
+   记录；缺失时可 **Add email** 补充显示名称，不会因此登录或确认账号身份。展开会话
+   可排除单项，并查看能读取到的置顶与分组标记。
+3. 点击 **Review move…** 检查可迁移数量和跳过原因。确认后，Decaf 正常退出 Claude、
+   迁移符合条件的记录、验证结果并重开 Claude。Claude 或会话进程仍在运行时会拒绝
+   对应操作。
+
+会话 ID 和对话文件保持原位。原始账号条目与操作记录保存在
+`~/Library/Application Support/Decaf/SessionMoves/`。分组位置、置顶、Remote Control
+桥接引用与会话权限不会带到目标账号，需要在 Claude 中重新设置。
+
+**Undo last** 仅在记录位置和历史仍能验证时恢复原始条目；之后新增的消息会保留，
+不会被撤销删除。已完成且能够验证当前位置的迁移，可通过 **Keep this move & continue**
+保留结果并结束撤销资格。未完成操作、缺失历史或无法确认的旧记录需要先检查，再继续
+迁移；**Show saved records…** 可打开本地记录。本版不自动清理备份。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/sessions-dark.png">
+  <img src="assets/sessions-light.png" alt="迁移会话：示例邮箱与组织、多选来源和目标账号" width="960">
+</picture>
+
+<sub>原生界面，使用示例账号；打开页面不会执行迁移。</sub>
+
 ## Your brew
 
 Your brew 已整合到 **Home**。从杯子菜单点 **Open Decaf…**（**⇧⌘P**），或从 Finder / Spotlight 重新打开 Decaf，即可进入首页。关闭窗口后，菜单栏检测继续运行。**Settings…** 或 **⌘,** 在同一窗口打开设置。
@@ -137,7 +168,8 @@ Claude Code hooks 提供回合信号。Codex 会在本地日志记录了未结�
 - 统计升级会先备份旧账本，再重建可用历史；无法确定的计数变化会提示需要核对。
 - 用量包含缓存 token，只覆盖本机可用记录；不代表账号全部用量、订阅额度、实际花费或生产力。
 - 每日／每月小票导出选定日期和工具的 token 总量；个人卡片导出自选昵称／图标、所选月份有记录的活动和工具，token 数字默认隐藏、可主动开启。卡片都包含 Decaf 仓库地址，由你决定是否分享。
-- 昵称、图标和分享偏好仅保存在本地，不会自动读取系统账号身份。在 Settings → Your profile 清空昵称即可恢复通用卡片。
+- 昵称、图标和分享偏好仅保存在本地，分享卡使用你填写的昵称，不使用检测到的账号身份。在 Settings → Your profile 清空昵称即可恢复通用卡片。
+- 迁移会话会读取本地 Claude 账号资料和会话元数据，通过精确账号 ID 匹配邮箱与组织，显示名称保存在本地偏好中。确认迁移后会保存原始会话条目和操作记录；对话文件只在原位验证，不上传或重写。
 - 可选 Claude hooks 和状态栏集成只修改 Decaf 自己的条目；设置中提供改动预览和卸载入口。
 
 具体数据流见 [架构说明](architecture.md)。

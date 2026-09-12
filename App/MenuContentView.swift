@@ -234,6 +234,8 @@ struct MenuContentView: View {
         Button("Open Decaf…") { usageStatistics.present() }
             .keyboardShortcut("p", modifiers: [.command, .shift])
 
+        Button("Move Claude Code sessions…") { usageStatistics.presentSessions() }
+
         Button("Settings…") {
             NSApp.activate(ignoringOtherApps: true)
             usageStatistics.presentSettings()

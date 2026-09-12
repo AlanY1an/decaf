@@ -19,7 +19,7 @@
 
 <sub>Decaf 0.3.0 首页：自动防休眠、token 统计和 Your rhythm。原生界面，使用示例数据。</sub>
 
-> **v0.3.0 — 给 Your brew 一个新首页。** 保活状态、用量和活动放在一起，设置页也更清爽。包含 0.2.1 的 Codex 用量恢复修复。[升级 →](docs/usage.zh-CN.md#更新)
+> **v0.3.3 — 换账号，接着聊。** 从独立侧栏页面迁移本地 Claude Code 会话，支持已验证的 Claude Desktop 版本。[使用方法 →](docs/usage.zh-CN.md#迁移会话) · [升级 →](docs/usage.zh-CN.md#更新)
 
 ## 三个用途
 

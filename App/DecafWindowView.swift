@@ -2,7 +2,7 @@ import SwiftUI
 import DecafCore
 import UsageMetering
 
-enum DecafWindowPage: Hashable { case home, settings }
+enum DecafWindowPage: Hashable { case home, sessions, settings }
 
 @MainActor
 final class DecafWindowRouter: ObservableObject {
@@ -26,10 +26,20 @@ struct DecafWindowView: View {
     @ObservedObject var router: DecafWindowRouter
     @ObservedObject var tabRouter: SettingsTabRouter
     let commands: any AppCommands
+    @StateObject private var sessions: SessionTransferModel
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var navigation
     private var palette: UsageStatisticsPalette { .init(dark: scheme == .dark) }
+
+    init(store: AppStateStore, settings: UISettings, integrations: AgentIntegrationsModel,
+         profile: BrewProfileStore, router: DecafWindowRouter, tabRouter: SettingsTabRouter,
+         commands: any AppCommands, sessions: SessionTransferModel? = nil) {
+        self.store = store; self.settings = settings; self.integrations = integrations
+        self.profile = profile; self.router = router; self.tabRouter = tabRouter
+        self.commands = commands
+        _sessions = StateObject(wrappedValue: sessions ?? SessionTransferModel())
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -38,6 +48,7 @@ struct DecafWindowView: View {
                     .padding(.horizontal, 30).padding(.top, 34).padding(.bottom, 48)
                 VStack(spacing: 7) {
                     navigationButton("Home", page: .home)
+                    navigationButton("Move sessions", subtitle: "Claude Code", page: .sessions)
                     navigationButton("Settings", page: .settings)
                 }.padding(.horizontal, 20).animation(DecafMotion.selection(reduceMotion), value: router.page)
                 Spacer()
@@ -51,7 +62,7 @@ struct DecafWindowView: View {
             Rectangle().fill(palette.rule.opacity(0.5)).frame(width: 1)
                 .ignoresSafeArea(edges: .top)
             ZStack(alignment: .topLeading) {
-                // Keep both pages mounted so tab switches retain filters and scroll positions.
+                // Keep pages mounted so tab switches retain filters and scroll positions.
                 Group {
                     TimelineView(.periodic(from: .now, by: 60)) { context in
                         ScrollView {
@@ -74,17 +85,27 @@ struct DecafWindowView: View {
                     DecafSettingsPane(settings: settings, integrations: integrations,
                                       profile: profile, router: tabRouter)
                 }.modifier(DecafPageVisibility(active: router.page == .settings, reducedMotion: reduceMotion))
+                SessionTransferView(model: sessions)
+                    .modifier(DecafPageVisibility(active: router.page == .sessions, reducedMotion: reduceMotion))
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 .animation(DecafMotion.page(reduceMotion), value: router.page)
         }.background(palette.canvas.ignoresSafeArea()).foregroundStyle(palette.ink).tint(palette.codex)
+            .onChange(of: router.page) { _, page in
+                if page == .sessions { sessions.refresh() }
+            }
     }
 
-    private func navigationButton(_ title: String, page: DecafWindowPage) -> some View {
+    private func navigationButton(_ title: String, subtitle: String? = nil, page: DecafWindowPage) -> some View {
         Button { router.page = page } label: {
             HStack {
-                Text(title).font(.system(size: 14, weight: router.page == page ? .semibold : .regular))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.system(size: 14, weight: router.page == page ? .semibold : .regular))
+                    if let subtitle {
+                        Text(subtitle).font(.system(size: 11)).foregroundStyle(palette.secondary)
+                    }
+                }
                 Spacer()
-            }.padding(.horizontal, 10).frame(height: 43)
+            }.padding(.horizontal, 10).frame(height: subtitle == nil ? 43 : 58)
                 .foregroundStyle(router.page == page ? palette.ink : palette.secondary)
                 .overlay(alignment: .leading) {
                     if router.page == page {
@@ -92,7 +113,8 @@ struct DecafWindowView: View {
                             .matchedGeometryEffect(id: "navigation", in: navigation)
                     }
                 }.contentShape(Rectangle())
-        }.buttonStyle(.plain).accessibilityAddTraits(router.page == page ? .isSelected : [])
+        }.buttonStyle(.plain).accessibilityLabel(subtitle.map { title + ", " + $0 } ?? title)
+            .accessibilityAddTraits(router.page == page ? .isSelected : [])
     }
 
     private func awakeStatus(now: Date) -> some View {

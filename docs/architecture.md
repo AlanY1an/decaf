@@ -26,7 +26,7 @@ the false negative (a Mac that sleeps mid-build) is common.
 ## Modules
 
 The app is a thin SwiftUI shell over a Swift package. `Core/Package.swift`
-declares six libraries and three executables.
+declares seven library products and four executables, plus shared support targets.
 
 | Module | Role |
 |---|---|
@@ -39,6 +39,9 @@ declares six libraries and three executables.
 | `decaf-bridge` | Helper executable. Claude Code runs it as a hook; it writes one frame to a socket and exits. |
 | `decaf-statusline` | Helper executable for the statusLine channel, with passthrough to whatever statusline you already had. |
 | `decaf-smoke` | Test-only harness. |
+| `SessionTransfer` | Read-only Claude Desktop account/session discovery, identity evidence and transcript validation. |
+| `SessionMigration` | Reviewed local session moves, durable original entries, recovery and guarded Undo. |
+| `decaf-sessions` | Read-only session inspection CLI; does not link the migration writer. |
 
 The app target adds `App/` — the menu, the settings window, onboarding, and the
 menu bar icon renderer.
@@ -375,6 +378,29 @@ app; preview and export resolve the same choice. Copy renders before replacing
 the clipboard; Save uses the user's chosen destination and a month-specific
 default filename. No automatic sharing occurs. Transient page interactions are
 kept in a child view so selecting activity cells does not reaggregate history.
+
+## Local Claude Code session moves (0.3.3)
+
+`SessionTransfer` discovers Claude Desktop's local account stores and matches
+email/organization labels to exact account IDs. Its readers inspect account
+profile caches, session-entry metadata, available sidebar group/pin metadata
+and transcripts. `decaf-sessions` links only this read-only target.
+
+`SessionMigration` is a separate writer. Plans require the verified Desktop
+version, a fresh signed-in destination, valid local history and unchanged source
+entries. Execution repeatedly verifies that Desktop is stopped and session
+workers are absent. It saves original metadata and a durable journal under
+`Application Support/Decaf/SessionMoves`, exclusively places the target entry,
+then parks the source. It never rewrites conversation transcripts or Chromium
+sidebar storage. Target entries clear pin, bridge and per-session permission
+fields. Interrupted operations retain per-entry checkpoints for recovery.
+
+Undo verifies source, target, inode ownership and history before restoring
+original entries. Changed conversations stay in place. Explicit retention of a
+completed move revalidates its placement and changes only Decaf's receipt;
+incomplete or ambiguous operations cannot be dismissed this way. Tests use
+disposable roots and a kernel sandbox that denies writes to live Claude/Decaf
+stores. See [Move sessions](usage.md#move-sessions) for user-facing limits.
 
 ## In-app updates (0.3.1)
 

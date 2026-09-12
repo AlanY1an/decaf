@@ -13,6 +13,7 @@ import AppKit
 import SwiftUI
 import DecafCore
 import UsageMetering
+import SessionTransfer
 
 // MARK: - Output
 
@@ -360,6 +361,10 @@ let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)   // never a foreground app, never a Dock tile
 
 MainActor.assumeIsolated {
+    if arguments.contains("--sessions") {
+        renderSessionSamples()
+        return
+    }
     if arguments.contains("--updates") {
         for dark in [false, true] {
             Renderer.render(UpdateGuideView(), dark: dark, width: 420,

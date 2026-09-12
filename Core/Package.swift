@@ -22,6 +22,9 @@ let package = Package(
         .library(name: "DecafComposition", targets: ["DecafComposition"]),
         .library(name: "HookWire", targets: ["HookWire"]),
         .library(name: "UsageMetering", targets: ["UsageMetering"]),
+        .library(name: "SessionTransfer", targets: ["SessionTransfer"]),
+        .library(name: "SessionMigration", targets: ["SessionMigration"]),
+        .executable(name: "decaf-sessions", targets: ["decaf-sessions"]),
         .executable(name: "decaf-bridge", targets: ["decaf-bridge"]),
         .executable(name: "decaf-statusline", targets: ["decaf-statusline"]),
         .executable(name: "decaf-smoke", targets: ["decaf-smoke"]),
@@ -40,6 +43,14 @@ let package = Package(
         .target(
             name: "TranscriptSupport"
         ),
+        // Read-only discovery and handoff validation. This target has no
+        // filesystem writer and never imports the account/credential layer.
+        .target(name: "SessionTransfer", dependencies: ["TranscriptSupport"]),
+        .target(name: "SessionMigration", dependencies: ["SessionTransfer", "TranscriptSupport"]),
+        .testTarget(name: "SessionMigrationTests", dependencies: ["SessionMigration", "SessionTransfer", "SessionTestGuard"]),
+        .executableTarget(name: "decaf-sessions", dependencies: ["SessionTransfer"]),
+        .target(name: "SessionTestGuard", path: "Tests/SessionTestGuard", publicHeadersPath: "include"),
+        .testTarget(name: "SessionTransferTests", dependencies: ["SessionTransfer", "SessionTestGuard"]),
         // Usage metering (plan 09): transcript token ledger. Depends ONLY on
         // TranscriptSupport — no DecafCore/AgentDetection coupling.
         .target(

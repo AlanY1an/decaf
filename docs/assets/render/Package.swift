@@ -21,6 +21,8 @@ let package = Package(
                 .product(name: "AgentDetection", package: "Core"),
                 .product(name: "DecafComposition", package: "Core"),
                 .product(name: "HookWire", package: "Core"),
+                .product(name: "SessionTransfer", package: "Core"),
+                .product(name: "SessionMigration", package: "Core"),
             ],
             linkerSettings: [
                 // So Wordmark's Bundle.main lookup finds a version, exactly as

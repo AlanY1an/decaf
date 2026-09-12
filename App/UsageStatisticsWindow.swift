@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import DecafCore
 
-/// One reusable Home + Settings window. Closing it leaves menu-bar detection running.
+/// One reusable Home, Move sessions and Settings window. Closing it leaves detection running.
 @MainActor
 final class UsageStatisticsPresenter {
     private let store: AppStateStore
@@ -29,6 +29,11 @@ final class UsageStatisticsPresenter {
     func presentSettings(tab: SettingsTab? = nil) {
         if let tab { tabRouter.selectedTab = tab }
         router.page = .settings
+        showWindow()
+    }
+
+    func presentSessions() {
+        router.page = .sessions
         showWindow()
     }
 

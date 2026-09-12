@@ -19,7 +19,7 @@ A native macOS menu bar app: automatic agent detection and unified daily/monthly
 
 <sub>Decaf 0.3.0 Home: automatic keep-awake, token usage and Your rhythm. Native interface with example data.</sub>
 
-> **v0.3.0 — A new home for your brew.** Keep-awake status, token usage and activity together, with a spacious Settings page. Includes the Codex recovery fix from 0.2.1. [Update →](docs/usage.md#update)
+> **v0.3.3 — Switch accounts. Keep your conversations.** Move local Claude Code sessions between accounts in supported Claude Desktop versions, from a dedicated sidebar page. [How it works →](docs/usage.md#move-sessions) · [Update →](docs/usage.md#update)
 
 ## Three uses
 

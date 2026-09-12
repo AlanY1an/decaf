@@ -5,6 +5,20 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-09-12
+
+### Added
+
+- **Move sessions · Claude Code** in the sidebar and a direct cup-menu shortcut.
+  Select multiple source accounts, one destination, and individual conversations
+  with local email/organization labels and available pin/group metadata.
+- Reviewed local account-to-account moves for Claude Desktop 1.52386.3. The
+  destination must match the signed-in account; unsupported, active, remote,
+  scheduled, missing-history and conflicting entries are held with reasons.
+- Durable original entries, per-session results and guarded Undo. Interrupted
+  operations can be inspected after restart; changed histories are preserved.
+  Verified completed moves that can no longer be undone can be retained explicitly.
+
 ## [0.3.2] - 2026-09-11
 
 ### Fixed

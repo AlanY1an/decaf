@@ -13,6 +13,8 @@
 // install terminates the test process; it cannot become a skipped green test.
 static int installed;
 static char real_home[PATH_MAX];
+static char probe_parent[PATH_MAX];
+static char probe_path[PATH_MAX];
 static char profile[65536] = "(version 1)(allow default)";
 
 static void append(const char *s) {
@@ -56,6 +58,19 @@ __attribute__((constructor)) static void install_guard(void) {
     const char *config = getenv("CLAUDE_CONFIG_DIR");
     if (config && config[0]) deny_path(config);
     deny_path("/Applications/Claude.app");
+    // An independent, existing parent makes the denial probe deterministic on
+    // clean CI Macs without ~/.claude. Protect it through the very same rule as
+    // live stores; no probe ever needs to create a file inside those stores.
+    char temp[PATH_MAX];
+    size_t length = confstr(_CS_DARWIN_USER_TEMP_DIR, temp, sizeof(temp));
+    if (!length || length > sizeof(temp)) _exit(78);
+    if (snprintf(probe_parent, sizeof(probe_parent), "%s/decaf-session-guard.XXXXXX", temp) >= sizeof(probe_parent)) _exit(78);
+    if (!mkdtemp(probe_parent)) _exit(78);
+    char canonical_parent[PATH_MAX];
+    if (!realpath(probe_parent, canonical_parent)) _exit(78);
+    if (strlcpy(probe_parent, canonical_parent, sizeof(probe_parent)) >= sizeof(probe_parent)) _exit(78);
+    if (snprintf(probe_path, sizeof(probe_path), "%s/probe", probe_parent) >= sizeof(probe_path)) _exit(78);
+    deny_path(probe_path);
     char *error = NULL;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -68,4 +83,10 @@ __attribute__((constructor)) static void install_guard(void) {
 }
 
 int decaf_session_test_guard_installed(void) { return installed; }
-const char *decaf_session_test_real_home(void) { return real_home; }
+const char *decaf_session_test_probe_path(void) { return probe_path; }
+
+__attribute__((destructor)) static void remove_probe_parent(void) {
+    // Only the nonexistent child is protected. Removing this empty, test-owned
+    // parent is allowed; a failed probe leaves evidence instead of deleting it.
+    if (probe_parent[0]) rmdir(probe_parent);
+}

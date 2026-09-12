@@ -209,8 +209,8 @@ final class SessionTransferTests: XCTestCase {
         XCTAssertTrue(result.issues.contains { $0.code == .missingStore })
     }
     func testKernelGuardAppliesOnBackgroundThread() throws {
-        let realHome = String(cString: decaf_session_test_real_home())
-        let marker = realHome + "/.claude/.decaf-guard-probe-" + UUID().uuidString
+        let marker = String(cString: decaf_session_test_probe_path())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: URL(fileURLWithPath: marker).deletingLastPathComponent().path))
         let expectation = expectation(description: "guard remains active")
         DispatchQueue.global().async {
             let fd = open(marker, O_WRONLY | O_CREAT | O_EXCL, 0o600)

@@ -6,7 +6,7 @@
 
 **Keep your Mac awake while your agents work.**
 
-Automatic keep-awake and local token stats for **Claude Code + Codex**.
+Automatic keep-awake and local token stats for **Claude Code + Codex**.<br>
 A little companion in your Mac’s menu bar.
 
 **[Download for macOS](https://github.com/AlanY1an/decaf/releases/latest)** · [Guide](docs/usage.md) · [中文](README.zh-CN.md)

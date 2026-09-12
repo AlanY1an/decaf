@@ -6,7 +6,7 @@
 
 **Agent 干活时，让 Mac 保持唤醒。**
 
-自动防休眠，统一统计 **Claude Code + Codex** 的 token 用量。
+自动防休眠，统一统计 **Claude Code + Codex** 的 token 用量。<br>
 待在菜单栏里的一个小帮手。
 
 **[下载 macOS 版](https://github.com/AlanY1an/decaf/releases/latest)** · [使用指南](docs/usage.zh-CN.md) · [English](README.md)

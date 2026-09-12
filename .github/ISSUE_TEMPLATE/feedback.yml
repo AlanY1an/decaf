@@ -18,7 +18,7 @@ body:
     id: experience
     attributes:
       label: What helped, or got in your way?
-      description: Mention stable vs source build and which tool versions you used. Did your Mac stay awake when expected? For source builds, was the first usage import clear? A few sentences are enough.
+      description: Mention your Decaf version and whether you use Claude Code, Codex or both. Did the Mac stay awake when expected? Were Daily/Monthly totals and the first import clear? If you tried Move sessions, did the source and destination make sense? A few sentences are enough.
     validations:
       required: true
   - type: dropdown

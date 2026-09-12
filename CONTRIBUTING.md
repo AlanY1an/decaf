@@ -6,11 +6,11 @@ Small, specific contributions are welcome. You do not need to write Swift to hel
 
 Use [the issue chooser](https://github.com/AlanY1an/decaf/issues/new/choose) for bugs, ideas or first-day feedback. Include your macOS version, Decaf version or commit, and whether you use Claude Code, Codex or both.
 
-For usage issues, v0.2.0 and later offer **Usage Statistics → read-status line → Copy support summary**. It copies app/macOS versions, selected sources and import status; token totals, usage dates, file paths, session IDs, conversations and raw errors are excluded. Paste it into the optional support-summary field if useful. Copying never sends it anywhere.
+For usage issues, open **Home → usage read-status line → Copy support summary** (scroll down if needed). It copies app/macOS versions, selected sources and import status; token totals, usage dates, file paths, session IDs, conversations and raw errors are excluded. Paste it into the optional support-summary field if useful. Copying never sends it anywhere.
 
 A useful bug report says what you expected, what happened, and the shortest way to reproduce it. Share synthetic or redacted examples instead of full session logs, project paths, prompts or credentials.
 
-The v0.1.0 download and the development checkout have different features; the README lists which is which.
+For **Move sessions**, include the Claude Desktop version and the visible held/skipped reason. Account labels, paths and session titles can be personal: redact them in screenshots. Never attach the saved originals or a migration-state folder. [Supported sessions](docs/usage.md#move-sessions).
 
 ### A first-day check
 
@@ -19,10 +19,10 @@ Pick the setup you actually use; you do not need to install another tool just to
 | Setup | Try during a normal task | What to report |
 | --- | --- | --- |
 | Claude Code | Start and finish a task; note whether hooks are enabled. | Does the cup's status make sense while working and after finishing? |
-| Codex (preview) | Include a task with a quiet stretch, then finish or cancel it. | Does keep-awake last through the task and clear after the applicable idle window? |
-| Both (preview) | Overlap two tasks, then finish one while the other continues. | Does the remaining task keep its hold? Are the usage totals separate and the combined total understandable? |
+| Codex | Include a task with a quiet stretch, then finish or cancel it. | Does keep-awake last through the task and clear after the applicable idle window? |
+| Both | Overlap two tasks, then finish one while the other continues. | Does the remaining task keep its hold? Are the usage totals separate and the combined total understandable? |
 
-For the preview, also open usage after the first import, look at Monthly and Your brew, and preview a card. Missing logs should be distinguishable from a day with no recorded usage. The next day, tell us whether you wanted to open Decaf again. These are invitations to test, not claims that a user study has already happened.
+Also open **Home** after the first import, try **Monthly**, filter each agent and use **Share your brew** to preview a card. Missing logs should be distinguishable from a day with no recorded usage. The next day, tell us whether you wanted to open Decaf again. These are invitations to test, not claims that a user study has already happened.
 
 [Usage guide](docs/usage.md) · [中文指南](docs/usage.zh-CN.md) · [First-day feedback](https://github.com/AlanY1an/decaf/issues/new?template=feedback.yml)
 
@@ -63,9 +63,13 @@ docs/assets/render/build.sh
 docs/assets/render/.build/release/DecafRender docs/assets --usage
 ```
 
-That renderer does not launch the live app or copy anything onto your clipboard. It writes documentation images.
+That renderer does not launch the live app or copy anything onto your clipboard. It writes documentation images. Use `--interface` for Home/Settings, `--sessions` for synthetic session examples, or `--marketing` for README art. Write to a temporary output directory while reviewing a change, then copy only the intended assets into the repository.
+
+[The recording harness](docs/assets/live-demo/README.md) demonstrates a real agent with isolated Decaf state. Its usage history is synthetic; do not record your personal account list for documentation.
 
 ## Good places to start
+
+[Browse good first issues](https://github.com/AlanY1an/decaf/labels/good%20first%20issue) for small documentation and accessibility tasks. Comment on the issue you want to take so people do not duplicate work. [Help wanted](https://github.com/AlanY1an/decaf/labels/help%20wanted) includes checks that need different real-world setups.
 
 - Improve a label or first-run instruction that confused you.
 - Reproduce a counting problem using a small synthetic log fixture.

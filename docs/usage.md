@@ -2,8 +2,8 @@
 
 [← README](../README.md) · [中文](usage.zh-CN.md)
 
-**v0.3.0** brings automatic keep-awake, Claude Code/Codex usage and Your brew
-into one Home window, with Settings alongside it. [Window guide](interface.md).
+Home brings together automatic keep-awake, Claude Code/Codex usage and Your brew.
+The sidebar also has **Move sessions · Claude Code** and **Settings**. [Window guide](interface.md).
 
 [Install](#install) · [Update](#update) · [First use](#first-use) · [Behavior and limits](#what-to-expect) · [Privacy](#your-data) · [Uninstall](#uninstall)
 
@@ -56,7 +56,7 @@ old version. Missing source logs cannot be recovered; previous stores remain in
 `~/Library/Application Support/Decaf/Backups/`. Avoid `brew uninstall --zap` or
 deleting Application Support when updating.
 
-In v0.2.0 and later, **Updates…** in the cup menu or **Settings → General** shows
+In v0.2.0–0.3.0, **Updates…** in the cup menu or **Settings → General** shows
 these instructions and the installed version. It opens the release page only
 when clicked; there are no background checks or automatic installs. Version
 0.1.0 has no in-app update channel. To hear about future releases, select

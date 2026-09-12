@@ -2,7 +2,7 @@
 
 [← 首页](../README.zh-CN.md) · [English](usage.md)
 
-**v0.3.0** 把自动防休眠、Claude Code/Codex 用量和 Your brew 整合到 Home，设置页就在旁边。[界面说明](interface.md)。
+Home 整合了自动防休眠、Claude Code/Codex 用量和 Your brew；侧边栏还有 **Move sessions · Claude Code** 与 **Settings**。[界面说明](interface.md)。
 
 [安装](#安装) · [更新](#更新) · [首次使用](#首次使用) · [功能边界](#功能与边界) · [隐私](#数据留在哪里) · [卸载](#卸载)
 
@@ -48,7 +48,7 @@ Decaf 会自动备份旧 Codex 缓存，重新读取本机仍保留的活动及�
 `~/Library/Application Support/Decaf/Backups/`。升级时不要执行
 `brew uninstall --zap` 或删除应用数据目录。
 
-从 v0.2.0 起，杯子菜单或 **Settings → General** 的 **Updates…** 会显示
+在 v0.2.0–0.3.0 中，杯子菜单或 **Settings → General** 的 **Updates…** 会显示
 当前版本和升级说明。只有主动点击才会在浏览器打开发布页，没有后台检查和
 自动安装。v0.1.0 本身没有应用内更新通道。想收到以后新版本的通知，可以到
 [GitHub 仓库](https://github.com/AlanY1an/decaf) 选择 **Watch → Custom → Releases**。

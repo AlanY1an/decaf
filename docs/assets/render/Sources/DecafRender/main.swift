@@ -384,7 +384,7 @@ MainActor.assumeIsolated {
         sampleDateFormatter.locale = Locale(identifier: "en_US_POSIX")
         sampleDateFormatter.dateFormat = "yyyy-MM-dd"
         func sampleDay(_ index: Int) -> String {
-            guard arguments.contains("--interface") else {
+            guard arguments.contains("--interface") || arguments.contains("--marketing") else {
                 return String(format: "2026-09-%02d", index + 2)
             }
             return sampleDateFormatter.string(from: Calendar.current.date(byAdding: .day, value: index - 6, to: Date())!)
@@ -417,13 +417,14 @@ MainActor.assumeIsolated {
         if arguments.contains("--interface") {
             let preferences = UISettings(backing: SettingsStore(defaults: renderDefaults))
             let profile = BrewProfileStore(defaults: renderDefaults)
-            profile.nickname = "Alan"
+            profile.nickname = ""
             let integrations = AgentIntegrationsModel(provider: StagedIntegrationsProvider(
                 ClaudeCodeStatus(agentDetected: true, agentVersion: nil, hooksInstalled: true, needsRepair: false)))
             let router = DecafWindowRouter(), tabs = SettingsTabRouter()
             let store = AppStateStore(snapshot: AppStateSnapshot(fallbackAgents: [.claudeCode, .codex], wantsHold: true, usage: usage))
             let view = DecafWindowView(store: store, settings: preferences, integrations: integrations,
-                                      profile: profile, router: router, tabRouter: tabs, commands: InertCommands())
+                                      profile: profile, router: router, tabRouter: tabs, commands: InertCommands(),
+                                      sessions: isolatedRenderSessions())
             if arguments.contains("--window-chrome") {
                 router.page = .settings
                 let window = NSWindow(contentViewController: NSHostingController(rootView: view))

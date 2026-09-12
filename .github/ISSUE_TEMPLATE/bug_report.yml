@@ -24,11 +24,20 @@ body:
         - Manual keep-awake only
     validations:
       required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Decaf?
+      options:
+        - Automatic keep-awake / agent detection
+        - Daily or monthly token usage
+        - Move sessions (Claude Code in Claude Desktop)
+        - Settings, updates or another part
   - type: textarea
     id: usage_support
     attributes:
       label: Usage support summary (optional)
-      description: "For usage issues in v0.2.0 or later: open Usage Statistics, click the read-status line, then Copy support summary. It includes app/macOS versions and import status, without token totals, usage dates, paths or conversations. Paste it here if useful."
+      description: "For usage issues: open Home, scroll to the usage read-status line, then choose Copy support summary. It includes app/macOS versions and import status, without token totals, usage dates, paths or conversations. Paste it here if useful."
       render: text
   - type: textarea
     id: behavior
@@ -41,6 +50,6 @@ body:
     id: steps
     attributes:
       label: Steps to reproduce
-      description: Include whether hooks were enabled, if relevant. Screenshots are optional.
+      description: Include whether hooks were enabled, if relevant. For session moves, include Claude Desktop version and the held/skipped reason; hide account emails and session titles. Screenshots are optional.
     validations:
       required: true

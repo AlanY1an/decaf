@@ -82,7 +82,10 @@ func renderSessionSamples() {
             sessions.toggleSource(store.account)
         }
         Renderer.render(view, size: CGSize(width: 900, height: 640), dark: false, to: "sessions-selected-compact.png")
-        Renderer.render(view, size: CGSize(width: 1060, height: 820), dark: true, to: "sessions-selected-dark.png")
+        for dark in [false, true] {
+            Renderer.render(view, size: CGSize(width: 1060, height: 820), dark: dark,
+                to: "sessions-selected-\(dark ? "dark" : "light").png")
+        }
         // The real engine acts only on this disposable synthetic tree. Neither
         // the app's quit/reopen commands nor any live account store are involved.
         let engine = SessionMoveEngine(paths: paths, stateRoot: root.appendingPathComponent("move-state"), assertDesktopStopped: {})

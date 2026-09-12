@@ -19,13 +19,17 @@ struct Capture {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         guard let app = content.applications.first(where: { $0.bundleIdentifier == "io.github.alany1an.decaf.live-demo" }),
               let display = content.displays.first else { fatalError("Open the isolated Decaf Demo app first") }
-        let excluded = content.applications.filter { $0.processID != app.processID && !$0.bundleIdentifier.hasPrefix("com.apple.") }
-        let filter = SCContentFilter(display: display, excludingApplications: excluded, exceptingWindows: [])
+        let filter = SCContentFilter(display: display, including: [app], exceptingWindows: [])
         filter.includeMenuBar = true
         let config = SCStreamConfiguration()
-        config.width = display.width
-        config.height = display.height - 85
-        config.sourceRect = CGRect(x: 0, y: 0, width: display.width, height: display.height - 85)
+        guard let stage = content.windows.first(where: {
+            $0.owningApplication?.processID == app.processID && $0.title == "Decaf · live demonstration"
+        }) else { fatalError("Demo stage window is missing") }
+        // Record only the right-aligned stage and the menu above it; exclude all other apps.
+        let region = CGRect(x: stage.frame.minX, y: 0, width: stage.frame.width, height: stage.frame.maxY)
+        config.width = Int(region.width)
+        config.height = Int(region.height)
+        config.sourceRect = region
         config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
         config.capturesAudio = false
         config.showsCursor = true

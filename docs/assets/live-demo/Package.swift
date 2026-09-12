@@ -6,5 +6,7 @@ let package = Package(name: "DecafLiveDemo", platforms: [.macOS(.v14)],
         .product(name: "DecafCore", package: "Core"),
         .product(name: "AgentDetection", package: "Core"),
         .product(name: "DecafComposition", package: "Core"),
-        .product(name: "HookWire", package: "Core")
+        .product(name: "HookWire", package: "Core"),
+        .product(name: "SessionTransfer", package: "Core"),
+        .product(name: "SessionMigration", package: "Core")
     ])], swiftLanguageModes: [.v5])

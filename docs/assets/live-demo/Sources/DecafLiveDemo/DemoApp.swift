@@ -9,6 +9,7 @@ import DecafComposition
 import AgentDetection
 import HookWire
 import UsageMetering
+import SessionTransfer
 
 @main
 struct LiveDemoApp: App {
@@ -106,6 +107,12 @@ final class DemoEnvironment: ObservableObject {
             }
         }.store(in: &subscriptions)
     }
+    func isolatedSessions() -> SessionTransferModel {
+        let paths = SessionPaths(desktop: directory.appendingPathComponent("desktop"),
+            claude: directory.appendingPathComponent("claude"), logs: directory.appendingPathComponent("logs"))
+        return SessionTransferModel(catalog: SessionCatalog(paths: paths), labelDefaults: defaults,
+            migrationRoot: directory.appendingPathComponent("moves"))
+    }
     func start() {
         NSApp.setActivationPolicy(.regular)
         NSApp.appearance = NSAppearance(named: .aqua)
@@ -119,7 +126,8 @@ final class DemoEnvironment: ObservableObject {
         window.styleMask = [.titled, .closable, .resizable]
         window.titlebarAppearsTransparent = true
         window.isReleasedWhenClosed = false
-        window.setFrame(NSScreen.main!.visibleFrame, display: true)
+        let visible = NSScreen.main!.visibleFrame
+        window.setFrame(NSRect(x: visible.maxX - 1500, y: visible.maxY - 940, width: 1500, height: 940), display: true)
         controller = NSWindowController(window: window)
         NSApp.activate(ignoringOtherApps: true)
         controller?.showWindow(nil)
@@ -232,13 +240,13 @@ struct DemoStage: View {
     @ObservedObject var env: DemoEnvironment
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
-            HStack { Text("decaf.").font(.custom("Georgia-Bold", size: 34)); Spacer(); Text("LIVE AGENT + NATIVE UI · SAMPLE USAGE HISTORY").font(.system(size: 13, design: .monospaced)) }
+            HStack { Text("decaf.").font(.custom("Georgia-Bold", size: 34)); Spacer(); Text("LIVE AGENT + NATIVE UI · SAMPLE USAGE HISTORY").font(.system(size: 12, design: .monospaced)) }
             Spacer()
             VStack(alignment: .leading, spacing: 20) {
-                Text("Automatic keep-awake.\nClaude Code + Codex usage.").font(.custom("Georgia", size: 35))
+                Text("Automatic keep-awake.\nClaude Code + Codex usage.").font(.custom("Georgia", size: 30))
                 Text(env.agentName + " · live process").font(.system(size: 13, weight: .semibold))
                 Text(env.terminal).font(.system(size: 14, design: .monospaced)).textSelection(.enabled)
-                    .frame(width: 540, height: 260, alignment: .topLeading).padding(22).background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
+                    .frame(width: 395, height: 260, alignment: .topLeading).padding(22).background(.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
                 HStack(spacing: 16) {
                     Button("Run agent") { env.runAgent() }.disabled(env.running)
                     Button("Open usage") { env.usage.present() }
@@ -246,7 +254,7 @@ struct DemoStage: View {
                 Text("Live agent detection. Monthly history is example data.\nNo personal logs or profile preferences are loaded.").font(.system(size: 12)).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("Development preview · github.com/AlanY1an/decaf").font(.system(size: 12, design: .monospaced))
+            Text("Decaf 0.3.3 · github.com/AlanY1an/decaf").font(.system(size: 12, design: .monospaced))
         }.padding(55).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .foregroundStyle(Color(red: 0.24, green: 0.235, blue: 0.20))
             .background(Color(red: 0.945, green: 0.932, blue: 0.891))

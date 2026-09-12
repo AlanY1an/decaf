@@ -5,6 +5,7 @@ import AppKit
 import SwiftUI
 import DecafCore
 import UsageMetering
+import SessionTransfer
 
 @MainActor
 enum MarketingAssets {
@@ -13,7 +14,7 @@ enum MarketingAssets {
                                         hasEverDetectedAgent: true, usage: usage)
         for dark in [false, true] {
             Renderer.render(MarketingHero(usage: usage, snapshot: snapshot, dark: dark),
-                            size: CGSize(width: 1280, height: 780), scale: 1, dark: dark,
+                            size: CGSize(width: 1280, height: 800), scale: 1, dark: dark,
                             to: "readme-hero-\(dark ? "dark" : "light").png")
         }
         Renderer.render(MarketingHero(usage: usage, snapshot: snapshot, dark: false, compact: true),
@@ -50,6 +51,31 @@ private struct MarketingStatus: View {
     }
 }
 
+/// The complete current Home view, with isolated preferences and an empty session catalog.
+@MainActor
+private struct MarketingHome: View {
+    let usage: UsageOverview
+    let snapshot: AppStateSnapshot
+    var body: some View {
+        let preferences = UISettings(backing: SettingsStore(defaults: renderDefaults))
+        let profile = BrewProfileStore(defaults: renderDefaults)
+        let integrations = AgentIntegrationsModel(provider: StagedIntegrationsProvider(
+            ClaudeCodeStatus(agentDetected: true, agentVersion: nil, hooksInstalled: true, needsRepair: false)))
+        DecafWindowView(store: AppStateStore(snapshot: snapshot), settings: preferences,
+            integrations: integrations, profile: profile, router: DecafWindowRouter(),
+            tabRouter: SettingsTabRouter(), commands: InertCommands(), sessions: isolatedRenderSessions())
+    }
+}
+
+@MainActor
+func isolatedRenderSessions() -> SessionTransferModel {
+    let base = FileManager.default.temporaryDirectory.appendingPathComponent("decaf-art-" + UUID().uuidString)
+    let paths = SessionPaths(desktop: base.appendingPathComponent("desktop"),
+        claude: base.appendingPathComponent("claude"), logs: base.appendingPathComponent("logs"))
+    return SessionTransferModel(catalog: SessionCatalog(paths: paths), labelDefaults: nil,
+        migrationRoot: base.appendingPathComponent("moves"))
+}
+
 private struct MarketingHero: View {
     let usage: UsageOverview
     let snapshot: AppStateSnapshot
@@ -57,38 +83,32 @@ private struct MarketingHero: View {
     var compact = false
     private var p: UsageStatisticsPalette { UsageStatisticsPalette(dark: dark) }
     var body: some View {
-        HStack(spacing: 78) {
-            VStack(alignment: .leading, spacing: compact ? 20 : 30) {
-                HStack(spacing: 12) {
-                    Text("decaf.").font(.custom("Georgia-Bold", size: 32))
-                    Text("automatic caffeinate + token stats").font(.system(size: 12)).foregroundStyle(p.secondary)
-                }
+        HStack(spacing: compact ? 40 : 38) {
+            VStack(alignment: .leading, spacing: compact ? 24 : 28) {
+                Text("decaf.").font(.custom("Georgia-Bold", size: 38))
                 Spacer(minLength: 0)
-                Text("Auto-detect.\nStay awake.")
-                    .font(.custom("Georgia", size: compact ? 48 : 54)).lineSpacing(7).fixedSize(horizontal: false, vertical: true)
-                Text("Token stats for Claude Code + Codex.\nDaily. Monthly. Together or separate.")
-                    .font(.system(size: 19)).lineSpacing(7).foregroundStyle(p.secondary)
-                MarketingStatus(snapshot: snapshot, dark: dark)
+                Text("Your agents work.\nYour Mac\nstays awake.")
+                    .font(.custom("Georgia", size: compact ? 48 : 43)).lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Automatic keep-awake.\nClaude Code + Codex token stats.")
+                    .font(.system(size: 18)).lineSpacing(7).foregroundStyle(p.secondary)
+                if !compact { MarketingStatus(snapshot: snapshot, dark: dark) }
                 Spacer(minLength: 0)
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("github.com/AlanY1an/decaf").font(.system(size: 12, design: .monospaced))
-                    Text("Native macOS app · Example data").font(.system(size: 11)).foregroundStyle(p.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Free & open source · macOS 14+").font(.system(size: 13))
+                    Text("Native UI · Example data").font(.system(size: 12)).foregroundStyle(p.secondary)
                 }
-            }.frame(width: 480)
-            VStack(spacing: 18) {
-                UsageStatisticsContent(overview: usage)
-                    .frame(width: 600, height: 700)
-                    .clipShape(RoundedRectangle(cornerRadius: 20))
-                    .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(p.secondary.opacity(0.18)))
-                    .scaleEffect(0.78).frame(width: 468, height: 546)
-                    .shadow(color: .black.opacity(dark ? 0.2 : 0.09), radius: 22, y: 10)
-                if !compact {
-                    Text("Two tools. One usage view.").font(.custom("Georgia-Italic", size: 16)).foregroundStyle(p.secondary)
-                }
-            }
+            }.frame(width: compact ? 430 : 335)
+            MarketingHome(usage: usage, snapshot: snapshot)
+                .frame(width: 900, height: 840)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(p.secondary.opacity(0.2)))
+                .scaleEffect(compact ? 0.70 : 0.87)
+                .frame(width: compact ? 630 : 783, height: compact ? 588 : 731)
+                .shadow(color: .black.opacity(dark ? 0.22 : 0.08), radius: 18, y: 8)
         }
-        .padding(.horizontal, 74).padding(.vertical, compact ? 42 : 62)
-        .frame(width: 1280, height: compact ? 640 : 780)
+        .padding(.horizontal, compact ? 72 : 62).padding(.vertical, compact ? 26 : 34)
+        .frame(width: 1280, height: compact ? 640 : 800)
         .foregroundStyle(p.ink)
         .background(dark ? Color(red: 0.09, green: 0.09, blue: 0.082) : Color(red: 0.945, green: 0.932, blue: 0.891))
     }

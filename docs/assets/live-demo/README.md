@@ -1,21 +1,27 @@
 # Real interaction recording
 
-`../decaf-live-demo.mp4` and its GIF show a real Codex task, Decaf's native menu,
-monthly usage, a monthly card, and a PNG export through the macOS save dialog.
-The 16-second edit removes pauses between actions; retained footage runs at normal
-speed. The monthly usage history and profile are **example data**.
+`../decaf-live-demo.mp4` and its GIF show a real Codex task, the **Decaf 0.3.3**
+Home status changing from idle to working, and Monthly switching between combined
+usage and Codex. The 16-second edit removes pauses between actions; retained
+footage runs at normal speed. The usage history and profile are **example data**.
 
-The harness builds the repository's unchanged application views and real
+The harness compiles the repository's unchanged SwiftUI views and real
 `CompositionRoot`, including its power assertion and activity detector. It has
-its own bundle ID, temporary Decaf data directory and fresh settings suite. It
-does not install integrations or load the user's existing usage ledger. The
-Codex process uses an existing CLI login and a newly created demo session; only
-that session's rollout is admitted to the detector. The stage displays actual
-CLI command and response events, rather than a full terminal emulator.
+its own bundle ID, temporary Decaf directory and fresh settings suite. It does
+not install integrations or load the user's existing usage ledger. The window
+presenter alone is adapted for recording size/placement and to inject an isolated
+session catalog; no personal Claude account or migration state is loaded.
 
-Codex detection is approximate. The menu can remain in its working state after
-the command exits because recent file activity has a grace window. This recording
-demonstrates activity detection, not an assertion of immediate sleep on completion.
+The Codex process uses an existing CLI login and a newly created demo session;
+only that session's rollout is admitted to the detector. The stage displays
+actual CLI command and response events, rather than a full terminal emulator.
+Starting a real agent can consume usage. Simply opening the harness and clicking
+its statistics does not start an agent.
+
+Codex detection is approximate. Its working state can remain after the command
+exits because recent file activity has a grace window. This recording demonstrates
+activity detection, not immediate sleep on completion. The visible totals are
+sample local usage, not the cost of the six-second task.
 
 ## Reproduce
 
@@ -29,26 +35,29 @@ permission. The app itself still targets macOS 14.
    executable, `DECAF_DEMO_CODEX_SESSION` to its session ID, and
    `DECAF_DEMO_CODEX_LOG` to its newly created rollout file. Launch
    `docs/assets/live-demo/.build/Decaf Demo.app/Contents/MacOS/DecafLiveDemo`
-   with these environment variables. Do not use an unrelated personal session.
-3. Build the recorder with
+   with these environment variables. Never use a personal session for recording.
+3. Click **Open usage** once to position Home. Build the recorder with
    `swiftc -parse-as-library docs/assets/live-demo/record.swift -o /tmp/decaf-recorder`.
-   Bring the demo forward, close unrelated Apple application windows, then run
+   Bring the demo forward, then run
    `/tmp/decaf-recorder /tmp/decaf-raw.mp4 /tmp/decaf-recording.stop`.
-   The stop path must not exist when recording starts. Creating it ends capture.
-4. Click **Run agent**, inspect the native menu, open **Monthly** usage, open
-   **Your brew**, make a monthly card, and save its PNG. Record each completed
-   action's Unix timestamp in a JSONL file using the six event names in `edit.py`.
-   The recorder prints its starting timestamp. Actual CLI calls can consume usage.
+   The stop path must not exist. Creating it ends capture. The recorder prints
+   its starting Unix timestamp and stops automatically after three minutes.
+4. In the stage, click **Run agent**, then **Open usage**. Observe the real
+   idle → working change, select **Monthly**, click **Codex**, then click it
+   again to restore both sources. Log completed actions as JSONL objects with
+   `event` and Unix `t` fields. Use the five event names in `edit.py`.
+   `working_status_shown` can use the first working timestamp in the harness's
+   `state-trace.txt`; verify the transition appears in the resulting footage.
 5. Run `python3 docs/assets/live-demo/edit.py RAW ACTIONS START OUTPUT.mp4`.
-   Inspect the final video before sharing, then quit the demo to release its
-   power assertion and remove its temporary settings suite.
+   Inspect the complete edit before sharing, then quit the demo to release its
+   power assertion and remove the temporary settings suite.
 
-The supplied capture framing was verified on a 1920 × 1080 display: the recorder
-excludes the bottom 85 pixels and the editor crops the top 30-pixel system status
-strip. Adjust those dimensions for another display. The raw capture can include
-unrelated menu-bar items or Apple system windows; only the reviewed, cropped edit
-is intended for publication. Raw footage, session paths and action logs stay out
-of the repository.
+The supplied capture frames a 1500 × 940 stage at the top right of the display.
+The recorder includes only this app's windows and the menu area above the stage;
+other apps, desktop and Dock are excluded. The editor crops the top 30 pixels
+of the system status strip. Adapt the framing for smaller displays. Inspect for
+unrelated status items and private information before publication. Raw footage,
+CLI session paths and action logs stay out of the repository.
 
 The separate `../decaf-walkthrough.*` assets are an earlier staged animation.
-The README now embeds this live recording.
+The README embeds the live recording above.

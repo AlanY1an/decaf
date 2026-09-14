@@ -98,10 +98,23 @@ public struct SessionCatalog: Sendable {
         }
         let bridgeURL = paths.desktop.appendingPathComponent("bridge-state.json")
         // No bridge file is normal on this measured Desktop installation.
+        // Bridge state corroborates the organization behind an account; it is not
+        // a second opinion on which account is signed in. Claude writes it when
+        // Remote Control connects and leaves it alone afterwards, so after an
+        // account switch it routinely names only the previous account — silence
+        // about the account in hand, not a contradiction of it. Only a bridge that
+        // binds this exact account to a different organization disagrees with the
+        // log evidence, and only that refuses.
         // This route hands off to Claude's live importer, never to a guessed directory.
         if FileManager.default.fileExists(atPath: bridgeURL.path) {
             let bridge = try readObject(bridgeURL)
-            guard bridge[latest.1.organizationID + ":" + accountID] != nil else {
+            let organizations = bridge.keys.compactMap { key -> String? in
+                let parts = key.components(separatedBy: ":")
+                guard parts.count == 2, validSessionID(parts[0]), validSessionID(parts[1]),
+                      parts[1] == accountID else { return nil }
+                return parts[0]
+            }
+            guard organizations.isEmpty || organizations.contains(latest.1.organizationID) else {
                 throw SessionIssue(.identityUnknown, "Claude's account and organization evidence disagree. Refresh after signing in.")
             }
         }

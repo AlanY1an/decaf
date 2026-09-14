@@ -216,7 +216,7 @@ public struct SessionMoveEngine: Sendable {
     }
 
     /// Acknowledgement changes only Decaf's receipt, never Claude's files. An
-    /// interrupted/ambiguous placement is not dismissible. Every retained row
+    /// ambiguous placement is not dismissible. Every retained row
     /// must still resolve to the reviewed conversation, with its original source
     /// safely retired and no competing source/undo slot.
     public func canKeepCurrentPlacement(_ id: UUID) throws -> Bool {
@@ -267,15 +267,12 @@ public struct SessionMoveEngine: Sendable {
             throw issue(.changed, "The original entry's placement is unresolved. Inspect or retry Undo before continuing.")
         }
         let witness = try FileWitness(target)
-        // Older receipts lack the durable completion flag. Their original
-        // destination inode must still be present; a replacement cannot prove
-        // that the earlier write finished.
-        if entry.moveCompleted != true {
-            let staging = try FileWitness(asset(directory, entry.id, "target"))
-            guard witness.device == staging.device, witness.inode == staging.inode else {
-                throw issue(.changed, "This older move's destination was replaced. Its saved records need inspection.")
-            }
-        }
+        // Keeping acknowledges the verified CURRENT placement, including old
+        // receipts without moveCompleted. Claude can atomically rewrite its
+        // listing after a conversation continues. Its original inode is needed
+        // for Undo, but not for this receipt-only action. The checks below still
+        // require the same conversation, intact retired source and readable
+        // history, with no competing source/undo slot. No Claude file is written.
         let row = try readObject(target), original = try readObject(before)
         guard row["sessionId"] as? String == String(entry.rowName.dropLast(5)),
               (row["cliSessionId"] as? String ?? bareSessionID(String(entry.rowName.dropLast(5)))) == entry.sessionID,
@@ -291,7 +288,11 @@ public struct SessionMoveEngine: Sendable {
             throw issue(.changed, "The conversation is missing, released or has moved. Inspect its saved records.")
         }
         let history = try inspectTranscript(locations[0])
-        guard history.cwd == row["cwd"] as? String, !history.hasBridge,
+        // Historical bridge-session records survive disabling Remote Control.
+        // As in move review, the current listing determines local/remote kind
+        // (checkOwnership above). History alone cannot establish a live bridge,
+        // and acknowledging placement never transfers its server-side ownership.
+        guard history.cwd == row["cwd"] as? String,
               try FileWitness(target) == witness, try FileWitness(retired) == entry.sourceWitness,
               !(try exists(source)), !(try exists(parked)) else {
             throw issue(.changed, "The conversation changed while checking its placement. Refresh and try again.")

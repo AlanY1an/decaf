@@ -298,7 +298,9 @@ struct SessionTransferView: View {
     }
     private var selectionHint: String {
         if model.receiptIssue != nil { return "Open the saved records below to inspect the previous move." }
-        if model.receipt?.needsAttention == true { return "Resolve the previous move below before starting another." }
+        if model.receipt?.needsAttention == true {
+            return model.canKeepReceipt ? "Finish the previous review below, then continue with this selection." : "Review the previous move below before starting another."
+        }
         if !model.targetConfirmed { return "Sign in to the destination in Claude, then check the sign-in to continue." }
         if model.selectedRows.count > 500 { return "Choose up to 500 sessions at a time. Narrow your selection below." }
         if model.selectedRows.isEmpty { return "Choose one or more accounts. You can pick individual sessions, too." }
@@ -357,11 +359,11 @@ struct SessionTransferView: View {
 
     private func recoveryNotice(_ receipt: SessionMoveReceipt) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(model.canKeepReceipt ? "Your conversations are in the destination account." : "The previous move needs a review.")
+            Text(model.canKeepReceipt ? "Your previous move can be closed." : "The previous move needs a review.")
                 .font(.system(size: 13, weight: .medium))
-            Text(model.canKeepReceipt ? "Undo can’t safely restore this move. Keep the current placement to continue." : receipt.entries.compactMap(\.problem).first ?? "The saved move has unfinished entries. Review them before another move.")
+            Text(model.canKeepReceipt ? "The conversations are still in the destination. Keep them there to finish this review, then move them again whenever you need." : model.keepReceiptIssue ?? receipt.entries.compactMap(\.problem).first ?? "The saved move has unfinished entries. Review them before another move.")
                 .font(.system(size: 12)).foregroundStyle(palette.secondary).fixedSize(horizontal: false, vertical: true)
-            Button("Review last move") { model.showingResult = true }
+            Button(model.canKeepReceipt ? "Review & continue…" : "Review last move") { model.showingResult = true }
                 .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(palette.codex).disabled(model.busy)
         }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(palette.selection.opacity(0.4), in: RoundedRectangle(cornerRadius: 9))
@@ -376,9 +378,9 @@ struct SessionTransferView: View {
                 .font(.custom("Georgia", size: 27))
             SessionAccountIdentityView(account: receipt.destination, label: model.label(for: receipt.destination), fontSize: 14)
             if model.canKeepReceipt {
-                notice("These conversations are in the destination account, but Undo can’t restore them safely. Keeping this move ends Undo for its remaining sessions.")
+                notice("The conversations are still in this account. Keep them here to finish the previous review. This ends Undo for that move; you can still move them to another account, including back to the original one. Saved records are retained.")
             } else if receipt.needsAttention {
-                notice(receipt.entries.compactMap(\.problem).first ?? "Some entries did not finish. Inspect the saved records or retry Undo.")
+                notice(model.keepReceiptIssue ?? receipt.entries.compactMap(\.problem).first ?? "Some entries did not finish. Inspect the saved records or retry Undo.")
             } else {
                 notice(undone ? "Restored to the original accounts. Your conversation history is unchanged." : "Your conversations are ready to continue in Claude.")
             }
@@ -396,7 +398,7 @@ struct SessionTransferView: View {
             } label: { Text("Details · \(receipt.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))").font(.system(size: 12)) }.tint(palette.secondary)
             HStack(spacing: 18) {
                 if model.canKeepReceipt {
-                    Button("Keep this move & continue") { model.keepLastMove() }.buttonStyle(.borderedProminent).tint(palette.codex)
+                    Button("Keep here & continue") { model.keepLastMove() }.buttonStyle(.borderedProminent).tint(palette.codex)
                     Button("Open Claude") { model.openClaude() }.buttonStyle(.plain)
                 } else {
                     Button("Open Claude") { model.openClaude() }.buttonStyle(.borderedProminent).tint(palette.codex)
@@ -407,7 +409,7 @@ struct SessionTransferView: View {
                 Button("Show saved records…") { model.showSavedRecords() }.buttonStyle(.link).font(.system(size: 12))
             }
             if !receipt.needsAttention {
-                if receipt.canUndo { notice("Undo is available while the entries and their history remain unchanged.") }
+                if receipt.canUndo { notice("Undo is available while the entries and their history remain unchanged. To move back after continuing a conversation, sign in to its original account and start a new move.") }
                 Button(undone ? "Back to accounts" : "Move more sessions") { model.showAccountSelection() }
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(palette.codex).disabled(model.busy)
             } else {
@@ -437,6 +439,7 @@ struct SessionTransferView: View {
                         Text("Email and organization names come from local profile records. Missing emails can be added with a local display label.")
                         Text("Pins and groups describe the source account. They do not transfer.")
                         Text("Move changes account entries and saves their originals for Undo. Conversation files stay in place. Undo stops if an entry or its history has changed.")
+                        Text("You can move a conversation between accounts again later. Sign in to the next destination and start a new move, including when moving back.")
                     }.font(.system(size: 12)).foregroundStyle(palette.ink)
                         .fixedSize(horizontal: false, vertical: true).padding(20).frame(width: 330).background(palette.canvas)
                 }

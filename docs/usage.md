@@ -115,13 +115,18 @@ and a durable operation record are saved under
 Remote Control bridge references and per-session permission grants are not
 carried into the destination. Reapply organization and permissions in Claude.
 
-**Undo last** restores original entries only while placement and history can
-still be verified. Later conversation changes are preserved and reported;
-Undo does not erase new messages. After a verified completed move, **Keep this
-move & continue** may be offered to retain its current placement and end Undo.
-Incomplete operations, missing history and ambiguous older records require
-inspection before another move. **Show saved records…** opens the local records.
-Backups are retained, with no automatic pruning in this release.
+**You can move the same conversation between accounts again later**, including
+A → B → A. Sign in to the next destination and start a new move. Conversation
+history stays in the same file, including messages added between moves.
+
+**Undo last** rolls back the last operation only while its entries and history
+remain unchanged. Moving back after continuing a conversation is a new move.
+If a stopped Undo leaves a review open, **Keep here & continue** closes that
+review after Decaf verifies the current placement, history and saved originals.
+This also works for older receipts when Claude has rewritten a valid listing.
+It ends Undo for that operation; you can still move those conversations again.
+Missing history or ambiguous placement must be inspected first. **Show saved
+records…** opens the retained local records; keeping a move does not delete backups.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/sessions-dark.png">

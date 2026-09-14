@@ -98,14 +98,29 @@ final class SessionMoveTests: XCTestCase {
         _ = try engine.keepCurrentPlacement(moved.id)
         XCTAssertEqual(try readObject(target(0))["title"] as? String, "Continued conversation")
     }
-    func testLegacyReceiptWithReplacedDestinationCannotBeAcknowledged() throws {
+    func testLegacyReceiptWithVerifiedRewrittenDestinationCanBeKept() throws {
         let moved = try engine.move(plan(), now: now)
         let file = engine.stateRoot.appendingPathComponent(moved.id.uuidString + "/entry-0.json")
         var entry = try readObject(file); entry.removeValue(forKey: "moveCompleted"); try object(entry, file)
-        let data = try Data(contentsOf: target(0)); try data.write(to: target(0), options: .atomic)
+        var updated = try readObject(target(0)); updated["title"] = "Continued after the old move"
+        let data = try JSONSerialization.data(withJSONObject: updated)
+        try data.write(to: target(0), options: .atomic)
+        // A local session can retain old bridge records after Remote Control
+        // was disabled. Those records must not make receipt recovery impossible.
+        let continued = try Data(contentsOf: transcript(0)) + Data("{\"type\":\"bridge-session\"}\n{\"type\":\"system\"}\n".utf8)
+        try continued.write(to: transcript(0))
         XCTAssertTrue(try engine.undo(moved.id).needsAttention)
-        XCTAssertThrowsError(try engine.keepCurrentPlacement(moved.id))
-        XCTAssertTrue(try engine.latest()!.needsAttention)
+        let metadataOnly = SessionMoveEngine(paths: paths, stateRoot: engine.stateRoot,
+            assertDesktopStopped: { throw SessionIssue(.workerActive, "Keeping must not quit Claude") })
+        XCTAssertTrue(try metadataOnly.canKeepCurrentPlacement(moved.id))
+        let kept = try metadataOnly.keepCurrentPlacement(moved.id)
+        XCTAssertFalse(kept.needsAttention); XCTAssertFalse(kept.canUndo)
+        XCTAssertEqual(kept.entries[0].state, .kept)
+        XCTAssertNil(kept.entries[0].moveCompleted) // no invented completion provenance
+        XCTAssertEqual(try Data(contentsOf: target(0)), data)
+        XCTAssertEqual(try Data(contentsOf: transcript(0)), continued)
+        XCTAssertTrue(try exists(engine.stateRoot.appendingPathComponent(moved.id.uuidString + "/before-0.json")))
+        XCTAssertTrue(try exists(engine.stateRoot.appendingPathComponent(moved.id.uuidString + "/retired-0.json")))
     }
     func testAmbiguousPlacementCannotBeDismissedAsKept() throws {
         var failing = engine

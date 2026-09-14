@@ -97,10 +97,15 @@ Code 会话**。换账号后看不到旧会话时，可以把它们移到当前�
 `~/Library/Application Support/Decaf/SessionMoves/`。分组位置、置顶、Remote Control
 桥接引用与会话权限不会带到目标账号，需要在 Claude 中重新设置。
 
-**Undo last** 仅在记录位置和历史仍能验证时恢复原始条目；之后新增的消息会保留，
-不会被撤销删除。已完成且能够验证当前位置的迁移，可通过 **Keep this move & continue**
-保留结果并结束撤销资格。未完成操作、缺失历史或无法确认的旧记录需要先检查，再继续
-迁移；**Show saved records…** 可打开本地记录。本版不自动清理备份。
+**同一个会话可以在账号之间反复迁移**，例如 A → B → A。先登录下一个目标账号，
+再发起一次新的迁移。对话历史始终留在同一个文件中，两次迁移之间新增的消息也会保留。
+
+**Undo last** 仅在原始条目和历史未变化时回退上一次操作；继续对话后要迁回原账号，
+请发起新的迁移。如果撤销停止后留下待检查记录，Decaf 核对当前位置、对话历史和原始
+备份后，会提供 **Keep here & continue** 结束这次检查。旧记录遇到 Claude 正常重写
+会话入口时也可以使用。这会结束那次操作的 Undo，但仍能继续迁移同一个会话。
+缺失历史或位置不明确时仍需先检查。**Show saved records…** 可查看本地记录，
+保留当前位置不会删除备份。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/sessions-dark.png">

@@ -16,6 +16,7 @@ final class SessionTransferModel: ObservableObject {
     @Published private(set) var receipt: SessionMoveReceipt?
     @Published private(set) var receiptIssue: String?
     @Published private(set) var canKeepReceipt = false
+    @Published private(set) var keepReceiptIssue: String?
     @Published var showingResult = false
     @Published private(set) var isTransferring = false
     private let catalog: SessionCatalog
@@ -170,13 +171,16 @@ final class SessionTransferModel: ObservableObject {
             let inventory = catalog.scan(runtime: runtime)
             let receipt = Result { try engine.latest() }
             let canKeep: Bool
+            var keepIssue: String?
             if case .success(let latest?) = receipt, latest.needsAttention {
-                canKeep = (try? engine.canKeepCurrentPlacement(latest.id)) == true
+                do { canKeep = try engine.canKeepCurrentPlacement(latest.id) }
+                catch { canKeep = false; keepIssue = error.localizedDescription }
             } else { canKeep = false }
-            return (inventory, receipt, canKeep)
+            return (inventory, receipt, canKeep, keepIssue)
         }.value
         accept(result.0)
         canKeepReceipt = result.2
+        keepReceiptIssue = result.3
         switch result.1 {
         case .success(let latest): receipt = latest; receiptIssue = nil
         case .failure(let error): receiptIssue = error.localizedDescription
@@ -300,8 +304,8 @@ final class SessionTransferModel: ObservableObject {
                 receipt = try await Task.detached(priority: .userInitiated) {
                     try engine.keepCurrentPlacement(id)
                 }.value
-                message = nil; showingResult = false
-                sources.removeAll(); excludedRows.removeAll()
+                message = "Previous review finished. You can move these conversations again, including back to their original account."
+                showingResult = false
             } catch { message = error.localizedDescription }
             await readFreshState()
             busy = false

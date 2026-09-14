@@ -5,6 +5,21 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-09-14
+
+### Fixed
+
+- **Move sessions** no longer requires a specific Claude Desktop version.
+  Compatibility is checked against local account identity, session records and
+  transcripts; unreadable, conflicting and active entries remain protected.
+- A previous move whose Undo was blocked after a conversation continued can be
+  kept once its current placement is verified, including older saved operations.
+  **Keep here & continue** preserves new history and unblocks the next move.
+- Historical Remote Control records no longer prevent keeping a verified local
+  move. Current remote sessions remain ineligible for migration.
+- Explain how to move the same conversation back with a new Move, preserve the
+  next selection during recovery, and show why a saved move cannot be kept.
+
 ## [0.3.4] - 2026-09-13
 
 ### Fixed

@@ -96,10 +96,26 @@ final class SessionTransferTests: XCTestCase {
         try writeIdentity(target)
         XCTAssertEqual(catalog.scan(runtime: runtime, now: now).currentAccount, target)
     }
-    func testNoBridgeStateIsNormalButConflictingBridgeStateRefuses() throws {
+    func testBridgeStateCorroboratesTheOrganizationAndOnlyAContradictionRefuses() throws {
+        let bridgeURL = paths.desktop.appendingPathComponent("bridge-state.json")
+        // Absent is normal — builds without Remote Control never write the file.
         XCTAssertEqual(try catalog.currentAccount(runtime: runtime, now: now), target)
-        try object([source.organizationID + ":" + source.accountID: [:]], at: paths.desktop.appendingPathComponent("bridge-state.json"))
-        XCTAssertThrowsError(try catalog.currentAccount(runtime: runtime, now: now))
+        // Written before an account switch, it names only the account left behind.
+        // That is silence about the account in hand, not a disagreement with it.
+        try object([source.organizationID + ":" + source.accountID: [:]], at: bridgeURL)
+        XCTAssertEqual(try catalog.currentAccount(runtime: runtime, now: now), target)
+        // Naming the current account under its own organization corroborates.
+        try object([target.organizationID + ":" + target.accountID: [:],
+                    source.organizationID + ":" + source.accountID: [:]], at: bridgeURL)
+        XCTAssertEqual(try catalog.currentAccount(runtime: runtime, now: now), target)
+        // Binding this exact account to a different organization contradicts it.
+        try object([source.organizationID + ":" + target.accountID: [:]], at: bridgeURL)
+        XCTAssertThrowsError(try catalog.currentAccount(runtime: runtime, now: now)) {
+            XCTAssertEqual(($0 as? SessionIssue)?.code, .identityUnknown)
+        }
+        // A key that is not an account pair is not an opinion about any account.
+        try object(["not-a-pair": [:]], at: bridgeURL)
+        XCTAssertEqual(try catalog.currentAccount(runtime: runtime, now: now), target)
     }
     func testNullCliIDResolvesUsingTheListingSessionID() throws {
         try object(["sessionId": "local_" + slotID, "cliSessionId": NSNull(), "cwd": root.path], at: rowURL)

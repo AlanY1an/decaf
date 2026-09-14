@@ -55,9 +55,14 @@ final class SessionTransferModel: ObservableObject {
     }
     var sourceRows: [SessionListing] { (inventory?.rows ?? []).filter { sources.contains($0.account) } }
     var targetConfirmed: Bool { destination != nil && destination == inventory?.currentAccount }
+    var desktopVersionIssue: String? {
+        guard let version = inventory?.runtime?.version else { return nil }
+        do { try SessionCatalog.requireSupportedDesktopVersion(version); return nil }
+        catch { return error.localizedDescription }
+    }
     var canReview: Bool {
         !busy && targetConfirmed && !selectedRows.isEmpty && selectedRows.count <= 500
-            && receipt?.needsAttention != true && receiptIssue == nil
+            && receipt?.needsAttention != true && receiptIssue == nil && desktopVersionIssue == nil
     }
     func label(for account: DesktopAccount) -> SessionAccountLabel { accountLabels[account] ?? .init() }
     func displayName(_ account: DesktopAccount) -> String { label(for: account).email ?? account.shortName }
@@ -224,9 +229,10 @@ final class SessionTransferModel: ObservableObject {
         operation = Task {
             var shouldReopen = false
             do {
-                guard Bundle(url: Self.desktopURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String == SessionCatalog.testedDesktopVersion else {
-                    throw SessionIssue(.unsupportedVersion, "This Claude version has not been verified for moving sessions.")
+                guard let version = Bundle(url: Self.desktopURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else {
+                    throw SessionIssue(.unsupportedVersion, "Claude Desktop's installed version could not be read. No sessions were changed.")
                 }
+                try SessionCatalog.requireSupportedDesktopVersion(version)
                 if let plan {
                     guard let (_, runtime) = runningDesktop(), runtime == plan.runtime,
                           try catalog.currentAccount(runtime: runtime) == plan.destination else {

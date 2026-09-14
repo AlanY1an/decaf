@@ -91,7 +91,7 @@ This builds and opens the checkout locally. See [Contributing](../CONTRIBUTING.m
 ## Move sessions
 
 **Move sessions · Claude Code** in the sidebar moves local Code conversations
-between accounts in **Claude Desktop 1.52386.3**. It is useful after signing into
+between accounts in **Claude Desktop 1.52386.3 and 1.52386.6**. It is useful after signing into
 a different account and finding that earlier conversations no longer appear.
 Other Desktop versions are listed for inspection but cannot move sessions until
 their format is verified. Codex, web chats and remote/scheduled sessions are not

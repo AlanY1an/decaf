@@ -30,13 +30,19 @@ public enum HandoffVerification: Equatable, Sendable {
 extension SessionCatalog {
     // Deliberately measured-build scoped until the public importer has a stable
     // contract. A Desktop update prompts re-verification rather than a guess.
-    public static let testedDesktopVersion = "1.52386.3"
+    public static let testedDesktopVersion = "1.52386.6"
+    public static let testedDesktopVersions = ["1.52386.3", testedDesktopVersion]
+
+    public static func requireSupportedDesktopVersion(_ version: String) throws {
+        guard testedDesktopVersions.contains(version) else {
+            throw SessionIssue(.unsupportedVersion,
+                "Claude Desktop \(version) has not been verified for moving sessions. Supported versions: \(testedDesktopVersions.joined(separator: ", ")).")
+        }
+    }
 
     public func prepare(_ source: SessionListing, runtime: DesktopRuntime?, now: Date = Date()) throws -> SessionHandoff {
         guard let runtime else { throw SessionIssue(.desktopNotRunning, "Open Claude Desktop before choosing a destination account.") }
-        guard runtime.version == Self.testedDesktopVersion else {
-            throw SessionIssue(.unsupportedVersion, "This Claude Desktop version has not been verified for session handoff yet.")
-        }
+        try Self.requireSupportedDesktopVersion(runtime.version)
         let inventory = scan(runtime: runtime, now: now)
         guard let destination = inventory.currentAccount else {
             throw inventory.issues.first ?? SessionIssue(.identityUnknown, "The current account could not be confirmed.")

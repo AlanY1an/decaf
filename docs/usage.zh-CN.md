@@ -80,7 +80,7 @@ Scripts/run.sh
 
 ## 迁移会话
 
-侧边栏 **Move sessions · Claude Code** 用于迁移 **Claude Desktop 1.52386.3 中的本地
+侧边栏 **Move sessions · Claude Code** 用于迁移 **Claude Desktop 1.52386.3 和 1.52386.6 中的本地
 Code 会话**。换账号后看不到旧会话时，可以把它们移到当前账号。其他 Desktop 版本
 可以查看记录，但必须验证格式后才能迁移；不支持 Codex、网页聊天或远程／计划会话。
 

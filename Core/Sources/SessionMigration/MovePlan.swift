@@ -36,7 +36,6 @@ public struct SessionMovePlanner: Sendable {
 
     public func prepare(sources: Set<String>, destination: DesktopAccount, runtime: DesktopRuntime?, now: Date = Date()) throws -> SessionMovePlan {
         guard let runtime else { throw issue(.desktopNotRunning, "Open Claude Desktop before reviewing a move.") }
-        try SessionCatalog.requireSupportedDesktopVersion(runtime.version)
         guard try catalog.currentAccount(runtime: runtime, now: now) == destination else {
             throw issue(.identityUnknown, "Sign in to the selected destination in Claude Desktop, then refresh.")
         }

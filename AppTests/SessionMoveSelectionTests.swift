@@ -5,7 +5,7 @@ import SessionTransfer
 @Suite("Session move selection")
 @MainActor
 struct SessionMoveSelectionTests {
-    private func fixture(_ test: (SessionTransferModel, [DesktopAccount]) throws -> Void) throws {
+    private func fixture(version: String? = nil, _ test: (SessionTransferModel, [DesktopAccount]) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("decaf-selection-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let paths = SessionPaths(desktop: root.appendingPathComponent("desktop"), claude: root.appendingPathComponent("cli"), logs: root.appendingPathComponent("logs"))
@@ -24,9 +24,31 @@ struct SessionMoveSelectionTests {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: paths.claude.appendingPathComponent("projects/test"), withIntermediateDirectories: true)
         }
+        let now = Date()
+        var runtime: DesktopRuntime?
+        if let version {
+            runtime = .init(pid: Int32.max, launchedAt: now.addingTimeInterval(-60), version: version)
+            try JSONSerialization.data(withJSONObject: ["lastKnownAccountUuid": accounts[2].accountID])
+                .write(to: paths.desktop.appendingPathComponent("config.json"))
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = .current
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            let log = "\(formatter.string(from: now.addingTimeInterval(-10))) [info] [LocalSessionManager] Initialization succeeded — accountId=\(accounts[2].accountID), orgId=\(accounts[2].organizationID), existingSessions=1\n"
+            try Data(log.utf8).write(to: paths.logs.appendingPathComponent("main.log"))
+        }
         let catalog = SessionCatalog(paths: paths)
-        let model = SessionTransferModel(catalog: catalog, inventory: catalog.scan(runtime: nil), labelDefaults: nil, migrationRoot: root.appendingPathComponent("state"))
+        let model = SessionTransferModel(catalog: catalog, inventory: catalog.scan(runtime: runtime, now: now), labelDefaults: nil, migrationRoot: root.appendingPathComponent("state"))
         try test(model, accounts)
+    }
+
+    @Test(arguments: ["1.52386.7", "2.0.0", "unknown", ""])
+    func reviewRemainsAvailableWithConfirmedIdentityRegardlessOfVersion(version: String) throws {
+        try fixture(version: version) { model, accounts in
+            model.toggleSource(accounts[0])
+            #expect(model.targetConfirmed)
+            #expect(model.selectedRows.count == 1)
+            #expect(model.canReview)
+        }
     }
 
     @Test func openingAndChoosingDestinationNeverPreselectsSources() throws {

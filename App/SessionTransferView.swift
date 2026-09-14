@@ -298,7 +298,6 @@ struct SessionTransferView: View {
     }
     private var selectionHint: String {
         if model.receiptIssue != nil { return "Open the saved records below to inspect the previous move." }
-        if let issue = model.desktopVersionIssue { return issue }
         if model.receipt?.needsAttention == true {
             return model.canKeepReceipt ? "Finish the previous review below, then continue with this selection." : "Review the previous move below before starting another."
         }

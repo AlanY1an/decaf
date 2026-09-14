@@ -71,8 +71,9 @@ using. Select source accounts, confirm the signed-in destination, review the mov
 in Claude. Original entries are saved; Undo is available while the records and
 history can still be verified.
 
-**Claude Code only.** Currently verified for **Claude Desktop 1.52386.3**. Sign in
-to the destination in Claude first. Pins and group placement do not transfer.
+**Local Claude Code sessions in Claude Desktop.** Sign in to the destination in
+Claude first. Decaf checks your local records before moving. Pins and group
+placement do not transfer.
 [Supported sessions and how moves work →](docs/usage.md#move-sessions)
 
 <picture>

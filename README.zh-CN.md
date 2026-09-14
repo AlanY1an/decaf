@@ -68,8 +68,8 @@ Decaf 检测到支持的 Claude Code 或 Codex 活动后，会自动阻止 Mac �
 符合条件的本地会话移到正在使用的账号。选择来源账号，确认已登录的目标，检查迁移内容，再回到
 Claude 继续。原始条目会保留；记录和历史仍能验证时，可以撤销。
 
-**仅限 Claude Code。** 当前已验证 **Claude Desktop 1.52386.3**。先在 Claude
-登录目标账号；置顶和分组位置不会一起转移。
+**仅限 Claude Desktop 中的本地 Claude Code 会话。** 先在 Claude 登录目标账号；
+Decaf 会在迁移前核对本地记录。置顶和分组位置不会一起转移。
 [支持范围与使用方法 →](docs/usage.zh-CN.md#迁移会话)
 
 <picture>

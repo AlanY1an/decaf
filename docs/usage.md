@@ -91,11 +91,12 @@ This builds and opens the checkout locally. See [Contributing](../CONTRIBUTING.m
 ## Move sessions
 
 **Move sessions · Claude Code** in the sidebar moves local Code conversations
-between accounts in **Claude Desktop 1.52386.3 and 1.52386.6**. It is useful after signing into
+between accounts in **Claude Desktop**. It is useful after signing into
 a different account and finding that earlier conversations no longer appear.
-Other Desktop versions are listed for inspection but cannot move sessions until
-their format is verified. Codex, web chats and remote/scheduled sessions are not
-supported by this feature.
+Decaf checks the local account identity, session records and transcripts before
+moving; it does not require a particular Desktop version. Records it cannot
+verify stay in place with a reason shown in the review. Codex, web chats and
+remote/scheduled sessions are not supported by this feature.
 
 1. Sign in to the destination account in Claude Desktop. Open **Move sessions**
    in Decaf, or **Move Claude Code sessions…** in the cup menu.

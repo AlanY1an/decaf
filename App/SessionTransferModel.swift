@@ -55,14 +55,9 @@ final class SessionTransferModel: ObservableObject {
     }
     var sourceRows: [SessionListing] { (inventory?.rows ?? []).filter { sources.contains($0.account) } }
     var targetConfirmed: Bool { destination != nil && destination == inventory?.currentAccount }
-    var desktopVersionIssue: String? {
-        guard let version = inventory?.runtime?.version else { return nil }
-        do { try SessionCatalog.requireSupportedDesktopVersion(version); return nil }
-        catch { return error.localizedDescription }
-    }
     var canReview: Bool {
         !busy && targetConfirmed && !selectedRows.isEmpty && selectedRows.count <= 500
-            && receipt?.needsAttention != true && receiptIssue == nil && desktopVersionIssue == nil
+            && receipt?.needsAttention != true && receiptIssue == nil
     }
     func label(for account: DesktopAccount) -> SessionAccountLabel { accountLabels[account] ?? .init() }
     func displayName(_ account: DesktopAccount) -> String { label(for: account).email ?? account.shortName }
@@ -142,8 +137,8 @@ final class SessionTransferModel: ObservableObject {
     private static let desktopURL = URL(fileURLWithPath: "/Applications/Claude.app")
     private func runningDesktop() -> (NSRunningApplication, DesktopRuntime)? {
         guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL == Self.desktopURL }),
-              let launched = app.launchDate,
-              let version = Bundle(url: Self.desktopURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else { return nil }
+              let launched = app.launchDate else { return nil }
+        let version = Bundle(url: Self.desktopURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         return (app, DesktopRuntime(pid: app.processIdentifier, launchedAt: launched, version: version))
     }
 
@@ -229,10 +224,6 @@ final class SessionTransferModel: ObservableObject {
         operation = Task {
             var shouldReopen = false
             do {
-                guard let version = Bundle(url: Self.desktopURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else {
-                    throw SessionIssue(.unsupportedVersion, "Claude Desktop's installed version could not be read. No sessions were changed.")
-                }
-                try SessionCatalog.requireSupportedDesktopVersion(version)
                 if let plan {
                     guard let (_, runtime) = runningDesktop(), runtime == plan.runtime,
                           try catalog.currentAccount(runtime: runtime) == plan.destination else {

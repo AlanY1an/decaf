@@ -22,7 +22,7 @@ final class SessionTransferTests: XCTestCase {
         source = .init(accountID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", organizationID: "aaaaaaaa-0000-4000-8000-aaaaaaaaaaaa")
         target = .init(accountID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", organizationID: "bbbbbbbb-0000-4000-8000-bbbbbbbbbbbb")
         now = Date(timeIntervalSince1970: 1_789_160_000)
-        runtime = .init(pid: getpid(), launchedAt: now.addingTimeInterval(-60), version: SessionCatalog.testedDesktopVersion)
+        runtime = .init(pid: getpid(), launchedAt: now.addingTimeInterval(-60), version: "2.0.0")
         for directory in [paths.store(source), paths.store(target), paths.logs,
                           paths.claude.appendingPathComponent("sessions"), paths.projects.appendingPathComponent("lossy-folder") ] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -76,6 +76,15 @@ final class SessionTransferTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: rowURL), before)
         XCTAssertEqual(try children(paths.store(target)).count, 0)
         XCTAssertEqual(catalog.verify(plan, runtime: runtime, now: now), .waiting)
+    }
+    func testHandoffAcceptsCompatibleRecordsRegardlessOfVersion() throws {
+        for version in ["1.52386.3", "1.52386.6", "2.0.0", "unknown", ""] {
+            runtime = .init(pid: runtime.pid, launchedAt: runtime.launchedAt, version: version)
+            let plan = try catalog.prepare(listing, runtime: runtime, now: now)
+            try catalog.validate(plan, runtime: runtime, now: now)
+            XCTAssertEqual(plan.destination, target)
+            XCTAssertEqual(plan.resumeURL.absoluteString, "claude://resume?session=" + cliID)
+        }
     }
     func testEmptyDestinationRemainsVisibleAndScheduledRegistryIsNotASession() throws {
         try object(["scheduledTasks": []], at: paths.store(target).appendingPathComponent("scheduled-tasks.json"))

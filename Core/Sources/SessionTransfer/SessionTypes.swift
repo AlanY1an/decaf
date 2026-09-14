@@ -25,7 +25,9 @@ public struct SessionIssue: Error, LocalizedError, Equatable, Codable, Sendable 
     public enum Code: String, Codable, Sendable {
         case missingStore, unreadable, invalidRecord, missingTranscript, ambiguousTranscript
         case incompleteTranscript, changed, identityUnknown, desktopNotRunning
-        case unsupportedVersion, workerActive, workerUnknown, scheduled, remoteSession
+        // Retained only so saved issues from older Decaf builds still decode.
+        case unsupportedVersion
+        case workerActive, workerUnknown, scheduled, remoteSession
         case deleted, alreadyPresent, collision, sameAccount, workingDirectoryMissing
     }
     public let code: Code

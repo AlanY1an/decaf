@@ -27,7 +27,7 @@ final class SessionMoveTests: XCTestCase {
         for folder in [paths.store(a), paths.store(b), paths.store(to), paths.projects.appendingPathComponent("recorded-project"), paths.claude.appendingPathComponent("sessions"), paths.logs] {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
-        now = Date(); runtime = .init(pid: Int32.max, launchedAt: now.addingTimeInterval(-60), version: SessionCatalog.testedDesktopVersion)
+        now = Date(); runtime = .init(pid: Int32.max, launchedAt: now.addingTimeInterval(-60), version: "2.0.0")
         try object(["lastKnownAccountUuid": to.accountID], paths.desktop.appendingPathComponent("config.json"))
         let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.timeZone = .current; f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         let log = "\(f.string(from: now.addingTimeInterval(-10))) [info] [LocalSessionManager] Initialization succeeded — accountId=\(to.accountID), orgId=\(to.organizationID), existingSessions=0\n"

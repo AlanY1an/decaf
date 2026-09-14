@@ -5,6 +5,16 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-09-13
+
+### Fixed
+
+- **Move sessions** can recognize the signed-in destination after switching
+  Claude accounts when the local bridge state still contains the previous
+  account. Includes [PR #5](https://github.com/AlanY1an/decaf/pull/5).
+- Current-account organization conflicts and disagreements between the current
+  configuration and running Claude process still stop a move before placement.
+
 ## [0.3.3] - 2026-09-12
 
 ### Added
@@ -289,3 +299,4 @@ Mac App Store build, which the sandbox makes permanently impossible.
 
 [0.3.0]: https://github.com/AlanY1an/decaf/releases/tag/v0.3.0
 [0.2.1]: https://github.com/AlanY1an/decaf/releases/tag/v0.2.1
+[0.3.4]: https://github.com/AlanY1an/decaf/releases/tag/v0.3.4

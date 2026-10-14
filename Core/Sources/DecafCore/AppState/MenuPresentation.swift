@@ -23,19 +23,31 @@ import HookWire
 
 // MARK: - Icon state
 
-/// The four visual states of the menu bar icon (plan 04 §2).
+/// The visual states of the menu bar icon: plan 04 §2's four, plus plan 07's
+/// lid-closed variant.
 public enum MenuBarIconState: Equatable, Hashable, Sendable {
     case idle
     case manualHold
     /// `sessionCount` >= 1.
     case agentHold(sessionCount: Int)
     case pausedBySafety
+    /// "Keep running with the lid closed" is holding SleepDisabled.
+    case lidSleepActive
 }
 
-/// Pure snapshot → icon-state mapping (plan 04 §2).
+/// Pure snapshot → icon-state mapping (plan 04 §2, plan 07).
 ///
-/// Priority (high → low): pausedBySafety > agentHold > manualHold > idle.
+/// Priority (high → low): lidSleepActive > pausedBySafety > agentHold >
+/// manualHold > idle.
 public func iconState(for s: AppStateSnapshot) -> MenuBarIconState {
+    // First, unconditionally. SleepDisabled is a system-wide setting and the
+    // one state that can overheat a Mac in a bag; plan 07 makes "visible for as
+    // long as it is in effect" a product requirement. The lid controller only
+    // holds while the engine is holding, so in practice this never hides a
+    // safety pause — but if the two ever overlap, the setting that is still
+    // on is the one the user needs to see.
+    if s.lidSleep == .active { return .lidSleepActive }
+
     if s.safetyPause != nil && s.wantsHold { return .pausedBySafety }
 
     // `holdingAgentSessions` / `holdingFallbackAgents`, not the raw arrays: with
@@ -250,6 +262,8 @@ public enum MenuCopy {
                 : "Decaf, agents working, \(n) sessions"
         case .pausedBySafety:
             return "Decaf, paused by a safety protection"
+        case .lidSleepActive:
+            return "Decaf, keeping the Mac awake with the lid closed"
         }
     }
 }

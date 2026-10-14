@@ -1,13 +1,14 @@
-// IconRenderer — four-state menu bar icon (plan 04 §2).
+// IconRenderer — the menu bar icon: plan 04 §2's four states plus plan 07's
+// lid-closed variant.
 //
 // `.menu`-style MenuBarExtra labels are snapshotted into static template images,
-// so the icon is a set of four cached, monochrome template images (18 pt target
+// so the icon is a set of cached, monochrome template images (18 pt target
 // height); state changes swap the image — no animation, ever.
 //
 // This file is drawing only. `MenuBarIconState`, the snapshot → state mapping
-// (priority pausedBySafety > agentHold > manualHold > idle) and the
-// accessibility strings live in DecafCore's MenuPresentation, where they
-// are unit-tested; nothing here decides anything.
+// (priority lidSleepActive > pausedBySafety > agentHold > manualHold > idle)
+// and the accessibility strings live in DecafCore's MenuPresentation, where
+// they are unit-tested; nothing here decides anything.
 
 import AppKit
 import DecafCore
@@ -74,6 +75,14 @@ final class IconRenderer {
                     offset: NSPoint(x: -0.5, y: 0.5)
                 )
                 Self.drawSlashBadge(in: rect)
+            case .lidSleepActive:
+                // Full cup (the Mac is being held awake) with a laptop in the
+                // corner the pause badge uses: same geometry, opposite news.
+                Self.drawSymbol(
+                    "cup.and.saucer.fill", pointSize: 13, in: rect,
+                    offset: NSPoint(x: -0.5, y: 0.5)
+                )
+                Self.drawLidBadge(in: rect)
             }
             return true
         }
@@ -156,13 +165,39 @@ final class IconRenderer {
         symbol.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
     }
 
+    /// lidSleepActive: small laptop at the bottom-right. The glyph is wide and
+    /// flat, so its knockout is a tight rounded rectangle; an oval that clears
+    /// the corners would eat most of the cup.
+    private static func drawLidBadge(in rect: NSRect) {
+        guard
+            let base = NSImage(systemSymbolName: "laptopcomputer", accessibilityDescription: nil),
+            let symbol = base.withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: 7, weight: .bold)
+            )
+        else { return }
+        let size = symbol.size
+        let origin = NSPoint(x: rect.maxX - size.width, y: rect.minY)
+        knockOut(around: NSRect(origin: origin, size: size), shape: .roundedRect)
+        symbol.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+    }
+
+    private enum KnockOutShape { case oval, roundedRect }
+
     /// Punches a hole behind a badge so it reads against the cup silhouette.
-    private static func knockOut(around badgeRect: NSRect) {
+    private static func knockOut(around badgeRect: NSRect, shape: KnockOutShape = .oval) {
         guard let context = NSGraphicsContext.current else { return }
         context.saveGraphicsState()
         context.compositingOperation = .destinationOut
         NSColor.black.setFill()
-        NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.5, dy: -1.5)).fill()
+        switch shape {
+        case .oval:
+            NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.5, dy: -1.5)).fill()
+        case .roundedRect:
+            NSBezierPath(
+                roundedRect: badgeRect.insetBy(dx: -1, dy: -1),
+                xRadius: 1.5, yRadius: 1.5
+            ).fill()
+        }
         context.restoreGraphicsState()
     }
 }

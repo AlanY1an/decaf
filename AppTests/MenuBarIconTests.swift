@@ -1,5 +1,5 @@
-// The menu bar icon: which of the four states a snapshot maps to, and what the
-// renderer promises about the image it hands back.
+// The menu bar icon: which state a snapshot maps to, and what the renderer
+// promises about the image it hands back.
 //
 // The mapping is `iconState(for:)` in DecafCore — IconRenderer holds no
 // opinion of its own and calls it — but the priority it encodes is the app's
@@ -19,7 +19,40 @@ import HookWire
 
 @Suite struct IconStatePriority {
 
-    /// Highest. A gate has suspended the hold, and the user is entitled to see
+    /// Highest. SleepDisabled is a system-wide setting, and plan 07 makes it
+    /// visible for exactly as long as it is in effect — whatever else is true.
+    @Test func lidClosedModeOutranksEverything() {
+        var s = AppStateSnapshot(
+            manual: ManualState(mode: .infinite),
+            agentSessions: [working()],
+            wantsHold: true
+        )
+        s.fallbackAgents = [.codex]
+        s.lidSleep = .active
+        #expect(iconState(for: s) == .lidSleepActive)
+
+        // The controller never holds through a safety pause, but if a publish
+        // ever caught the two together, the setting still on is what to draw.
+        s.safetyPause = .lowBattery(percent: 5, threshold: 20)
+        #expect(iconState(for: s) == .lidSleepActive)
+    }
+
+    /// The switch being on is not the setting being held. Every other status
+    /// means closing the lid still sleeps the Mac, and the icon must not say
+    /// otherwise.
+    @Test func onlyAnActiveLidHoldChangesTheIcon() {
+        let notHolding: [LidSleepStatus] = [
+            .off, .standby, .starting, .needsApproval, .pausedLowBattery,
+            .unavailable(.unsignedBuild), .failed("helper error"),
+        ]
+        for status in notHolding {
+            var s = AppStateSnapshot(agentSessions: [working()], wantsHold: true)
+            s.lidSleep = status
+            #expect(iconState(for: s) == .agentHold(sessionCount: 1), "\(status)")
+        }
+    }
+
+    /// Next. A gate has suspended the hold, and the user is entitled to see
     /// that the thing they asked for is not currently happening — even though
     /// an agent is working and would otherwise win.
     @Test func safetyPauseOutranksEverything() {
@@ -106,6 +139,17 @@ import HookWire
             == "Decaf, agents working, 3 sessions")
         #expect(MenuCopy.accessibilityLabel(for: .pausedBySafety)
             == "Decaf, paused by a safety protection")
+        #expect(MenuCopy.accessibilityLabel(for: .lidSleepActive)
+            == "Decaf, keeping the Mac awake with the lid closed")
+    }
+
+    /// A VoiceOver user cannot see the laptop badge; the status item's label
+    /// has to carry the lid-closed hold on its own.
+    @Test func anActiveLidHoldIsAnnounced() {
+        var s = AppStateSnapshot(manual: ManualState(mode: .infinite), wantsHold: true)
+        s.lidSleep = .active
+        #expect(MenuTextFormatter.accessibilityLabel(for: s)
+            == "Decaf, keeping the Mac awake with the lid closed")
     }
 
     /// Not "manual hold active": this state also carries holds whose source the
@@ -135,7 +179,7 @@ import HookWire
 
     private let states: [MenuBarIconState] = [
         .idle, .manualHold, .agentHold(sessionCount: 1),
-        .agentHold(sessionCount: 4), .pausedBySafety,
+        .agentHold(sessionCount: 4), .pausedBySafety, .lidSleepActive,
     ]
 
     /// Template images are the entire dark-mode / increased-contrast strategy:
@@ -182,9 +226,40 @@ import HookWire
         }
     }
 
+    /// Plan 07: the lid-closed hold gets its own image, not the manual cup it
+    /// would otherwise share a full silhouette with.
+    @Test func theLidClosedImageIsDistinct() {
+        let lid = IconRenderer.shared.image(for: .lidSleepActive)
+        for state in states where state != .lidSleepActive {
+            #expect(IconRenderer.shared.image(for: state) !== lid, "\(state)")
+        }
+        #expect(Self.pixels(of: lid) != Self.pixels(of: IconRenderer.shared.image(for: .manualHold)))
+    }
+
     /// Snapshot → image in one step is what `DecafApp` actually calls.
     @Test func theSnapshotConvenienceGoesThroughTheSameMapping() {
         let s = AppStateSnapshot(manual: ManualState(mode: .infinite), wantsHold: true)
         #expect(IconRenderer.shared.image(for: s) === IconRenderer.shared.image(for: .manualHold))
+
+        var lid = s
+        lid.lidSleep = .active
+        #expect(IconRenderer.shared.image(for: lid) === IconRenderer.shared.image(for: .lidSleepActive))
+    }
+
+    /// The alpha channel at 2x — the only thing a template image carries.
+    private static func pixels(of image: NSImage) -> [UInt8] {
+        let width = Int(image.size.width * 2), height = Int(image.size.height * 2)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return [] }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.restoreGraphicsState()
+        return (0..<height).flatMap { y in
+            (0..<width).map { x in UInt8((rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) * 255) }
+        }
     }
 }

@@ -196,7 +196,18 @@ Monthly totals cover retained local records, including cached tokens. Missing se
 
 Claude Code hooks provide turn-level signals. For Codex, Decaf extends keep-awake across silent tasks when the local log records an unfinished turn and a Codex process still owns that log for writing. Completion, cancellation or a closed writer removes this extension; ordinary file activity still has a five-minute idle window. Two hours without task progress ends the extension. Approval waits are not reliably recorded, so detection remains approximate. Manual keep-awake remains available.
 
-Low Power Mode, a low battery and other safety conditions can pause keep-awake. Closing the lid still allows the Mac to sleep.
+Low Power Mode, a low battery and other safety conditions can pause keep-awake. Closing the lid still allows the Mac to sleep, unless you turn on [Keep Running with Lid Closed](#keep-running-with-lid-closed).
+
+## Keep Running with Lid Closed
+
+A keep-awake hold stops idle sleep, but closing the lid still puts the Mac to sleep. **Keep Running with Lid Closed**, in the cup menu and in **Settings → General**, changes that: while Decaf is keeping the Mac awake, closing the lid does not sleep it. It is off by default.
+
+- **Heat warning.** Each time you turn it on, Decaf reminds you that a Mac running with its lid shut gets warm, so it should not go in a bag or sleeve. Tick **Don't show this again** to skip the reminder.
+- **Login Items approval.** Changing what the lid does needs a small system helper. The first time, macOS asks you to allow it: in **System Settings → General → Login Items & Extensions**, turn on Decaf under **Allow in the Background**. Until then the cup menu shows **Open Login Items…**. This needs the signed Decaf in Applications.
+- **Only during a hold.** The switch does nothing on its own. It works while an agent or a manual hold is keeping the Mac awake, and the cup shows a small laptop badge while it does.
+- **It turns itself off** when the hold ends, when the battery falls below 20% on battery power, when a safety condition pauses keep-awake, or when Decaf quits. If Decaf crashes or stops responding, the helper turns it off within a minute. Closing the lid then sleeps the Mac as usual.
+
+`pmset -g | grep SleepDisabled` shows `1` while the setting is in effect and `0` otherwise.
 
 ## Your data
 

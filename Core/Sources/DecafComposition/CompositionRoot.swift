@@ -73,6 +73,8 @@ public final class CompositionRoot: ObservableObject {
     public let codexUsageMeter: UsageMeter
     /// "Turn the screen off now" adapter (pmset in production, a fake in tests).
     public let displaySleeper: any DisplaySleeping
+    /// "Keep running with the lid closed" (plan 07): follows the engine's hold.
+    public let lidSleep: LidSleepController
 
     /// Kept for the usage catch-up in `start()` (the coordinator owns the
     /// callbacks; this reference only answers "which transcript files exist").
@@ -117,6 +119,9 @@ public final class CompositionRoot: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var pumpTasks: [Task<Void, Never>] = []
     private var started = false
+    /// Re-entrancy guard: the lid controller reports status changes while
+    /// `republish()` is feeding it the engine's verdict.
+    private var republishing = false
 
     // MARK: - Init
 
@@ -156,7 +161,11 @@ public final class CompositionRoot: ObservableObject {
         // because the concrete `UNUserNotificationCenter` adapter needs an
         // application bundle to exist and this package is also linked into
         // `swift test` and `decaf-smoke`. The app target injects the real one.
-        userNotifier: (any UserNotifying)? = nil
+        userNotifier: (any UserNotifying)? = nil,
+        // The root helper behind the lid-closed switch. nil — the switch reports
+        // itself unavailable — for the same reason as the notifier: the real one
+        // talks to launchd, which tests and the smoke harness must never do.
+        lidSleepHelper: (any LidSleepHelperConnecting)? = nil
     ) {
         self.settings = settings
         self.displaySleeper = displaySleeper
@@ -171,6 +180,11 @@ public final class CompositionRoot: ObservableObject {
         )
         self.engine = PowerStateEngine(asserter: asserter, tuning: tuning)
         self.manualHold = ManualHoldController(engine: engine)
+        self.lidSleep = LidSleepController(
+            enabled: settings.lidSleepEnabled,
+            helper: lidSleepHelper,
+            notifier: userNotifier
+        )
         self.socketServer = HookSocketServer(socketPath: socketPath)
         let usageMeter = UsageMeter(store: usageStore, timeZone: usageTimeZone)
         self.usageMeter = usageMeter
@@ -204,6 +218,9 @@ public final class CompositionRoot: ObservableObject {
                 }
             }
         )
+        // Helper replies land after the call that caused them; this is how
+        // they reach the snapshot.
+        lidSleep.onChange = { [weak self] in self?.republish() }
     }
 
     // MARK: - Lifecycle
@@ -228,7 +245,11 @@ public final class CompositionRoot: ObservableObject {
         started = true
 
         // Monitors -> engine (thin adapters; all decisions in the engine).
-        batteryMonitor.bind(to: engine)
+        // The battery also reaches the lid switch, whose floor is its own.
+        batteryMonitor.onSnapshot = { [weak engine, weak lidSleep] snapshot in
+            engine?.updateBattery(snapshot)
+            lidSleep?.updateBattery(snapshot)
+        }
         lowPowerModeMonitor.bind(to: engine)
         workspaceMonitors.bind(to: engine)
         batteryMonitor.start()
@@ -599,6 +620,18 @@ public final class CompositionRoot: ObservableObject {
     // MARK: - Snapshot assembly (R11 seam 2)
 
     private func republish() {
+        guard !republishing else { return }
+        republishing = true
+        defer { republishing = false }
+
+        // Lid-closed mode follows the hold that is actually running: a hold a
+        // safety gate has suspended keeps the lid switch off too.
+        if case .holding = engine.status {
+            lidSleep.updateEngineHolding(true)
+        } else {
+            lidSleep.updateEngineHolding(false)
+        }
+
         // Engine truth: `.manual` gone from the registry (expired, willSleep,
         // deactivated) clears the UI's manual state.
         if !engine.activeSources.contains(.manual) {
@@ -631,7 +664,8 @@ public final class CompositionRoot: ObservableObject {
             selectedDisplayPolicy: settings.defaultDisplayPolicy,
             hasEverDetectedAgent: everDetectedAgent,
             agentAutoKeepAwake: agentAutoKeepAwake,
-            usage: usageOverview
+            usage: usageOverview,
+            lidSleep: lidSleep.status
         )
         // The latch, closed here rather than at each of the places evidence
         // arrives: `hasLiveAgentEvidence` is defined on the snapshot, so this
@@ -747,6 +781,17 @@ extension CompositionRoot: AppCommands {
     ///
     /// Note "in effect", not "requested": a hold suspended by a safety gate
     /// holds no display assertion, so blanking is allowed and works.
+    public func setLidSleepEnabled(_ enabled: Bool) {
+        settings.lidSleepEnabled = enabled
+        lidSleep.setEnabled(enabled)
+        logger.log("lid-closed mode set to \(enabled, privacy: .public)")
+        republish()
+    }
+
+    public func openLidSleepApprovalSettings() {
+        lidSleep.openApprovalSettings()
+    }
+
     public func turnOffDisplayNow() {
         guard engine.effectiveDisplayPolicy != .keepOn else {
             logger.log("turnOffDisplayNow refused: display is being kept on")

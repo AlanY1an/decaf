@@ -124,6 +124,9 @@ public struct AppStateSnapshot: Equatable, Sendable {
     /// the UI renders the section only when it has something honest to show.
     public var usage: UsageOverview?
 
+    /// "Keep running with the lid closed": the switch and what it is doing.
+    public var lidSleep: LidSleepStatus
+
     /// Whether "Turn Off Display Now" may run. Holding the display assertion
     /// and blanking the display fight each other (the screen would wake right
     /// back up), so the action is unavailable exactly while `.keepOn` is in
@@ -201,7 +204,8 @@ public struct AppStateSnapshot: Equatable, Sendable {
         selectedDisplayPolicy: DisplayPolicy = .allowSleep,
         hasEverDetectedAgent: Bool = false,
         agentAutoKeepAwake: Bool = true,
-        usage: UsageOverview? = nil
+        usage: UsageOverview? = nil,
+        lidSleep: LidSleepStatus = .off
     ) {
         self.manual = manual
         self.agentSessions = agentSessions
@@ -214,5 +218,6 @@ public struct AppStateSnapshot: Equatable, Sendable {
         self.hasEverDetectedAgent = hasEverDetectedAgent
         self.agentAutoKeepAwake = agentAutoKeepAwake
         self.usage = usage
+        self.lidSleep = lidSleep
     }
 }

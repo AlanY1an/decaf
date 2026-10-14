@@ -37,6 +37,8 @@ targets:
         product: SessionTransfer
       - package: DecafCore
         product: SessionMigration
+      - package: DecafCore
+        product: LidSleepXPC
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.alany1an.decaf
@@ -85,16 +87,28 @@ targets:
           done
           swift build "${BUILD_ARGS[@]}" --product decaf-bridge
           swift build "${BUILD_ARGS[@]}" --product decaf-statusline
+          swift build "${BUILD_ARGS[@]}" --product decaf-lid-helper
           HELPER_BIN_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
           HELPERS_DIR="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers"
           mkdir -p "$HELPERS_DIR"
           cp "$HELPER_BIN_DIR/decaf-bridge" "$HELPERS_DIR/"
           cp "$HELPER_BIN_DIR/decaf-statusline" "$HELPERS_DIR/"
+          # The lid-closed root helper (plan 07). SMAppService.daemon wants the
+          # executable inside the bundle and its launchd plist under
+          # Contents/Library/LaunchDaemons. Its signing identifier is what the
+          # app's XPC peer requirement pins, so it is set explicitly.
+          cp "$HELPER_BIN_DIR/decaf-lid-helper" "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/"
+          DAEMONS_DIR="$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchDaemons"
+          mkdir -p "$DAEMONS_DIR"
+          cp "$SRCROOT/Core/Sources/decaf-lid-helper/io.github.alany1an.decaf.lid-helper.plist" "$DAEMONS_DIR/"
           if [ "${CODE_SIGNING_ALLOWED:-YES}" = "YES" ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
             codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
               "$HELPERS_DIR/decaf-bridge"
             codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
               "$HELPERS_DIR/decaf-statusline"
+            codesign --force --options runtime --sign "$EXPANDED_CODE_SIGN_IDENTITY" \
+              --identifier io.github.alany1an.decaf.lid-helper \
+              "$TARGET_BUILD_DIR/$EXECUTABLE_FOLDER_PATH/decaf-lid-helper"
           fi
     scheme:
       # So `xcodebuild -scheme Decaf test` runs the app-layer tests. The app

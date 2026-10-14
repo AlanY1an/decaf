@@ -28,6 +28,7 @@ struct MenuContentView: View {
     let tabRouter: SettingsTabRouter
     let customHold: CustomHoldPresenter
     let usageStatistics: UsageStatisticsPresenter
+    let lidSleep: LidSleepGate
 
 
     var body: some View {
@@ -222,6 +223,21 @@ struct MenuContentView: View {
         // reassurance most people never receive, and the cost here is one short
         // line no wider than the rows it explains.
         Text(DisplayActionCopy.screenOnlyNote)
+
+        Divider()
+
+        // Lid-closed mode, its own group: it modifies every hold rather than
+        // starting one, and its status line has to sit right under it because
+        // "on" does not mean "active" — it only acts while a hold runs. The
+        // gate shows the heat warning before the first time.
+        Toggle(LidSleepCopy.menuTitle, isOn: Binding(
+            get: { snapshot.lidSleep.isOn },
+            set: { lidSleep.request($0) }
+        ))
+        Text(LidSleepCopy.statusLine(snapshot.lidSleep))
+        if snapshot.lidSleep == .needsApproval {
+            Button("Open Login Items…") { lidSleep.presentApproval() }
+        }
 
         Divider()
 

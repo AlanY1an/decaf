@@ -768,6 +768,17 @@ extension CompositionRoot: AppCommands {
         republish()
     }
 
+    public func setLidSleepEnabled(_ enabled: Bool) {
+        settings.lidSleepEnabled = enabled
+        lidSleep.setEnabled(enabled)
+        logger.log("lid-closed mode set to \(enabled, privacy: .public)")
+        republish()
+    }
+
+    public func openLidSleepApprovalSettings() {
+        lidSleep.openApprovalSettings()
+    }
+
     /// Blanks the display now (`pmset displaysleepnow`).
     ///
     /// CRITICAL INTERACTION — chosen rule: REFUSE, do not downgrade. While the
@@ -781,17 +792,6 @@ extension CompositionRoot: AppCommands {
     ///
     /// Note "in effect", not "requested": a hold suspended by a safety gate
     /// holds no display assertion, so blanking is allowed and works.
-    public func setLidSleepEnabled(_ enabled: Bool) {
-        settings.lidSleepEnabled = enabled
-        lidSleep.setEnabled(enabled)
-        logger.log("lid-closed mode set to \(enabled, privacy: .public)")
-        republish()
-    }
-
-    public func openLidSleepApprovalSettings() {
-        lidSleep.openApprovalSettings()
-    }
-
     public func turnOffDisplayNow() {
         guard engine.effectiveDisplayPolicy != .keepOn else {
             logger.log("turnOffDisplayNow refused: display is being kept on")

@@ -66,7 +66,12 @@ Two properties worth knowing:
 
 `kIOPMAssertPreventUserIdleSystemSleep` works on battery as well as on mains.
 No assertion type prevents lid-close sleep — that is a kernel behaviour, not a
-policy, and it is why clamshell support is a separate, unshipped phase.
+policy. Keep Running with Lid Closed works around it with `decaf-lid-helper`, a
+root LaunchDaemon registered through `SMAppService.daemon` and reached over
+privileged XPC. It sets `SleepDisabled` only while `LidSleepController`
+(DecafCore) says Decaf is holding, and writes it back to 0 when the app
+releases, disconnects or misses heartbeats, when the battery drops below 20% on
+battery power, and at startup if it finds a leftover 1.
 
 ---
 

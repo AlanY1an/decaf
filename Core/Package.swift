@@ -24,10 +24,12 @@ let package = Package(
         .library(name: "UsageMetering", targets: ["UsageMetering"]),
         .library(name: "SessionTransfer", targets: ["SessionTransfer"]),
         .library(name: "SessionMigration", targets: ["SessionMigration"]),
+        .library(name: "LidSleepXPC", targets: ["LidSleepXPC"]),
         .executable(name: "decaf-sessions", targets: ["decaf-sessions"]),
         .executable(name: "decaf-bridge", targets: ["decaf-bridge"]),
         .executable(name: "decaf-statusline", targets: ["decaf-statusline"]),
         .executable(name: "decaf-smoke", targets: ["decaf-smoke"]),
+        .executable(name: "decaf-lid-helper", targets: ["decaf-lid-helper"]),
     ],
     targets: [
         .target(
@@ -35,7 +37,16 @@ let package = Package(
         ),
         .target(
             name: "DecafCore",
-            dependencies: ["HookWire", "UsageMetering"]
+            dependencies: ["HookWire", "UsageMetering", "LidSleepXPC"]
+        ),
+        // The app <-> root helper contract for the lid-closed switch (plan 07).
+        // Foundation, IOKit and Security only: the root helper links this and
+        // nothing else.
+        .target(name: "LidSleepXPC"),
+        .executableTarget(
+            name: "decaf-lid-helper",
+            dependencies: ["LidSleepXPC"],
+            exclude: ["io.github.alany1an.decaf.lid-helper.plist"] // embedded by project.yml
         ),
         // Strict-JSON helpers shared by transcript readers (AgentDetection's
         // wait-signal parser and UsageMetering's usage parser). `package`

@@ -180,7 +180,7 @@ struct DecafSettingsPane: View {
                 ZStack(alignment: .topLeading) {
                     Group {
                         switch router.selectedTab {
-                        case .general: GeneralSettingsTab(settings: settings, homeLayout: true)
+                        case .general: GeneralSettingsTab(settings: settings, homeLayout: true, lidSleep: AppEnvironment.shared.lidSleep)
                         case .agents: AgentsSettingsTab(settings: settings, integrations: integrations, homeLayout: true)
                         case .safety: SafetySettingsTab(settings: settings, homeLayout: true)
                         case .profile: BrewProfileEditor(profile: profile)

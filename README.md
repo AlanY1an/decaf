@@ -35,7 +35,7 @@ idle sleep. It releases the hold after activity ends and the applicable grace
 window expires. Running both? One finishing does not cancel the other’s hold.
 
 Keep-awake respects your safety settings. Codex detection is approximate.
-The screen can sleep while work continues; closing the lid still allows system sleep. [Detection and safety settings →](docs/usage.md#what-to-expect)
+The screen can sleep while work continues; closing the lid still allows system sleep unless [Keep Running with Lid Closed](docs/usage.md#keep-running-with-lid-closed) is on. [Detection and safety settings →](docs/usage.md#what-to-expect)
 
 <picture>
   <source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/home-light.png">

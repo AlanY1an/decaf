@@ -29,7 +29,8 @@ struct DecafApp: App {
                 toggleGate: env.toggleGate,
                 tabRouter: env.tabRouter,
                 customHold: env.customHold,
-                usageStatistics: env.usageStatistics
+                usageStatistics: env.usageStatistics,
+                lidSleep: env.lidSleep
             )
         } label: {
             MenuBarIconLabel(store: env.store, settings: env.settings)

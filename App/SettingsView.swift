@@ -114,7 +114,7 @@ struct SettingsTabs: View {
 
     var body: some View {
         TabView(selection: $tabRouter.selectedTab) {
-            GeneralSettingsTab(settings: settings)
+            GeneralSettingsTab(settings: settings, lidSleep: AppEnvironment.shared.lidSleep)
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag(SettingsTab.general)
             ProfileSettingsTab(profile: profile, showProfile: showProfile)
@@ -161,6 +161,8 @@ enum SettingsSizing {
 struct GeneralSettingsTab: View {
     @ObservedObject var settings: UISettings
     var homeLayout = false
+    /// nil in harnesses that render the page without a running core.
+    var lidSleep: LidSleepGate? = nil
     /// The login item's own state is the source of truth — it can change in
     /// System Settings, and onboarding writes it too. Never a stored pref.
     private let registrar: any LaunchAtLoginRegistering = SMAppServiceRegistrar.shared
@@ -207,6 +209,10 @@ struct GeneralSettingsTab: View {
                     Picker("Display while keeping awake", selection: $settings.defaultDisplayPolicy) {
                         ForEach(DisplayPolicy.allCases, id: \.self) { Text($0.settingsTitle).tag($0) }
                     }.labelsHidden().frame(width: 180)
+                }
+                if let lidSleep {
+                    Divider()
+                    LidSleepSettingsRow(gate: lidSleep)
                 }
             }
             HStack {
@@ -318,6 +324,12 @@ struct GeneralSettingsTab: View {
                 // one behaviour; kept apart they drift, and a reassurance that
                 // is worded differently in two places stops reassuring.
                 SectionFooter(DisplayActionCopy.settingsFooter)
+            }
+
+            if let lidSleep {
+                Section {
+                    LidSleepSettingsRow(gate: lidSleep)
+                }
             }
         }
         .formStyle(.grouped)
@@ -885,7 +897,7 @@ struct SafetySettingsTab: View {
             DecafPreferenceGroup(title: "Built-in protections") {
                 DecafPreferenceRow(title: "Low Power Mode", detail: "Releases the hold while Low Power Mode is on.") { Text("Always on").font(.system(size: 11)).foregroundStyle(.secondary) }
                 Divider()
-                DecafPreferenceRow(title: "Sleep you asked for", detail: "Closing the lid or choosing Sleep comes first.") { Text("Always on").font(.system(size: 11)).foregroundStyle(.secondary) }
+                DecafPreferenceRow(title: "Sleep you asked for", detail: "Closing the lid or choosing Sleep comes first, unless you turn on Keep running with the lid closed.") { Text("Always on").font(.system(size: 11)).foregroundStyle(.secondary) }
                 Divider()
                 DecafPreferenceRow(title: "Switching users", detail: "Releases the hold while you are switched out.") { Text("Always on").font(.system(size: 11)).foregroundStyle(.secondary) }
             }
@@ -916,7 +928,7 @@ struct SafetySettingsTab: View {
                 ProtectionRow(
                     symbol: "moon.zzz",
                     title: "Sleep you asked for",
-                    detail: "Closing the lid or choosing Sleep is never fought."
+                    detail: "Closing the lid or choosing Sleep is never fought, unless you turn on Keep running with the lid closed."
                 )
                 ProtectionRow(
                     symbol: "person.2",

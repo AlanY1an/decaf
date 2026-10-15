@@ -70,4 +70,11 @@ public protocol AppCommands: AnyObject {
     /// `turnOffDisplayUnavailableReason` as the explanation; this refusal is
     /// the belt-and-braces half of the same rule.
     func turnOffDisplayNow()
+
+    /// "Keep running with the lid closed". The caller has already shown the
+    /// heat warning; this persists the choice and applies it.
+    func setLidSleepEnabled(_ enabled: Bool)
+
+    /// Opens System Settings where the root helper is approved.
+    func openLidSleepApprovalSettings()
 }

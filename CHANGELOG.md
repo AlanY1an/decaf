@@ -5,6 +5,18 @@ All notable changes to Decaf will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Keep Running with Lid Closed**, an opt-in switch in the cup menu and
+  Settings → General. While Decaf is keeping the Mac awake, closing the lid no
+  longer sleeps it. A small helper, approved once in Login Items, changes the
+  system setting only during a hold and turns it back off when the hold ends,
+  below 20% battery, or when Decaf quits or stops responding. Turning it on
+  shows a heat warning every time unless you choose not to see it again, and the
+  cup carries a laptop badge while it is in effect.
+
 ## [0.3.5] - 2026-09-14
 
 ### Fixed

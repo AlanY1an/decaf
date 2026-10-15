@@ -32,6 +32,10 @@ public enum SettingsKey {
     public static let agentAutoKeepAwake = "agentAutoKeepAwake"
     public static let menuBarClickAction = "menuBarClickAction"
     public static let showMenuBarTokens = "showMenuBarTokens"
+    /// "Keep running with the lid closed" (plan 07). Default false.
+    public static let lidSleepEnabled = "lidSleepEnabled"
+    /// The user ticked "Don't show this again" on the heat warning. Default false.
+    public static let lidSleepWarningSuppressed = "lidSleepWarningSuppressed"
 }
 
 /// Typed access to Decaf's persisted settings.
@@ -195,5 +199,19 @@ public final class SettingsStore {
     public var showMenuBarTokens: Bool {
         get { defaults.bool(forKey: SettingsKey.showMenuBarTokens) }
         set { defaults.set(newValue, forKey: SettingsKey.showMenuBarTokens) }
+    }
+
+    /// Whether a hold also keeps the Mac running with its lid shut. Off by
+    /// default; every switch-on goes through the heat warning first.
+    public var lidSleepEnabled: Bool {
+        get { defaults.bool(forKey: SettingsKey.lidSleepEnabled) }
+        set { defaults.set(newValue, forKey: SettingsKey.lidSleepEnabled) }
+    }
+
+    /// The heat warning is shown on EVERY switch-on until the user ticks
+    /// "Don't show this again" in it — never silently after the first time.
+    public var lidSleepWarningSuppressed: Bool {
+        get { defaults.bool(forKey: SettingsKey.lidSleepWarningSuppressed) }
+        set { defaults.set(newValue, forKey: SettingsKey.lidSleepWarningSuppressed) }
     }
 }

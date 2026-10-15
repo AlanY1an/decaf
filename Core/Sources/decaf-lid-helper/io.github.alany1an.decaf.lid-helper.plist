@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded at Decaf.app/Contents/Library/LaunchDaemons by the app's
+     post-build script and registered with SMAppService.daemon (plan 07).
+     RunAtLoad: the helper's startup check clears a SleepDisabled left at 1 by a
+     power loss. No KeepAlive: launchd starts it on mach lookup and it exits
+     once idle. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.alany1an.decaf.lid-helper</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/decaf-lid-helper</string>
+	<key>MachServices</key>
+	<dict>
+		<key>io.github.alany1an.decaf.lid-helper.xpc</key>
+		<true/>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>io.github.alany1an.decaf</string>
+	</array>
+</dict>
+</plist>

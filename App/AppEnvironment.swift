@@ -496,6 +496,7 @@ final class AppEnvironment {
     let customHold: CustomHoldPresenter
     let usageStatistics: UsageStatisticsPresenter
     let brewProfile: BrewProfileStore
+    let lidSleep: LidSleepGate
 
     private let claudeIntegration: ClaudeCodeIntegration
     private var bridge: StatusItemBridge?
@@ -518,7 +519,8 @@ final class AppEnvironment {
             // store is injected here rather than defaulted inside the package
             // (plan 09 M5).
             usageStore: UsageStore(),
-            userNotifier: SystemUserNotifier()
+            userNotifier: SystemUserNotifier(),
+            lidSleepHelper: LidSleepHelperClient()
         )
         let store = AppStateStore(snapshot: root.snapshot)
 
@@ -546,6 +548,7 @@ final class AppEnvironment {
             provider: ClaudeIntegrationsProvider(integration: claudeIntegration, root: root)
         )
         self.toggleGate = ManualToggleGate(store: store, commands: root)
+        self.lidSleep = LidSleepGate(store: store, commands: root, settings: settingsStore)
         self.customHold = CustomHoldPresenter(commands: root)
         let brewProfile = BrewProfileStore(defaults: .standard)
         self.brewProfile = brewProfile

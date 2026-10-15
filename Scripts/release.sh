@@ -491,12 +491,34 @@ ARCHIVED_APP="$ARCHIVE_PATH/Products/Applications/$APP_NAME.app"
            -destination 'generic/platform=macOS' -archivePath '$ARCHIVE_PATH'"
 ok "archived $ARCHIVED_APP"
 
+# The lid-closed root helper (plan 07). SMAppService.daemon finds the daemon by
+# its plist under Contents/Library/LaunchDaemons, and launchd runs the plist's
+# BundleProgram from inside the bundle. Lose either one and the switch can
+# never get past "Allow Decaf in Login Items" — and nothing fails until a user
+# tries it, because the app builds, signs and notarizes fine without them.
+LID_HELPER_ID="io.github.alany1an.decaf.lid-helper"
+LID_HELPER_PATH="Contents/MacOS/decaf-lid-helper"
+LID_PLIST_PATH="Contents/Library/LaunchDaemons/$LID_HELPER_ID.plist"
+[ -x "$ARCHIVED_APP/$LID_HELPER_PATH" ] || die "embedded helper missing: $LID_HELPER_PATH
+   The 'Embed helper binaries' post-build script in project.yml did not run or failed."
+[ -f "$ARCHIVED_APP/$LID_PLIST_PATH" ] || die "launchd plist missing: $LID_PLIST_PATH
+   The 'Embed helper binaries' post-build script in project.yml did not copy it."
+plutil -lint "$ARCHIVED_APP/$LID_PLIST_PATH" >/dev/null \
+    || die "$LID_PLIST_PATH is not a valid property list."
+LID_PLIST_LABEL="$(plutil -extract Label raw -o - "$ARCHIVED_APP/$LID_PLIST_PATH" 2>/dev/null || true)"
+LID_PLIST_PROGRAM="$(plutil -extract BundleProgram raw -o - "$ARCHIVED_APP/$LID_PLIST_PATH" 2>/dev/null || true)"
+[ "$LID_PLIST_LABEL" = "$LID_HELPER_ID" ] \
+    || die "$LID_PLIST_PATH has Label '$LID_PLIST_LABEL', expected '$LID_HELPER_ID'."
+[ "$LID_PLIST_PROGRAM" = "$LID_HELPER_PATH" ] \
+    || die "$LID_PLIST_PATH has BundleProgram '$LID_PLIST_PROGRAM', expected '$LID_HELPER_PATH'."
+ok "embedded $LID_HELPER_PATH and its launchd plist present"
+
 # Every executable the app invokes must run on every architecture it advertises.
 APP_ARCHS="$(lipo -archs "$ARCHIVED_APP/Contents/MacOS/$APP_NAME")"
-for HELPER in decaf-bridge decaf-statusline; do
+for HELPER in Helpers/decaf-bridge Helpers/decaf-statusline MacOS/decaf-lid-helper; do
     for TARGET_ARCH in $APP_ARCHS; do
-        lipo "$ARCHIVED_APP/Contents/Helpers/$HELPER" -verify_arch "$TARGET_ARCH" \
-            || die "$HELPER is missing the $TARGET_ARCH slice shipped by the app."
+        lipo "$ARCHIVED_APP/Contents/$HELPER" -verify_arch "$TARGET_ARCH" \
+            || die "${HELPER##*/} is missing the $TARGET_ARCH slice shipped by the app."
     done
 done
 ok "app and embedded helpers support $APP_ARCHS"
@@ -514,12 +536,40 @@ ok "embedded Contents/Helpers/decaf-bridge present"
 # 6. Verify signatures before spending time on notarization
 # ==========================================================================
 
+# Both ends of the lid helper's XPC connection pin the peer to an exact signing
+# identifier and to their own team (LidSleepXPC.requirement). codesign names a
+# bare executable after its file unless told otherwise, and a helper signed as
+# "decaf-lid-helper", or by another team, is one the app refuses to talk to:
+# the switch would sit at "Turning on…" forever with nothing in any log a user
+# would read. Checked on the archive and again on the export, which re-signs.
+verify_lid_helper_signature() {
+    local app="$1" helper_info app_info helper_id helper_team app_team
+    helper_info="$(codesign --display --verbose=2 "$app/$LID_HELPER_PATH" 2>&1 || true)"
+    app_info="$(codesign --display --verbose=2 "$app" 2>&1 || true)"
+    helper_id="$(printf '%s\n' "$helper_info" | sed -n 's/^Identifier=//p')"
+    helper_team="$(printf '%s\n' "$helper_info" | sed -n 's/^TeamIdentifier=//p')"
+    app_team="$(printf '%s\n' "$app_info" | sed -n 's/^TeamIdentifier=//p')"
+    [ "$helper_id" = "$LID_HELPER_ID" ] \
+        || die "decaf-lid-helper is signed as '${helper_id:-nothing}', expected '$LID_HELPER_ID'
+   ($app). Check the --identifier flag in project.yml's 'Embed helper binaries' script."
+    case "$helper_info" in
+        *flags=*runtime*) : ;;
+        *) die "decaf-lid-helper is signed WITHOUT the hardened runtime. Notarization will reject it." ;;
+    esac
+    if [ -z "$helper_team" ] || [ "$helper_team" = "not set" ] || [ "$helper_team" != "$app_team" ]; then
+        die "decaf-lid-helper's team '${helper_team:-none}' does not match the app's '${app_team:-none}'.
+   Both ends of the lid helper's XPC connection require the same team."
+    fi
+}
+
 step "codesign --verify --deep --strict"
 if [ -z "$SIGN_IDENTITY" ]; then
     skip "archive is unsigned (dry run without a Developer ID)"
 else
     codesign --verify --deep --strict --verbose=2 "$ARCHIVED_APP" 2>&1 | sed 's/^/    /'
     codesign --verify --strict --verbose=2 "$EMBEDDED_BRIDGE" 2>&1 | sed 's/^/    /'
+    codesign --verify --strict --verbose=2 "$ARCHIVED_APP/$LID_HELPER_PATH" 2>&1 | sed 's/^/    /'
+    verify_lid_helper_signature "$ARCHIVED_APP"
     # Hardened Runtime is required for notarization and is set in project.yml;
     # confirm it actually made it into the signature rather than trusting the
     # manifest, because a missing runtime flag is only reported by the notary
@@ -540,6 +590,7 @@ else
    Notarization will reject it. Check ENABLE_HARDENED_RUNTIME in project.yml." ;;
     esac
     ok "app and embedded bridge signed, hardened runtime on"
+    ok "decaf-lid-helper signed as $LID_HELPER_ID by the app's team"
 fi
 
 # ==========================================================================
@@ -587,6 +638,28 @@ fi
 EXPORTED_APP="$EXPORT_DIR/$APP_NAME.app"
 [ -d "$EXPORTED_APP" ] || die "export produced no $EXPORTED_APP"
 ok "exported $EXPORTED_APP"
+
+# Notarization rejects any Mach-O without a secure timestamp. The post-build
+# script in project.yml signs the helpers without --timestamp, which leaves it
+# to codesign's "system-specific default", and the archive's
+# OTHER_CODE_SIGN_FLAGS reaches only Xcode's own signing of the app. What
+# guarantees the timestamp is this export: it re-signs all nested code for
+# Developer ID. So the check runs here, on the copy about to be submitted.
+# `Timestamp=` is the secure timestamp; without one codesign shows
+# `Signed Time=` instead.
+if [ -n "$SIGN_IDENTITY" ]; then
+    for SIGNED in "" Contents/Helpers/decaf-bridge Contents/Helpers/decaf-statusline "$LID_HELPER_PATH"; do
+        SIGNED_INFO="$(codesign --display --verbose=2 "$EXPORTED_APP/$SIGNED" 2>&1 || true)"
+        case "$SIGNED_INFO" in
+            *"Timestamp="*) : ;;
+            *) die "${SIGNED:-$APP_NAME.app} has no secure timestamp after export.
+   Notarization will reject it. A signature without one shows 'Signed Time='." ;;
+        esac
+    done
+    # The export re-signed the lid helper; make sure it kept its name.
+    verify_lid_helper_signature "$EXPORTED_APP"
+    ok "app and embedded helpers carry secure timestamps; decaf-lid-helper kept its identifier"
+fi
 
 # ==========================================================================
 # 8. DMG
